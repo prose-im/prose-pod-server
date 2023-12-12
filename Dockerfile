@@ -49,10 +49,12 @@ RUN addgroup -S prosody
 RUN adduser --no-create-home -S prosody -G prosody
 
 RUN mkdir \
-  /var/lib/prosody/
+  /var/lib/prosody/ \
+  /var/run/prosody/
 
 RUN chown prosody:prosody \
-  /var/lib/prosody/
+  /var/lib/prosody/ \
+  /var/run/prosody/
 
 VOLUME /etc/prosody/
 VOLUME /var/lib/prosody/
@@ -62,6 +64,9 @@ EXPOSE 5222/tcp
 
 # [public] Server-to-server connections
 EXPOSE 5269/tcp
+
+# [private] HTTP
+EXPOSE 5280/tcp
 
 USER prosody:prosody
 
