@@ -20,11 +20,11 @@ Then, run it (feed it with its configuration and data storage directories):
 
 ```bash
 docker run \
-	-p 5222:5222 \
-	-p 5269:5269 \
-	-v /path/to/your/local/etc/prosody/:/etc/prosody/ \
-	-v /path/to/your/local/var/lib/prosody/:/var/lib/prosody/ \
-	proseim/prose-pod-server
+  -p 5222:5222 \
+  -p 5269:5269 \
+  -v /path/to/your/local/etc/prosody/:/etc/prosody/ \
+  -v /path/to/your/local/var/lib/prosody/:/var/lib/prosody/ \
+  proseim/prose-pod-server
 ```
 
 ## License
