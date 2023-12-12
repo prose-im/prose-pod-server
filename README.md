@@ -19,12 +19,23 @@ docker pull proseim/prose-pod-server:latest
 Then, run it (feed it with its configuration and data storage directories):
 
 ```bash
-docker run \
+docker run --rm \
   -p 5222:5222 \
   -p 5269:5269 \
-  -v /path/to/your/local/etc/prosody/:/etc/prosody/ \
-  -v /path/to/your/local/var/lib/prosody/:/var/lib/prosody/ \
+	-p 5280:5280 \
+  -v ~/Code/github.com/prose-im/prose-pod-system/server/etc/prosody/:/etc/prosody/ \
+  -v ~/Code/github.com/prose-im/prose-pod-system/server/var/lib/prosody/:/var/lib/prosody/ \
   proseim/prose-pod-server
+```
+
+The configurations can be sourced from the [prose-pod-system](https://github.com/prose-im/prose-pod-system) repository.
+
+## Build
+
+To build the Prose Pod server Docker image locally, run:
+
+```bash
+docker build -t proseim/prose-pod-server .
 ```
 
 ## License
