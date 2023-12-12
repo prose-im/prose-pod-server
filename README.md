@@ -6,6 +6,27 @@
 
 Copyright 2023, Prose Foundation - Released under the [MIT License](./COPYING).
 
+## Installation
+
+The Prose Pod server is ran from its Docker image. You can find the pre-built Prose Pod server image on Docker Hub as [proseim/prose-pod-server](https://hub.docker.com/r/proseim/prose-pod-server/).
+
+First, pull the `proseim/prose-pod-server` image:
+
+```bash
+docker pull proseim/prose-pod-server:latest
+```
+
+Then, run it (feed it with its configuration and data storage directories):
+
+```bash
+docker run \
+	-p 5222:5222 \
+	-p 5269:5269 \
+	-v /path/to/your/local/etc/prosody/:/etc/prosody/ \
+	-v /path/to/your/local/var/lib/prosody/:/var/lib/prosody/ \
+	proseim/prose-pod-server
+```
+
 ## License
 
 Licensing information can be found in the [COPYING](./COPYING) document.
