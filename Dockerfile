@@ -12,7 +12,7 @@ RUN apk add --no-cache \
   lua5.4-dev \
   libidn-dev \
   openssl-dev \
-  icu-dev
+  libidn-dev
 
 COPY . /build
 
@@ -22,7 +22,8 @@ RUN ./configure \
   --libdir=/lib \
   --datadir=/var/lib/prosody \
   --lua-version=5.4 \
-  --lua-suffix=5.4
+  --lua-suffix=5.4 \
+  --idn-library=idn
 
 RUN make
 RUN make install
@@ -32,7 +33,7 @@ RUN make install
 FROM ${BASE_IMAGE} as run
 
 RUN apk add --no-cache \
-  icu \
+  libidn \
   lua5.4 \
   lua5.4-expat \
   lua5.4-socket \
@@ -47,8 +48,11 @@ COPY --from=build /lib/prosody/ /lib/prosody/
 RUN addgroup -S prosody
 RUN adduser --no-create-home -S prosody -G prosody
 
-RUN mkdir /var/lib/prosody/ && \
-  chown prosody:prosody /var/lib/prosody/
+RUN mkdir \
+  /var/lib/prosody/
+
+RUN chown prosody:prosody \
+  /var/lib/prosody/
 
 VOLUME /etc/prosody/
 VOLUME /var/lib/prosody/
