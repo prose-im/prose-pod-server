@@ -2,8 +2,14 @@ All source code in this project is released under the below MIT license. Some
 components are not authored by the Prosody maintainers, but such code is
 itself either released under a MIT license or declared public domain.
 
+Since this project is a fork of the original Prosody source code, all new code
+introduced in the project is also released under the same license terms, and any
+new code released in the upstream repository will be re-introduced there as
+well.
+
 ---
 
+Copyright (C) 2023 Prose Foundation
 Copyright (C) 2008-2022 Matthew Wild
 Copyright (C) 2008-2020 Waqas Hussain
 Copyright (C) 2010-2022 Kim Alvefur
