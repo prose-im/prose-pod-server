@@ -1,0 +1,64 @@
+ARG BASE_IMAGE=alpine:3.19
+
+# -- STAGE 1 [build] --
+
+FROM ${BASE_IMAGE} as build
+
+WORKDIR /build
+
+RUN apk add --no-cache \
+  build-base \
+  linux-headers \
+  lua5.4-dev \
+  libidn-dev \
+  openssl-dev \
+  icu-dev
+
+COPY . /build
+
+RUN ./configure \
+  --prefix=/ \
+  --sysconfdir=/etc/prosody \
+  --libdir=/lib \
+  --datadir=/var/lib/prosody \
+  --lua-version=5.4 \
+  --lua-suffix=5.4
+
+RUN make
+RUN make install
+
+# -- STAGE 2 [run] --
+
+FROM ${BASE_IMAGE} as run
+
+RUN apk add --no-cache \
+  icu \
+  lua5.4 \
+  lua5.4-expat \
+  lua5.4-socket \
+  lua5.4-filesystem \
+  lua5.4-sec \
+  lua5.4-unbound
+
+COPY --from=build /bin/prosody bin/
+COPY --from=build /bin/prosodyctl bin/
+COPY --from=build /lib/prosody/ /lib/prosody/
+
+RUN addgroup -S prosody
+RUN adduser --no-create-home -S prosody -G prosody
+
+RUN mkdir /var/lib/prosody/ && \
+  chown prosody:prosody /var/lib/prosody/
+
+VOLUME /etc/prosody/
+VOLUME /var/lib/prosody/
+
+# [public] Client connections
+EXPOSE 5222/tcp
+
+# [public] Server-to-server connections
+EXPOSE 5269/tcp
+
+USER prosody:prosody
+
+ENTRYPOINT prosody
