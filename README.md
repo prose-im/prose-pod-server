@@ -1,6 +1,6 @@
 # prose-pod-server
 
-[![Test](https://github.com/prose-im/prose-pod-server/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/prose-im/prose-pod-server/actions/workflows/test.yml)
+[![Test](https://github.com/prose-im/prose-pod-server/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/prose-im/prose-pod-server/actions/workflows/test.yml) [![Build and Release](https://github.com/prose-im/prose-pod-server/workflows/Build%20and%20Release/badge.svg)](https://github.com/prose-im/prose-pod-server/actions?query=workflow%3A%22Build+and+Release%22)
 
 **Prose Pod server source code. Forked from the [Prosody XMPP server](https://prosody.im/) and tailored for Prose requirements.**
 
