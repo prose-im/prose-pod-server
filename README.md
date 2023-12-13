@@ -28,7 +28,13 @@ docker run --rm \
   proseim/prose-pod-server
 ```
 
-The configurations can be sourced from the [prose-pod-system](https://github.com/prose-im/prose-pod-system) repository.
+The following ports will be available on your host system:
+
+* `5222`: XMPP client-to-server port (`public` port, _open it on the public Internet_)
+* `5269`: XMPP server-to-server port (`public` port, _open it on the public Internet_)
+* `5280`: HTTP services, eg. WebSocket endpoint (`private` port, _keep it scoped to your host_)
+
+👉 _The configurations can be sourced from the [prose-pod-system](https://github.com/prose-im/prose-pod-system) repository._
 
 ## Build
 
