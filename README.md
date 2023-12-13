@@ -22,7 +22,7 @@ Then, run it (feed it with its configuration and data storage directories):
 docker run --rm \
   -p 5222:5222 \
   -p 5269:5269 \
-	-p 5280:5280 \
+  -p 5280:5280 \
   -v ~/Code/github.com/prose-im/prose-pod-system/server/etc/prosody/:/etc/prosody/ \
   -v ~/Code/github.com/prose-im/prose-pod-system/server/var/lib/prosody/:/var/lib/prosody/ \
   proseim/prose-pod-server
