@@ -23,8 +23,8 @@ docker run --rm \
   -p 5222:5222 \
   -p 5269:5269 \
   -p 5280:5280 \
-  -v ~/Code/github.com/prose-im/prose-pod-system/server/etc/prosody/:/etc/prosody/ \
-  -v ~/Code/github.com/prose-im/prose-pod-system/server/var/lib/prosody/:/var/lib/prosody/ \
+  -v /host/path/to/etc/prosody/:/etc/prosody/ \
+  -v /host/path/to/var/lib/prosody/:/var/lib/prosody/ \
   proseim/prose-pod-server
 ```
 
@@ -35,6 +35,21 @@ The following ports will be available on your host system:
 * `5280`: HTTP services, eg. WebSocket endpoint (`private` port, _keep it scoped to your host_)
 
 👉 _The configurations can be sourced from the [prose-pod-system](https://github.com/prose-im/prose-pod-system) repository._
+
+If SSL certificates need to be generated, this can be done with the following commands eg. for a 10 years certificate:
+
+```bash
+openssl req \
+  -x509 \
+  -newkey rsa:2048 \
+  -keyout /host/path/to/etc/prosody/certs/prose.org.local.key \
+  -out /host/path/to/etc/prosody/certs/prose.org.local.crt \
+  -sha256 \
+  -days 3650 \
+  -nodes \
+  -subj "/CN=prose.org.local" \
+  -addext "subjectAltName = DNS:groups.prose.org.local"
+```
 
 ## Build
 
