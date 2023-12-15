@@ -10,13 +10,13 @@ Copyright 2023, Prose Foundation - Released under the [MIT License](./COPYING).
 
 The Prose Pod server is ran from its Docker image. You can find the pre-built Prose Pod server image on Docker Hub as [proseim/prose-pod-server](https://hub.docker.com/r/proseim/prose-pod-server/).
 
-First, pull the `proseim/prose-pod-server` image:
+**First, pull the `proseim/prose-pod-server` image:**
 
 ```bash
 docker pull proseim/prose-pod-server:latest
 ```
 
-Then, run it (feed it with its configuration and data storage directories):
+**Then, run it (feed it with its configuration and data storage directories):**
 
 ```bash
 docker run --rm \
@@ -28,7 +28,7 @@ docker run --rm \
   proseim/prose-pod-server
 ```
 
-The following ports will be available on your host system:
+**The following ports will be available on your host system:**
 
 * `5222`: XMPP client-to-server port (`public` port, _open it on the public Internet_)
 * `5269`: XMPP server-to-server port (`public` port, _open it on the public Internet_)
@@ -36,7 +36,7 @@ The following ports will be available on your host system:
 
 👉 _The configurations can be sourced from the [prose-pod-system](https://github.com/prose-im/prose-pod-system) repository._
 
-If SSL certificates need to be generated, this can be done with the following commands eg. for a 10 years certificate:
+**If SSL certificates need to be generated, this can be done with the following commands eg.:**
 
 ```bash
 openssl req \
