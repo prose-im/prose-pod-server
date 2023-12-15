@@ -51,6 +51,9 @@ openssl req \
   -addext "subjectAltName = DNS:groups.prose.org.local"
 ```
 
+- Make sure to add the generate certificate to your keychain and mark it as trusted.
+- Also, add a section in `/etc/hosts`: `127.0.0.1 prose.org.local groups.prose.org.local`
+
 ## Build
 
 To build the Prose Pod server Docker image locally, run:
