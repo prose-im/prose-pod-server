@@ -69,6 +69,7 @@ local function write_pidfile()
 				pidfile_handle = nil;
 				prosody.shutdown("Prosody already running", 1);
 			else
+				lfs.unlock(pidfile_handle);
 				pidfile_handle:close();
 				pidfile_handle, err = io.open(pidfile, "w+");
 				if not pidfile_handle then
@@ -78,6 +79,7 @@ local function write_pidfile()
 					if lfs.lock(pidfile_handle, "w") then
 						pidfile_handle:write(tostring(pposix.getpid()));
 						pidfile_handle:flush();
+						lfs.unlock(pidfile_handle);
 					end
 				end
 			end
