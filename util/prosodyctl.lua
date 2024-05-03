@@ -18,6 +18,8 @@ local set = require "prosody.util.set";
 local lfs = require "lfs";
 local type = type;
 
+local log = require "prosody.util.logger".init("prosodyctl");
+
 local nodeprep, nameprep = stringprep.nodeprep, stringprep.nameprep;
 
 local io, os = io, os;
@@ -39,6 +41,7 @@ local error_messages = setmetatable({
 		["no-posix"] = "The mod_posix module is not enabled in the Prosody config file, see https://prosody.im/doc/prosodyctl for more info";
 		["no-such-method"] = "This module has no commands";
 		["not-running"] = "Prosody is not running";
+		["pidfile-not-locked"] = "Could not lock Prosody's PID file";
 		}, { __index = function (_,k) return "Error: "..(tostring(k):gsub("%-", " "):gsub("^.", string.upper)); end });
 
 -- UI helpers
@@ -118,37 +121,51 @@ local function deluser(params)
 end
 
 local function getpid()
+	-- Get `pidfile` from the configuration
 	local pidfile = config.get("*", "pidfile");
 	if not pidfile then
+		log("error", "Could not find `pidfile` in Prosody config.");
 		return false, "no-pidfile";
 	end
-
 	if type(pidfile) ~= "string" then
+		log("error", "Invalid `pidfile`: not a string.");
 		return false, "invalid-pidfile";
 	end
 
 	pidfile = config.resolve_relative_path(prosody.paths.data, pidfile);
 
+	-- Check if POSIX is supported
 	local modules_disabled = set.new(config.get("*", "modules_disabled"));
-	if prosody.platform ~= "posix" or modules_disabled:contains("posix") then
+	if prosody.platform ~= "posix" then
+		log("error", "Cannot open the PID file: Prosody platform not POSIX.");
+		return false, "no-posix";
+	end
+	if modules_disabled:contains("posix") then
+		log("error", "Cannot open the PID file: `posix` module disabled.");
 		return false, "no-posix";
 	end
 
+	-- Open file in read & write mode
 	local file, err = io.open(pidfile, "r+");
 	if not file then
+		log("error", ("Could not open the PID file: %s"):format(err));
 		return false, "pidfile-read-failed", err;
 	end
 
-	local locked, err = lfs.lock(file, "w"); -- luacheck: ignore 211/err
-	if locked then
+	-- Lock writes to prevent race conditions
+	local locked, err = lfs.lock(file, "w"); -- luacheck: ignore 411/err
+	if not locked then
 		file:close();
+		log("error", ("Could not lock the PID file: %s"):format(err));
 		return false, "pidfile-not-locked";
 	end
 
+	-- Read a PID (number) from the file
 	local pid = tonumber(file:read("*a"));
+	lfs.unlock(file);
 	file:close();
-
 	if not pid then
+		log("error", "Invalid PID: Not a number.");
 		return false, "invalid-pid";
 	end
 
@@ -156,16 +173,27 @@ local function getpid()
 end
 
 local function isrunning()
-	local ok, pid, err = getpid(); -- luacheck: ignore 211/err
+	local ok, pid_or_err = getpid();
 	if not ok then
-		if pid == "pidfile-read-failed" or pid == "pidfile-not-locked" then
+		local err = pid_or_err;
+		if err == "pidfile-read-failed" or err == "pidfile-not-locked" then
 			-- Report as not running, since we can't open the pidfile
 			-- (it probably doesn't exist)
+			log("error", ("Could not get Prosody's PID: %s"):format(error_messages[err]));
 			return true, false;
 		end
-		return ok, pid;
+		return ok, err;
 	end
-	return true, signal.kill(pid, 0) == 0;
+	local pid = pid_or_err;
+
+	-- Test if Prosody is running
+	-- NOTE: As [kill(2)](https://man7.org/linux/man-pages/man2/kill.2.html) states:
+	--   > If sig is 0, then no signal is sent, but error checking is still performed; 
+	--   > this can be used to check for the existence of a process ID or process 
+	--   > group ID.
+	local is_running = signal.kill(pid, 0) == 0;
+
+	return true, is_running;
 end
 
 local function start(source_dir, lua)
