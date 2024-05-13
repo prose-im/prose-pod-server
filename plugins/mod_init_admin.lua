@@ -21,9 +21,12 @@ local function init_admin()
 
   -- Read JID from Prosody configuration
   local jid = module:get_option_string("init_admin_jid");
+  if not jid then
+    return false, "`init_admin_jid` must be defined in the Prosody configuration file.";
+  end
   local username, host = jid_prepped_split(jid);
   if not (username and host) then
-    return false, "Invalid JID. Check `init_admin_jid`.";
+    return false, "Invalid JID. Check `init_admin_jid` in the Prosody configuration file.";
   end
 
   -- Check that host exists to improve error comprehension (otherwise log is just
