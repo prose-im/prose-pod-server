@@ -82,6 +82,9 @@ install-plugins:
 	$(INSTALL_DATA) plugins/muc/*.lua $(MODULES)/muc
 	$(INSTALL_DATA) plugins/mod_mam/*.lua $(MODULES)/mod_mam
 	$(INSTALL_DATA) plugins/mod_debug_stanzas/*.lua $(MODULES)/mod_debug_stanzas
+	$(INSTALL_DATA) plugins/mod_rest/*.lua $(MODULES)/mod_rest
+	$(MKDIR) $(MODULES)/mod_rest/res
+	$(INSTALL_DATA) plugins/mod_rest/res/* $(MODULES)/mod_rest/res
 	$(INSTALL_DATA) plugins/mod_admin_rest/*.lua $(MODULES)/mod_admin_rest
 
 install-man:
