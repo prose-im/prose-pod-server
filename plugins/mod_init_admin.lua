@@ -29,27 +29,38 @@ local function init_admin()
     return false, "Invalid JID. Check `init_admin_jid` in the Prosody configuration file.";
   end
 
-  -- Check that host exists to improve error comprehension (otherwise log is just
-  -- `Encountered error: /lib/prosody/core/usermanager.lua:129: attempt to index a nil value (field '?')`
-  -- with a stacktrace)
-  if not hosts[host] then
-    return false, ("`init_admin_jid` is invalid: host `%s` doesn't exist."):format(host);
-  end
+  local role = "prosody:operator";
 
-  -- Read password from environment
-  local var_name = module:get_option_string("init_admin_password_env_var_name", "SUPERADMIN_PASSWORD");
-  local password = os.getenv(var_name);
-  if not password then
-    return false, ("Environment variable `%s` not defined."):format(var_name);
-  end
+  if host == module.host then
+    -- Check that host exists to improve error comprehension (otherwise log is just
+    -- `Encountered error: /lib/prosody/core/usermanager.lua:129: attempt to index a nil value (field '?')`
+    -- with a stacktrace)
+    if not hosts[host] then
+      return false, ("`init_admin_jid` is invalid: host `%s` doesn't exist."):format(host);
+    end
 
-  -- Set superadmin account role to "Server operator (full access)"
-  local ok, err = um.create_user_with_role(username, password, host, "prosody:operator");
-  if not ok then
-    return false, ("Could not create user: %s"):format(err);
-  end
+    -- Read password from environment
+    local var_name = module:get_option_string("init_admin_password_env_var_name", "SUPERADMIN_PASSWORD");
+    local password = os.getenv(var_name);
+    if not password then
+      return false, ("Environment variable `%s` not defined."):format(var_name);
+    end
 
-  log("info", "Superadmin account created successfully");
+    -- Set superadmin account role to "Server operator (full access)"
+    local ok, err = um.create_user_with_role(username, password, host, role);
+    if not ok then
+      return false, ("Could not create user: %s"):format(err);
+    end
+
+    log("info", "Superadmin account created successfully");
+  else
+    local ok, err = um.set_jid_role(jid, module.host, role);
+    if not ok then
+      return false, ("Could not grant role '%s' for host '%s' to '%s': %s"):format(role, host, jid, err);
+    end
+
+    log("info", ("Superadmin account '%s' was successfully granted the role '%s' for host '%s'"):format(jid, role, host));
+  end
 
   return true
 end
