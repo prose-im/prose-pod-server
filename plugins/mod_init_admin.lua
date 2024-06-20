@@ -65,12 +65,11 @@ local function init_admin()
   return true
 end
 
--- Listen to the `"server-started"` event (defined in `util/startup.lua`),
--- sent once after the server started successfully.
--- See <https://prosody.im/doc/developers/moduleapi#modulehook_global_event_name_handler_priority>.
-module:hook_global("server-started", function()
+-- `module.ready` runs when the module is loaded and the server has finished starting up.
+-- See `core/modulemanager.lua`.
+function module.ready()
   local ok, err = init_admin();
   if not ok then
     log("error", err);
   end
-end);
+end
