@@ -56,7 +56,7 @@ local function init_admin()
   else
     local ok, err = um.set_jid_role(jid, module.host, role);
     if not ok then
-      return false, ("Could not grant role '%s' for host '%s' to '%s': %s"):format(role, host, jid, err);
+      return false, ("Could not grant role '%s' for host '%s' to '%s': %s"):format(role, module.host, jid, err);
     end
 
     log("info", ("Superadmin account '%s' was successfully granted the role '%s' for host '%s'"):format(jid, role, host));
