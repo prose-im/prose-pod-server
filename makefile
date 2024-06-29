@@ -77,14 +77,20 @@ install-util: util/encodings.so util/encodings.so util/pposix.so util/signal.so
 
 install-plugins:
 	$(MKDIR) $(MODULES)
-	$(MKDIR) $(MODULES)/mod_pubsub $(MODULES)/adhoc $(MODULES)/muc $(MODULES)/mod_mam $(MODULES)/mod_debug_stanzas $(MODULES)/mod_admin_rest
+	$(MKDIR) $(MODULES)/mod_pubsub $(MODULES)/adhoc $(MODULES)/muc $(MODULES)/mod_mam $(MODULES)/mod_debug_stanzas $(MODULES)/mod_rest $(MODULES)/mod_admin_rest $(MODULES)/mod_http_oauth2
 	$(INSTALL_DATA) plugins/*.lua $(MODULES)
 	$(INSTALL_DATA) plugins/mod_pubsub/*.lua $(MODULES)/mod_pubsub
 	$(INSTALL_DATA) plugins/adhoc/*.lua $(MODULES)/adhoc
 	$(INSTALL_DATA) plugins/muc/*.lua $(MODULES)/muc
 	$(INSTALL_DATA) plugins/mod_mam/*.lua $(MODULES)/mod_mam
 	$(INSTALL_DATA) plugins/mod_debug_stanzas/*.lua $(MODULES)/mod_debug_stanzas
+	$(INSTALL_DATA) plugins/mod_rest/*.lua $(MODULES)/mod_rest
+	$(MKDIR) $(MODULES)/mod_rest/res
+	$(INSTALL_DATA) plugins/mod_rest/res/* $(MODULES)/mod_rest/res
 	$(INSTALL_DATA) plugins/mod_admin_rest/*.lua $(MODULES)/mod_admin_rest
+	$(INSTALL_DATA) plugins/mod_http_oauth2/*.lua $(MODULES)/mod_http_oauth2
+	$(MKDIR) $(MODULES)/mod_http_oauth2/html
+	$(INSTALL_DATA) plugins/mod_http_oauth2/html/* $(MODULES)/mod_http_oauth2/html
 
 install-man:
 	$(MKDIR) $(MAN)/man1
