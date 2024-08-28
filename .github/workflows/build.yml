@@ -27,6 +27,7 @@ jobs:
 
   ship:
     needs: build
+    environment: build-ship
     runs-on: ubuntu-latest
 
     permissions:
