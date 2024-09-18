@@ -3,34 +3,3 @@
 
 # macOS
 .DS_Store
-
-# Prosody
-.luacheckcache
-data
-local
-www_files
-html/*
-prosody.lua
-prosody.cfg.lua
-prosody.version
-config.unix
-*.patch
-*.diff
-*.orig
-*.rej
-*.save
-*~
-*.o
-*.so
-*.install
-*.pid
-*.log
-*.err
-*.debug
-*.dll
-*.exp
-*.lib
-*.obj
-luacov.report.out
-luacov.report.out.index
-luacov.stats.out
