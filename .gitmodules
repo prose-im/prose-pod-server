@@ -1,6 +1,6 @@
 [submodule "plugins/mod_admin_rest"]
 	path = plugins/mod_admin_rest
-	url = https://github.com/RemiBardon/prosody-mod_admin_rest.git
+	url = git@github.com:RemiBardon/prosody-mod_admin_rest.git
 [submodule "prosody"]
 	path = prosody
 	url = git@github.com:bjc/prosody.git
