@@ -16,9 +16,6 @@ RUN apk add --no-cache \
 
 COPY ./prosody /build
 
-COPY ./plugins/community /build/plugins
-COPY ./plugins/prose /build/plugins
-
 RUN ./configure \
   --prefix=/ \
   --sysconfdir=/etc/prosody \
@@ -47,6 +44,8 @@ RUN apk add --no-cache \
 COPY --from=build /bin/prosody bin/
 COPY --from=build /bin/prosodyctl bin/
 COPY --from=build /lib/prosody/ /lib/prosody/
+
+COPY ./plugins/*/ /usr/local/lib/prosody/modules/
 
 RUN addgroup -S prosody
 RUN adduser --no-create-home -S prosody -G prosody
