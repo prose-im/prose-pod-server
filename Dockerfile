@@ -15,7 +15,9 @@ RUN apk add --no-cache \
   libidn-dev
 
 COPY ./prosody /build
-COPY ./plugins /build/plugins
+
+COPY ./plugins/community /build/plugins
+COPY ./plugins/prose /build/plugins
 
 RUN ./configure \
   --prefix=/ \
