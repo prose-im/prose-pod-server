@@ -14,7 +14,8 @@ RUN apk add --no-cache \
   openssl-dev \
   libidn-dev
 
-COPY . /build
+COPY ./prosody /build
+COPY ./plugins /build/plugins
 
 RUN ./configure \
   --prefix=/ \
