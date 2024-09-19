@@ -4,7 +4,7 @@
 
 **Prose Pod server source code. Depends on the official [Prosody XMPP server](https://prosody.im/) and extended for Prose requirements.**
 
-Copyright 2023, Prose Foundation - Released under the [MIT License](./COPYING).
+Copyright 2024, Prose Foundation - Released under the [MIT License](./COPYING).
 
 ## Installation
 
