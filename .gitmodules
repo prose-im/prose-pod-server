@@ -1,3 +1,6 @@
 [submodule "prosody"]
 	path = prosody
 	url = git@github.com:bjc/prosody.git
+[submodule "plugins/prose/mod_admin_rest"]
+	path = plugins/prose/mod_admin_rest
+	url = https://github.com/RemiBardon/prosody-mod_admin_rest.git
