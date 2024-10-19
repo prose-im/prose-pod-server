@@ -2,7 +2,7 @@ ARG BASE_IMAGE=alpine:3.19
 
 # -- STAGE 1 [build] --
 
-FROM ${BASE_IMAGE} as build
+FROM ${BASE_IMAGE} AS build
 
 WORKDIR /build
 
@@ -30,7 +30,7 @@ RUN make install
 
 # -- STAGE 2 [run] --
 
-FROM ${BASE_IMAGE} as run
+FROM ${BASE_IMAGE} AS run
 
 RUN apk add --no-cache \
   libidn \
@@ -72,4 +72,4 @@ EXPOSE 5280/tcp
 
 USER prosody:prosody
 
-ENTRYPOINT prosody
+ENTRYPOINT ["prosody"]
