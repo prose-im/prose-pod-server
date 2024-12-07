@@ -4,3 +4,6 @@
 [submodule "plugins/prose/mod_admin_rest"]
 	path = plugins/prose/mod_admin_rest
 	url = https://github.com/RemiBardon/prosody-mod_admin_rest.git
+[submodule "plugins/prose/mod_http_rest_universal"]
+	path = plugins/prose/mod_http_rest_universal
+	url = https://github.com/RemiBardon/prosody-mod_http_rest_universal.git
