@@ -1,0 +1,12 @@
+# See <https://taskfile.dev/usage> and <https://taskfile.dev/reference/schema>
+# to find all keys and their usage.
+version: "3"
+
+silent: true
+env:
+  SELF: "task {{ .ALIAS | default .TASK }} --"
+
+tasks:
+  release:
+    desc: Release a new version.
+    cmd: ./scripts/release {{ .CLI_ARGS }}

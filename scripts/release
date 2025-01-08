@@ -1,0 +1,38 @@
+#!/bin/bash
+
+VERSION_FILE=VERSION
+VERSION_BEFORE="$(cat "${VERSION_FILE:?}")"
+
+set -e
+
+: ${SELF:="$(basename $0)"}
+
+Color_Off='\033[0m'
+Green='\033[0;32m'
+Yellow='\033[0;33m'
+BRed='\033[1;31m'
+
+die() {
+	echo -e "${BRed:?}${@:?"Must pass a message"}${Color_Off:?}" >&2
+	exit 1
+}
+warn() {
+	echo -e "${Yellow:?}Warning: ${1:?"Must pass a message"}${Color_Off:?}" >&2
+}
+
+[[ "$#" == 1 ]] && VERSION="${1:?}" || die "Syntax: ${SELF:?} X.Y.Z"
+[[ "${VERSION:?}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Use semantic versioning (X.Y.Z)'
+git add . && git diff --quiet HEAD || warn 'You have uncommitted changes'
+
+echo -e "Version change: ${Yellow:?}${VERSION_BEFORE:?}${Color_Off:?} -> ${Green:?}${VERSION:?}${Color_Off:?}"
+read -p "Proceed? [y/N]: " ok
+[[ "$ok" =~ ^[Yy]$ ]] || exit 1
+
+# Update version file
+echo "${VERSION:?}" > "${VERSION_FILE:?}"
+# Create a commit
+git commit "${VERSION_FILE:?}" -m "v${VERSION:?}"
+# Add a tag
+git tag "${VERSION:?}"
+# Push commit and tag atomically
+git push -f --atomic origin "${VERSION:?}"
