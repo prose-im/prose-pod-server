@@ -7,7 +7,7 @@ name: Build and Release
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -28,7 +28,7 @@ jobs:
   ship:
     needs: build
     environment: build-ship
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     permissions:
       packages: write
