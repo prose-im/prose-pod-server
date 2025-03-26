@@ -3,7 +3,7 @@
 -- after Prosody has started.
 -- version 0.1
 -----------------------------------------------------------
--- Copyright (C) 2024 Rémi Bardon <remi@remibardon.name>
+-- Copyright (C) 2024–2025 Rémi Bardon <remi@remibardon.name>
 --
 -- This project is MIT licensed. Please see the LICENSE
 -- file in the source package for more information.
@@ -40,10 +40,13 @@ local function init_admin()
     end
 
     -- Read password from environment
-    local var_name = module:get_option_string("init_admin_password_env_var_name", "SUPERADMIN_PASSWORD");
-    local password = os.getenv(var_name);
+    local password = module:get_option_string("init_admin_password");
     if not password then
-      return false, ("Environment variable `%s` not defined."):format(var_name);
+      local var_name = module:get_option_string("init_admin_password_env_var_name", "SUPERADMIN_PASSWORD");
+      password = os.getenv(var_name);
+      if not password then
+        return false, ("Environment variable `%s` not defined."):format(var_name);
+      end
     end
 
     -- Set superadmin account role to "Server operator (full access)"
