@@ -35,4 +35,4 @@ git commit "${VERSION_FILE:?}" -m "v${VERSION:?}"
 # Add a tag
 git tag -a "${VERSION:?}" -m "v${VERSION:?}"
 # Push commit and tag atomically
-git push -f --atomic origin "${VERSION:?}"
+git push -f --atomic origin "$(git rev-parse --abbrev-ref HEAD)" "${VERSION:?}"
