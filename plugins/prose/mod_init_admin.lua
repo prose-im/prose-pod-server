@@ -15,7 +15,7 @@ local um = require "prosody.core.usermanager";
 local prosody = _G.prosody;
 local hosts = prosody.hosts;
 
-local function init_admin()
+local function init_admin(force)
   module:log("debug", "Initializing superadmin account…");
 
   -- Read JID from Prosody configuration
@@ -28,7 +28,7 @@ local function init_admin()
     return false, "Invalid JID. Check `init_admin_jid` in the Prosody configuration file.";
   end
 
-  if um.user_exists(username, host) then
+  if not force and um.user_exists(username, host) then
     module:log("debug", "Superadmin account already exists.");
     return true;
   end
@@ -72,8 +72,8 @@ local function init_admin()
   return true;
 end
 
-function handle_reload()
-  local ok, err = init_admin();
+function handle_reload(force)
+  local ok, err = init_admin(force);
   if not ok then
     module:log("error", err);
   end
@@ -82,9 +82,15 @@ end
 -- `module.ready` runs when the module is loaded and the server has finished starting up.
 -- See `core/modulemanager.lua`.
 function module.ready()
-	handle_reload();
+  -- Recreate the superadmin account with its bootstrap password
+  -- when Prosody starts.
+  handle_reload(true);
 end
 
 -- `config-reloaded` runs when the configuration is reloaded.
 -- See `core/modulemanager.lua`.
-module:hook_global("config-reloaded", handle_reload);
+module:hook_global("config-reloaded", function()
+  -- Do not recreate the superadmin account with its bootstrap password
+  -- on configuration reloads.
+  handle_reload(false);
+end);
