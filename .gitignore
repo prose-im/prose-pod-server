@@ -1,5 +1,9 @@
+# Bloat
+plugins/community/.hg
+
 # Editor
 .nova
+.zed
 
 # macOS
-.DS_Store
+**.DS_Store

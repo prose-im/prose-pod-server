@@ -4,6 +4,9 @@
 --
 -- This file is MIT/X11 licensed.
 
+-- This module is only for 0.12, later versions have mod_cloud_notify bundled
+--% conflicts: mod_cloud_notify
+
 local os_time = os.time;
 local st = require"util.stanza";
 local jid = require"util.jid";

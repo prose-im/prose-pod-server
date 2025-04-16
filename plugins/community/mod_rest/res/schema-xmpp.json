@@ -266,6 +266,71 @@
                   "namespace" : "urn:xmpp:mam:2"
                }
             },
+            "block" : {
+               "items" : {
+                  "properties" : {
+                     "jid" : {
+                        "type" : "string",
+                        "xml" : {
+                           "attribute" : true
+                        }
+                     },
+                     "report" : {
+                        "properties" : {
+                           "reason" : {
+                              "enum" : [
+                                 "urn:xmpp:reporting:spam",
+                                 "urn:xmpp:reporting:abuse"
+                              ],
+                              "type" : "string",
+                              "xml" : {
+                                 "attribute" : true
+                              }
+                           },
+                           "stanza_ids" : {
+                              "$ref" : "#/properties/message/properties/stanza_ids"
+                           }
+                        },
+                        "xml" : {
+                           "name" : "report",
+                           "namespace" : "urn:xmpp:reporting:1"
+                        }
+                     }
+                  },
+                  "type" : "object",
+                  "xml" : {
+                     "name" : "item"
+                  }
+               },
+               "type" : "array",
+               "xml" : {
+                  "name" : "block",
+                  "namespace" : "urn:xmpp:blocking",
+                  "wrapped" : true
+               }
+            },
+            "blocklist" : {
+               "items" : {
+                  "properties" : {
+                     "jid" : {
+                        "type" : "string",
+                        "xml" : {
+                           "attribute" : true
+                        }
+                     }
+                  },
+                  "type" : "object",
+                  "xml" : {
+                     "name" : "item"
+                  }
+               },
+               "type" : "array",
+               "xml" : {
+                  "name" : "blocklist",
+                  "namespace" : "urn:xmpp:blocking",
+                  "wrapped" : true
+               }
+            },
             "dataform" : {
                "$ref" : "#/_common/dataform"
             },

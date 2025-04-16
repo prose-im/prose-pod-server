@@ -1584,6 +1584,7 @@ module:provides("http", {
 		-- This is the normal 'authorization_code' flow.
 
 		-- Step 1. Create OAuth client
+		["GET /register"] = { headers = { content_type = "application/schema+json" }; body = json.encode(registration_schema) };
 		["POST /register"] = handle_register_request;
 
 		-- Device flow
@@ -1594,24 +1595,6 @@ module:provides("http", {
 		["GET /authorize"] = handle_authorization_request;
 		["POST /authorize"] = handle_authorization_request;
 		["OPTIONS /authorize"] = { status_code = 403; body = "" };
-
-		-- Step 3. User is redirected to the 'redirect_uri' along with an
-		-- authorization code.  In the insecure 'implicit' flow, the access token
-		-- is delivered here.
-
-		-- Step 4. Retrieve access token using the code.
-		["POST /token"] = handle_token_grant;
-
-		-- Step 4 is later repeated using the refresh token to get new access tokens.
-
-		-- Step 5. Revoke token (access or refresh)
-		["POST /revoke"] = handle_revocation_request;
-
-		-- Get info about a token
-		["POST /introspect"] = handle_introspection_request;
-
-		-- OpenID
-		["GET /userinfo"] = handle_userinfo_request;
 
 		-- Optional static content for templates
 		["GET /style.css"] = templates.css and {
@@ -1627,11 +1610,26 @@ module:provides("http", {
 			body = templates.js;
 		} or nil;
 
-		-- Some convenient fallback handlers
-		["GET /register"] = { headers = { content_type = "application/schema+json" }; body = json.encode(registration_schema) };
+		-- Step 3. User is redirected to the 'redirect_uri' along with an
+		-- authorization code.  In the insecure 'implicit' flow, the access token
+		-- is delivered here.
+
+		-- Step 4. Retrieve access token using the code.
+		["POST /token"] = handle_token_grant;
 		["GET /token"] = function() return 405; end;
-		["GET /revoke"] = function() return 405; end;
+
+		-- Step 4 is later repeated using the refresh token to get new access tokens.
+
+		-- Get info about a token
+		["POST /introspect"] = handle_introspection_request;
 		["GET /introspect"] = function() return 405; end;
+
+		-- Get info about the user, used for OpenID Connect
+		["GET /userinfo"] = handle_userinfo_request;
+
+		-- Step 5. Revoke token (access or refresh)
+		["POST /revoke"] = handle_revocation_request;
+		["GET /revoke"] = function() return 405; end;
 	};
 });
 
@@ -1678,7 +1676,7 @@ function get_authorization_server_metadata()
 		ui_locales_supported = allowed_locales[1] and allowed_locales;
 
 		-- OpenID
-		userinfo_endpoint = handle_register_request and module:http_url() .. "/userinfo" or nil;
+		userinfo_endpoint = handle_userinfo_request and module:http_url() .. "/userinfo" or nil;
 		jwks_uri = nil; -- REQUIRED in OpenID Discovery but not in OAuth 2.0 Metadata
 		id_token_signing_alg_values_supported = { "HS256" }; -- The algorithm RS256 MUST be included, but we use HS256 and client_secret as shared key.
 	}

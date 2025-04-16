@@ -51,6 +51,12 @@ local post_errors = errors.init("mod_rest", {
 	size = { code = 413; type = "modify"; condition = "resource-constraint", text = "Payload too large" };
 });
 
+local token_session_errors = errors.init("mod_tokenauth", {
+	["internal-error"] = { code = 500; type = "wait"; condition = "internal-server-error" };
+	["invalid-token-format"] = { code = 403; type = "auth"; condition = "not-authorized"; text = "Credentials malformed" };
+	["not-authorized"] = { code = 403; type = "auth"; condition = "not-authorized"; text = "Credentials not accepted" };
+});
+
 local function check_credentials(request) -- > session | boolean, error
 	local auth_type, auth_data = string.match(request.headers.authorization, "^(%S+)%s(.+)$");
 	auth_type = auth_type and auth_type:lower();
@@ -77,7 +83,11 @@ local function check_credentials(request) -- > session | boolean, error
 		return { username = username; host = module.host };
 	elseif auth_type == "bearer" then
 		if tokens.get_token_session then
-			return tokens.get_token_session(auth_data);
+			local token_session, err = tokens.get_token_session(auth_data);
+			if not token_session then
+				return false, token_session_errors.new(err or "not-authorized", { request = request });
+			end
+			return token_session;
 		else -- COMPAT w/0.12
 			local token_info = tokens.get_token_info(auth_data);
 			if not token_info or not token_info.session then
@@ -652,6 +662,17 @@ local supported_errors = {
 	"application/json",
 };
 
+-- strip some stuff, notably the optional traceback table that casues stack overflow in util.json
+local function simplify_error(e)
+	return {
+		type = e.type;
+		condition = e.condition;
+		text = e.text;
+		extra = e.extra;
+		source = e.source;
+	};
+end
+
 local http_server = require "net.http.server";
 module:hook_object_event(http_server, "http-error", function (event)
 	local request, response = event.request, event.response;
@@ -674,7 +695,7 @@ module:hook_object_event(http_server, "http-error", function (event)
 		end
 		return json.encode({
 				type = "error",
-				error = event.error,
+				error = simplify_error(event.error),
 				code = event.code,
 			});
 	end

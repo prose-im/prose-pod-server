@@ -10,3 +10,7 @@ tasks:
   release:
     desc: Release a new version.
     cmd: ./scripts/release {{ .CLI_ARGS }}
+
+  update:plugins:
+    desc: Update Prosody community modules
+    cmd: hg -R plugins/community pull --update
