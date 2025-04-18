@@ -12,7 +12,10 @@ RUN apk add --no-cache \
   lua5.4-dev \
   libidn-dev \
   openssl-dev \
-  libidn-dev
+  libidn-dev \
+  luarocks5.4 \
+  sqlite-dev
+RUN luarocks-5.4 install lsqlite3
 
 COPY ./prosody /build
 
@@ -39,11 +42,13 @@ RUN apk add --no-cache \
   lua5.4-socket \
   lua5.4-filesystem \
   lua5.4-sec \
-  lua5.4-unbound
+  lua5.4-unbound \
+  sqlite-libs
 
 COPY --from=build /bin/prosody bin/
 COPY --from=build /bin/prosodyctl bin/
 COPY --from=build /lib/prosody/ /lib/prosody/
+COPY --from=build /usr/local/lib/lua/5.4/lsqlite3.so /usr/lib/lua/5.4/
 
 COPY ./plugins/*/ /usr/local/lib/prosody/modules/
 
