@@ -47,7 +47,8 @@ local function init_admin(force)
     local password = module:get_option_string("init_admin_password");
     if not password then
       local var_name = module:get_option_string("init_admin_password_env_var_name", "SUPERADMIN_PASSWORD");
-      password = os.getenv(var_name);
+      local default = module:get_option_string("init_admin_default_password");
+      password = os.getenv(var_name) or default;
       if not password then
         return false, ("Environment variable `%s` not defined."):format(var_name);
       end
