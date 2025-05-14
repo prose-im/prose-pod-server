@@ -51,6 +51,7 @@ COPY --from=build /lib/prosody/ /lib/prosody/
 COPY --from=build /usr/local/lib/lua/5.4/lsqlite3.so /usr/lib/lua/5.4/
 
 COPY ./plugins/*/ /usr/local/lib/prosody/modules/
+COPY ./pod-bootstrap.cfg.lua /usr/share/prose/prosody.bootstrap.cfg.lua
 
 RUN addgroup -S prosody
 RUN adduser --no-create-home -S prosody -G prosody
@@ -65,6 +66,7 @@ RUN chown prosody:prosody \
 
 VOLUME /etc/prosody/
 VOLUME /var/lib/prosody/
+VOLUME /usr/share/prose/
 
 # [public] Client connections
 EXPOSE 5222/tcp
