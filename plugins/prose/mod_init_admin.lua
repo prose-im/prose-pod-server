@@ -16,22 +16,22 @@ local prosody = _G.prosody;
 local hosts = prosody.hosts;
 
 local function init_admin(force)
-  module:log("debug", "Initializing superadmin account…");
-
   -- Read JID from Prosody configuration
   local jid = module:get_option_string("init_admin_jid");
   if not jid then
-    return false, "`init_admin_jid` must be defined in the Prosody configuration file.";
+    return false, "`init_admin_jid` not defined in Prosody's configuration file, cannot initialize superadmin account.";
   end
   local username, host = jid_prepped_split(jid);
   if not (username and host) then
-    return false, "Invalid JID. Check `init_admin_jid` in the Prosody configuration file.";
+    return false, "Invalid JID. Check `init_admin_jid` in Prosody's configuration file.";
   end
 
   if not force and um.user_exists(username, host) then
     module:log("debug", "Superadmin account already exists.");
     return true;
   end
+
+  module:log("debug", "Initializing superadmin account…");
 
   local role = "prosody:operator";
 
@@ -76,7 +76,7 @@ end
 function handle_reload(force)
   local ok, err = init_admin(force);
   if not ok then
-    module:log("error", err);
+    module:log(force and "error" or "debug", err);
   end
 end
 
