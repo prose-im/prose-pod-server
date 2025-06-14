@@ -53,8 +53,8 @@ COPY --from=build /usr/local/lib/lua/5.4/lsqlite3.so /usr/lib/lua/5.4/
 COPY ./plugins/*/ /usr/local/lib/prosody/modules/
 COPY ./pod-bootstrap.cfg.lua /usr/share/prose/prosody.bootstrap.cfg.lua
 
-RUN addgroup -S prosody
-RUN adduser --no-create-home -S prosody -G prosody
+RUN addgroup -S --gid 1001 prosody
+RUN adduser -S --uid 1001 -G prosody --no-create-home prosody
 
 RUN mkdir \
   /var/lib/prosody/ \
