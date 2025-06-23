@@ -42,17 +42,17 @@ docker run --rm \
 openssl req \
   -x509 \
   -newkey rsa:2048 \
-  -keyout /host/path/to/etc/prosody/certs/prose.org.local.key \
-  -out /host/path/to/etc/prosody/certs/prose.org.local.crt \
+  -keyout /host/path/to/etc/prosody/certs/prose.local.key \
+  -out /host/path/to/etc/prosody/certs/prose.local.crt \
   -sha256 \
   -days 3650 \
   -nodes \
-  -subj "/CN=prose.org.local" \
-  -addext "subjectAltName = DNS:groups.prose.org.local"
+  -subj "/CN=prose.local" \
+  -addext "subjectAltName = DNS:groups.prose.local"
 ```
 
 - Make sure to add the generate certificate to your keychain and mark it as trusted.
-- Also, add a section in `/etc/hosts`: `127.0.0.1 prose.org.local groups.prose.org.local`
+- Also, add a section in `/etc/hosts`: `127.0.0.1 prose.local groups.prose.local`
 
 ## Build
 
