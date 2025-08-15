@@ -13,13 +13,10 @@ log = {
 }
 
 -- Network interfaces/ports
-interfaces = { "*" }
 c2s_ports = { 5222 }
 s2s_ports = { 5269 }
 http_ports = { 5280 }
-http_interfaces = { "*" }
 https_ports = {}
-https_interfaces = {}
 
 -- Modules
 plugin_paths = { "/usr/local/lib/prosody/modules" }
