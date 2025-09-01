@@ -15,7 +15,17 @@ RUN apk add --no-cache \
   libidn-dev \
   luarocks5.4 \
   sqlite-dev
-RUN luarocks-5.4 install lsqlite3
+
+# BUG: Broken. See [Builds broken by issue in LuaSQLite3 · Issue #8 · prose-im/prose-pod-server](https://github.com/prose-im/prose-pod-server/issues/8).
+#RUN luarocks-5.4 install lsqlite3
+
+# FIX: Unzip source manually downloaded from URL defined in
+# <https://luarocks.org/lsqlite3-0.9.6-1.rockspec>.
+COPY ./build /build
+RUN apk add --no-cache unzip
+RUN unzip /build/lsqlite3_v096.zip; \
+  cd /build/lsqlite3_v096; \
+  luarocks-5.4 make lsqlite3-0.9.6-1.rockspec
 
 COPY ./prosody /build
 
