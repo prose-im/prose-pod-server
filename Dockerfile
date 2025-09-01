@@ -64,6 +64,16 @@ RUN chown prosody:prosody \
   /var/lib/prosody/ \
   /var/run/prosody/
 
+ARG VERSION=''
+ARG COMMIT=''
+ARG BUILD_TIMESTAMP=''
+RUN SERVER_VERSION_DIR=/lib/prosody/prose.version.d && \
+  mkdir -p "${SERVER_VERSION_DIR:?}" && \
+  echo "${VERSION:-}" > "${SERVER_VERSION_DIR:?}"/VERSION && \
+  echo "${COMMIT:-}" > "${SERVER_VERSION_DIR:?}"/COMMIT && \
+  if [ -z "${BUILD_TIMESTAMP:-}" ]; then BUILD_TIMESTAMP="$(date -u -Iseconds)" && BUILD_TIMESTAMP="${BUILD_TIMESTAMP//+00:00/Z}"; fi && \
+  echo "${BUILD_TIMESTAMP:?}" > "${SERVER_VERSION_DIR:?}"/BUILD_TIMESTAMP
+
 VOLUME /etc/prosody/
 VOLUME /var/lib/prosody/
 VOLUME /usr/share/prose/

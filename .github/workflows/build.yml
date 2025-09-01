@@ -61,6 +61,10 @@ jobs:
           platforms: |
             linux/amd64
             linux/arm64
+          build-args: |
+            VERSION=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.version'] }}
+            COMMIT=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.revision'] }}
+            BUILD_TIMESTAMP=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.created'] }}
 
   create-github-release:
     needs: ship-docker-image
