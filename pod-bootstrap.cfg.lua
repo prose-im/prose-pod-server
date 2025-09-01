@@ -13,6 +13,7 @@ log = {
 }
 
 -- Network interfaces/ports
+local_interfaces = { "*", "::" }
 c2s_ports = { 5222 }
 s2s_ports = { 5269 }
 http_ports = { 5280 }
