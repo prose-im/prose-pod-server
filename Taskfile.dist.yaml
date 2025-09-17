@@ -13,4 +13,9 @@ tasks:
 
   update:plugins:
     desc: Update Prosody community modules
-    cmd: hg -R plugins/community pull --update
+    cmds:
+      - hg -R plugins/community pull --update
+      - git add plugins/community
+      - "git commit -m 'feat(prosody): Update Prosody Community modules'"
+    preconditions:
+      - git diff --cached --quiet
