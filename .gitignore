@@ -1,5 +1,6 @@
 # Bloat
 plugins/community/.hg
+.task
 
 # Editor
 .nova

@@ -19,3 +19,18 @@ tasks:
       - "git commit -m 'feat(prosody): Update Prosody Community modules'"
     preconditions:
       - git diff --cached --quiet
+
+  dev:build:
+    desc: Build `proseim/prose-pod-server:local`
+    cmd: |-
+      docker build -t proseim/prose-pod-server:local \
+        --build-arg VERSION="$(cat VERSION)" \
+        --build-arg COMMIT="$(git rev-parse HEAD)" \
+        '{{ .ROOT_DIR }}'
+    sources:
+      - plugins/**
+      - prosody/**
+      - pod-bootstrap.cfg.lua
+      - VERSION
+      - Dockerfile
+      - .dockerignore
