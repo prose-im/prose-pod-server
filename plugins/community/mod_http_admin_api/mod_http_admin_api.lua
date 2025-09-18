@@ -610,7 +610,8 @@ function create_group(event)
 		{
 			name = group.name;
 		},
-		create_muc
+		create_muc,
+		group.id
 	);
 	if not group_id then
 		return 500;
@@ -632,10 +633,14 @@ function update_group(event, group) --luacheck: ignore 212/event
 	do
 		local group_id, member_name = group:match("^([^/]+)/members/([^/]+)$");
 		if group_id and member_name then
-			if not mod_groups.add_member(group_id, member_name) then
+			local ok, err = mod_groups.add_member(group_id, member_name);
+			if ok then
+				return 204;
+			elseif err == "group-not-found" then
+				return 404;
+			else
 				return 500;
 			end
-			return 204;
 		end
 	end
 

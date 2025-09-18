@@ -652,6 +652,10 @@ components:
         create_muc:
           type: boolean
           description: Create a MUC associated with the group
+        id:
+          type: string
+          description: Predefined group ID
+          nullable: true
     Group:
       type: object
       properties:
