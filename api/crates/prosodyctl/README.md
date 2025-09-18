@@ -1,0 +1,1 @@
+# Invoke `prosodyctl` in Rust

@@ -30,6 +30,8 @@ tasks:
     sources:
       - plugins/**
       - prosody/**
+      - api/src/**
+      - api/Cargo.toml
       - pod-bootstrap.cfg.lua
       - VERSION
       - Dockerfile
