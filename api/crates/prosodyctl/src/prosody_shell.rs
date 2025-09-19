@@ -33,10 +33,13 @@ pub struct ProsodyResponse {
 }
 
 impl ProsodyShell {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
+    #[inline]
     fn start_shell_<'a>(&'a mut self) -> anyhow::Result<&'a mut ProsodyShellHandle> {
         let mut child = Command::new("prosodyctl")
             .arg("shell")
@@ -61,6 +64,7 @@ impl ProsodyShell {
     }
 
     /// Get shell handle, starting the shell if needed.
+    #[must_use]
     fn get_handle_or_start<'a>(&'a mut self) -> anyhow::Result<&'a mut ProsodyShellHandle> {
         match self.handle {
             Some(ref mut handle) => Ok(handle),
@@ -183,14 +187,42 @@ impl ProsodyShell {
 
 // usermanager
 impl ProsodyShell {
-    pub async fn user_list(&mut self, domain: &str) -> anyhow::Result<Vec<String>> {
-        let command = format!("user:list(\"{domain}\")");
+    /// Lists users on the specified host, optionally filtering with a pattern.
+    #[must_use]
+    pub async fn user_list(
+        &mut self,
+        domain: &str,
+        pattern: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let command = match pattern {
+            None => format!(r#"user:list("{domain}")"#),
+            Some(pattern) => format!(r#"user:list("{domain}", "{pattern}")"#),
+        };
 
-        let response = self.exec(&command).await.context("Error listing users")?;
+        let response = (self.exec(&command))
+            .await
+            .context("Error listing user accounts")?;
 
         Ok(response.lines)
     }
 
+    /// Tests if the specified user account exists.
+    #[must_use]
+    pub async fn user_exists(&mut self, username: &str, host: &str) -> anyhow::Result<bool> {
+        let command = format!(r#"> require"core.usermanager".user_exists("{username}", "{host}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error testing if user account exists")?;
+
+        Ok(response.result_bool()?)
+    }
+
+    /// Creates the specified user account, with an optional primary role
+    /// assigned to it right away.
+    ///
+    /// WARN: Raises an error if the user already exists (does not update the
+    ///   password like `usermanager.create_user` does II(@RemiBardon)RC).
     pub async fn user_create(
         &mut self,
         jid: &str,
@@ -201,19 +233,106 @@ impl ProsodyShell {
         let password = secrecy::ExposeSecret::expose_secret(password);
 
         let command = match role {
-            Some(role) => format!(r#"user:create("{jid}", "{password}", "{role}")"#),
             None => format!(r#"user:create("{jid}", "{password}")"#),
+            Some(role) => format!(r#"user:create("{jid}", "{password}", "{role}")"#),
         };
 
-        let response = self.exec(&command).await.context("Error creating user")?;
+        let response = (self.exec(&command))
+            .await
+            .context("Error creating user account")?;
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    /// Sets the password for the specified user account.
+    pub async fn user_password(
+        &mut self,
+        jid: &str,
+        password: &Password,
+    ) -> anyhow::Result<String> {
+        #[cfg(feature = "secrecy")]
+        let password = secrecy::ExposeSecret::expose_secret(password);
+
+        let command = format!(r#"user:password("{jid}", "{password}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error setting user account password")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
+    }
+
+    /// Shows the primary role for a user.
+    #[must_use]
+    pub async fn user_role(&mut self, jid: &str, host: Option<&str>) -> anyhow::Result<String> {
+        let command = match host {
+            None => format!(r#"user:role("{jid}")"#),
+            Some(host) => format!(r#"user:role("{jid}", "{host}")"#),
+        };
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error getting user primary role")?;
+
+        let mut role = response.result.map_err(anyhow::Error::msg)?;
+
+        // NOTE: If the user has secondary roles, “ (primary)” is appended to
+        //   the user role in the result line. This removes it.
+        if let Some(slice) = role.strip_suffix(" (primary)") {
+            role = slice.to_owned();
+        }
+
+        Ok(role)
+    }
+
+    /// Sets the primary role of a user.
+    pub async fn user_set_role(
+        &mut self,
+        jid: &str,
+        host: Option<&str>,
+        new_role: &str,
+    ) -> anyhow::Result<String> {
+        let command = match host {
+            None => format!(r#"user:set_role("{jid}", "{new_role}")"#),
+            Some(host) => format!(r#"user:set_role("{jid}", "{host}", "{new_role}")"#),
+        };
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error setting user primary role")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
+    }
+
+    /// Disables the specified user account, preventing login.
+    pub async fn user_disable(&mut self, jid: &str) -> anyhow::Result<String> {
+        let command = format!(r#"user:disable("{jid}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error disabling user account")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
+    }
+
+    /// Enables the specified user account, restoring login access.
+    pub async fn user_enable(&mut self, jid: &str) -> anyhow::Result<String> {
+        let command = format!(r#"user:enable("{jid}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error enabling user account")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
+    }
+
+    /// Permanently removes the specified user account.
     pub async fn user_delete(&mut self, jid: &str) -> anyhow::Result<String> {
         let command = format!(r#"user:delete("{jid}")"#);
 
-        let response = self.exec(&command).await.context("Error deleting user")?;
+        let response = (self.exec(&command))
+            .await
+            .context("Error deleting user account")?;
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
@@ -227,11 +346,13 @@ impl ProsodyShell {
         host: Option<&str>,
     ) -> anyhow::Result<String> {
         let command = match host {
-            Some(host) => format!(r#"module:load("{module}", "{host}")"#),
             None => format!(r#"module:load("{module}")"#),
+            Some(host) => format!(r#"module:load("{module}", "{host}")"#),
         };
 
-        let response = self.exec(&command).await.context("Error loading module")?;
+        let response = (self.exec(&command))
+            .await
+            .context("Error loading module")?;
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
@@ -242,12 +363,11 @@ impl ProsodyShell {
         host: Option<&str>,
     ) -> anyhow::Result<String> {
         let command = match host {
-            Some(host) => format!(r#"module:unload("{module}", "{host}")"#),
             None => format!(r#"module:unload("{module}")"#),
+            Some(host) => format!(r#"module:unload("{module}", "{host}")"#),
         };
 
-        let response = self
-            .exec(&command)
+        let response = (self.exec(&command))
             .await
             .context("Error unloading module")?;
 
@@ -260,23 +380,22 @@ impl ProsodyShell {
         host: Option<&str>,
     ) -> anyhow::Result<String> {
         let command = match host {
-            Some(host) => format!(r#"module:reload("{module}", "{host}")"#),
             None => format!(r#"module:reload("{module}")"#),
+            Some(host) => format!(r#"module:reload("{module}", "{host}")"#),
         };
 
-        let response = self
-            .exec(&command)
+        let response = (self.exec(&command))
             .await
             .context("Error reloading module")?;
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    #[must_use]
     pub async fn module_is_loaded(&mut self, host: &str, module: &str) -> anyhow::Result<bool> {
         let command = format!(r#"> require"core.modulemanager".is_loaded("{host}", "{module}")"#);
 
-        let response = self
-            .exec(&command)
+        let response = (self.exec(&command))
             .await
             .context("Error testing if module is loaded")?;
 
@@ -318,7 +437,9 @@ impl ProsodyShell {
             }
         };
 
-        let response = self.exec(&command).await.context("Error creating group")?;
+        let response = (self.exec(&command))
+            .await
+            .context("Error creating group")?;
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
@@ -333,14 +454,13 @@ impl ProsodyShell {
         self.require_module(host, "groups_shell").await?;
 
         let command = match delay_update {
+            None => format!(r#"groups:add_member("{host}", "{group_id}", "{username}")"#),
             Some(delay_update) => format!(
                 r#"groups:add_member("{host}", "{group_id}", "{username}", "{delay_update}")"#
             ),
-            None => format!(r#"groups:add_member("{host}", "{group_id}", "{username}")"#),
         };
 
-        let response = self
-            .exec(&command)
+        let response = (self.exec(&command))
             .await
             .context("Error adding group member")?;
 
@@ -352,8 +472,7 @@ impl ProsodyShell {
 
         let command = format!(r#"groups:sync_group("{host}", "{group_id}")"#);
 
-        let response = self
-            .exec(&command)
+        let response = (self.exec(&command))
             .await
             .context("Error synchronizing group")?;
 
@@ -382,6 +501,8 @@ impl Drop for ProsodyShell {
 // MARK: - Helpers
 
 impl ProsodyResponse {
+    #[must_use]
+    #[inline]
     pub fn result_bool(&self) -> anyhow::Result<bool> {
         let result = (self.result)
             .as_ref()
@@ -393,7 +514,7 @@ impl ProsodyResponse {
             res => {
                 if cfg!(debug_assertions) {
                     // Raise error in debug mode to avoid missing such cases.
-                    let error_msg = format!("Got unexpected result: '{res}'.");
+                    let error_msg = format!("Got unexpected boolean result: '{res}'.");
                     tracing::error!("{error_msg}");
                     Err(anyhow::Error::msg(error_msg))
                 } else {
@@ -407,6 +528,8 @@ impl ProsodyResponse {
 /// Command without args since they can contain sensitive data.
 ///
 /// E.g.: `user:create("test@admin.prose.local", "password")` -> `user:create`.
+#[must_use]
+#[inline]
 fn command_name<'a>(command: &'a str) -> &'a str {
     assert!(command.contains("("));
     let paren_idx = command

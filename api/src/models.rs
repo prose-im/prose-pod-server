@@ -16,6 +16,16 @@ pub mod jid {
         pub fn new(node: &JidNode, domain: &JidDomain) -> Self {
             Self(format!("{node}@{domain}"))
         }
+
+        pub fn node(&self) -> &str {
+            let marker_idx = self.0.find("@").expect("A bare JID should contain a ‘@’");
+            &self.0[..marker_idx]
+        }
+
+        pub fn domain(&self) -> &str {
+            let marker_idx = self.0.find("@").expect("A bare JID should contain a ‘@’");
+            &self.0[(marker_idx + 1)..]
+        }
     }
 
     impl std::str::FromStr for BareJid {
