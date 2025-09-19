@@ -12,7 +12,7 @@ use prosodyctl::Prosodyctl;
 use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
-use crate::models::{BareJid, JidDomain, Password};
+use crate::models::{BareJid, JidDomain, JidNode, Password};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 
@@ -33,31 +33,33 @@ pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow
 
     let mut prosodyctl = Prosodyctl::new();
 
-    // > require"core.modulemanager".is_loaded("admin.prose.local", "admin_shell")
-    // prosody> | Result: true
-    // > require"core.modulemanager".is_loaded("admin.prose.local", "whatever")
-    // prosody> | Result: nil
-    //
-    // -> Parse “Result:”
+    let todo = true;
+    // FIXME: Add `server.domain` VirtualHost!
 
-    // !! > require"core.modulemanager".load_modules_for_host("admin.prose.local")
+    let service_accounts_credentials =
+        ServiceAccountsCredentials::new(app_config.as_ref(), &app_config.server.domain);
+    create_service_accounts(&mut prosodyctl, &service_accounts_credentials).await?;
 
-    // > require"core.modulemanager".get_modules("example.org")
-    // > require"core.modulemanager".get_modules("admin.prose.local")
-    // > require"core.modulemanager".is_loaded("admin.prose.local", "groups_internal")
-    // > require"core.modulemanager".get_module("admin.prose.local", "groups_internal").exists("group_id")
-    // > require"core.modulemanager".get_module("error", "groups_internal").exists("group_id")
-    // > require"core.modulemanager".get_module("admin.prose.local", "groups_internal").exists("team")
+    let groups = Groups::new(app_config.as_ref());
+    create_groups(&mut prosodyctl, &groups, &app_config.server.domain).await?;
 
-    // let service_accounts_credentials =
-    //     ServiceAccountsCredentials::new(app_config.as_ref(), &app_config.server.domain);
-    // create_service_accounts(&mut prosodyctl, &service_accounts_credentials).await?;
+    add_service_accounts_to_groups(
+        &mut prosodyctl,
+        service_accounts_credentials
+            .keys()
+            .into_iter()
+            .map(BareJid::node),
+        groups.keys().into_iter(),
+        &app_config.server.domain,
+    )
+    .await?;
 
-    // create_groups(&mut prosodyctl).await?;
-
-    // add_service_accounts_to_groups(&mut prosodyctl).await?;
-
-    // synchronize_rosters(&mut prosodyctl).await?;
+    synchronize_rosters(
+        &mut prosodyctl,
+        groups.keys().into_iter(),
+        &app_config.server.domain,
+    )
+    .await?;
 
     Ok(prosody_handle)
 }
@@ -138,7 +140,7 @@ async fn create_service_accounts(
     let role = "prosody:member";
 
     for (jid, password) in credentials.iter() {
-        if prosodyctl.user_exists(jid.node(), jid.domain()).await? {
+        if prosodyctl.user_exists(&jid.node(), &jid.domain()).await? {
             let summary = prosodyctl.user_password(jid, password).await?;
             tracing::info!("{summary}");
 
@@ -154,14 +156,48 @@ async fn create_service_accounts(
 }
 
 /// Creates the “Team” group for now, maybe more later.
-async fn create_groups(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
-    // TODO: Test if exists before creation
-    todo!()
+async fn create_groups(
+    prosodyctl: &mut Prosodyctl,
+    groups: &Groups,
+    server_domain: &JidDomain,
+) -> anyhow::Result<()> {
+    let host: &str = server_domain.as_ref();
+
+    for (group_id, group_info) in groups.iter() {
+        if !prosodyctl.groups_exists(host, group_id).await? {
+            let summary = prosodyctl
+                .groups_create(host, &group_info.name, None, Some(group_id))
+                .await?;
+            tracing::info!("{summary}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Adds the “prose-workspace” user to the “Team” group for now, maybe more later.
-async fn add_service_accounts_to_groups(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
-    todo!()
+async fn add_service_accounts_to_groups<'a, A, G>(
+    prosodyctl: &mut Prosodyctl,
+    service_accounts: A,
+    groups: G,
+    server_domain: &JidDomain,
+) -> anyhow::Result<()>
+where
+    A: Iterator<Item = JidNode>,
+    G: Iterator<Item = &'a String> + Clone,
+{
+    let host: &str = server_domain.as_ref();
+
+    for ref username in service_accounts {
+        for group_id in groups.clone() {
+            let summary = prosodyctl
+                .groups_add_member(host, group_id, username, Some(true))
+                .await?;
+            tracing::info!("{summary}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Synchronizes rosters (do group subscriptions).
@@ -171,9 +207,22 @@ async fn add_service_accounts_to_groups(prosodyctl: &mut Prosodyctl) -> anyhow::
 /// been skipped because they existed already. This means the automatic
 /// `do_all_group_subscriptions_by_group` might not be triggered. Since we are
 /// going to do the subscriptions here anyway, we used `delay_update` there.
-async fn synchronize_rosters(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
-    // - Synchronize rosters (if not already done by mod_auth_internal)
-    todo!()
+async fn synchronize_rosters<'a, G>(
+    prosodyctl: &mut Prosodyctl,
+    groups: G,
+    server_domain: &JidDomain,
+) -> anyhow::Result<()>
+where
+    G: Iterator<Item = &'a String>,
+{
+    let host: &str = server_domain.as_ref();
+
+    for group_id in groups {
+        let summary = prosodyctl.groups_sync(host, group_id).await?;
+        tracing::info!("{summary}");
+    }
+
+    Ok(())
 }
 
 // MARK: Data structures
@@ -185,9 +234,35 @@ struct ServiceAccountsCredentials(HashMap<BareJid, Password>);
 impl ServiceAccountsCredentials {
     fn new(config: &crate::config::ServiceAccountsConfig, server_domain: &JidDomain) -> Self {
         let mut data: HashMap<BareJid, Password> = HashMap::with_capacity(1);
+
         data.insert(
             config.prose_workspace_jid(server_domain),
             Password::random(),
+        );
+
+        Self(data)
+    }
+}
+
+#[derive(Debug)]
+#[repr(transparent)]
+struct Groups(HashMap<String, GroupInfo>);
+
+#[derive(Debug)]
+struct GroupInfo {
+    name: String,
+}
+
+impl Groups {
+    fn new(config: &crate::config::TeamsConfig) -> Self {
+        let mut data: HashMap<String, GroupInfo> = HashMap::with_capacity(1);
+
+        use crate::config::TeamsConfig;
+        data.insert(
+            TeamsConfig::MAIN_TEAM_GROUP_ID.to_owned(),
+            GroupInfo {
+                name: config.main_team_name.clone(),
+            },
         );
 
         Self(data)
@@ -209,6 +284,14 @@ fn unix_timestamp() -> u64 {
 
 impl std::ops::Deref for ServiceAccountsCredentials {
     type Target = HashMap<BareJid, Password>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Groups {
+    type Target = HashMap<String, GroupInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

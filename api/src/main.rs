@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
                 domain: JidDomain::from_str("example.org").unwrap(),
             },
             service_accounts: Default::default(),
+            teams: Default::default(),
         }
     };
 

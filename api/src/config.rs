@@ -7,6 +7,7 @@
 pub struct AppConfig {
     pub server: ServerConfig,
     pub service_accounts: ServiceAccountsConfig,
+    pub teams: TeamsConfig,
 }
 
 pub use server::*;
@@ -48,10 +49,37 @@ pub mod service_accounts {
     }
 }
 
+pub use teams::*;
+pub mod teams {
+    #[derive(Debug)]
+    pub struct TeamsConfig {
+        pub main_team_name: String,
+    }
+
+    impl TeamsConfig {
+        pub const MAIN_TEAM_GROUP_ID: &'static str = "team";
+        pub const DEFAULT_MAIN_TEAM_NAME: &'static str = "Team";
+    }
+
+    impl Default for TeamsConfig {
+        fn default() -> Self {
+            Self {
+                main_team_name: Self::DEFAULT_MAIN_TEAM_NAME.to_owned(),
+            }
+        }
+    }
+}
+
 // MARK: - Boilerplate
 
 impl AsRef<ServiceAccountsConfig> for AppConfig {
     fn as_ref(&self) -> &ServiceAccountsConfig {
         &self.service_accounts
+    }
+}
+
+impl AsRef<TeamsConfig> for AppConfig {
+    fn as_ref(&self) -> &TeamsConfig {
+        &self.teams
     }
 }

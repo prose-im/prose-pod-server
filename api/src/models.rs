@@ -17,14 +17,14 @@ pub mod jid {
             Self(format!("{node}@{domain}"))
         }
 
-        pub fn node(&self) -> &str {
+        pub fn node(&self) -> JidNode {
             let marker_idx = self.0.find("@").expect("A bare JID should contain a ‘@’");
-            &self.0[..marker_idx]
+            JidNode(self.0[..marker_idx].to_owned())
         }
 
-        pub fn domain(&self) -> &str {
+        pub fn domain(&self) -> JidDomain {
             let marker_idx = self.0.find("@").expect("A bare JID should contain a ‘@’");
-            &self.0[(marker_idx + 1)..]
+            JidDomain(self.0[(marker_idx + 1)..].to_owned())
         }
     }
 

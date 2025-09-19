@@ -215,7 +215,12 @@ impl ProsodyShell {
             .await
             .context("Error testing if user account exists")?;
 
-        Ok(response.result_bool()?)
+        let result = response
+            .result_bool()
+            .context(command_name(&command).to_owned())
+            .context("Error testing if user account exists")?;
+
+        Ok(result)
     }
 
     /// Creates the specified user account, with an optional primary role
@@ -478,6 +483,22 @@ impl ProsodyShell {
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
+
+    /// Tests if a group exists on a given host.
+    ///
+    /// NOTE: Does not require `mod_groups_shell` to be loaded.
+    #[must_use]
+    pub async fn groups_exists(&mut self, host: &str, group_id: &str) -> anyhow::Result<bool> {
+        let command = format!(
+            r#"> require"core.modulemanager".get_module("{host}", "groups_internal").exists("{group_id}")"#
+        );
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error testing if group exists")?;
+
+        Ok(response.result_bool()?)
+    }
 }
 
 // MARK: - Plumbing
@@ -510,7 +531,7 @@ impl ProsodyResponse {
 
         match result.as_str() {
             "true" => Ok(true),
-            "nil" => Ok(false),
+            "false" | "nil" => Ok(false),
             res => {
                 if cfg!(debug_assertions) {
                     // Raise error in debug mode to avoid missing such cases.
