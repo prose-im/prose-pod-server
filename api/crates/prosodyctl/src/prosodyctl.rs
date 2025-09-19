@@ -1,18 +1,16 @@
-// prose-pod-server-api
+// prosodyctl-rs
 //
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 //! See [prosodyctl – Prosody IM](https://prosody.im/doc/prosodyctl).
 
-mod prosody_shell;
-
 use std::process::Stdio;
 
 use anyhow::anyhow;
 use tokio::{process::Command, task::JoinHandle};
 
-use self::prosody_shell::ProsodyShell;
+use crate::prosody_shell::ProsodyShell;
 
 /// See [prosodyctl – Prosody IM](https://prosody.im/doc/prosodyctl).
 pub struct Prosodyctl {

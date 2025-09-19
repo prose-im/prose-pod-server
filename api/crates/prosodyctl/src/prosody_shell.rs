@@ -1,4 +1,4 @@
-// prose-pod-server-api
+// prosodyctl-rs
 //
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
@@ -11,6 +11,8 @@ use anyhow::{Context as _, anyhow};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::Duration;
+
+use crate::Password;
 
 #[derive(Debug, Default)]
 pub struct ProsodyShell {
@@ -164,28 +166,103 @@ impl ProsodyShell {
 // MARK: - Convenience methods for common operations
 
 impl ProsodyShell {
-    pub async fn list_users(&mut self, domain: &str) -> anyhow::Result<Vec<String>> {
+    pub async fn user_list(&mut self, domain: &str) -> anyhow::Result<Vec<String>> {
         let response = self
             .exec(&format!("user:list(\"{}\")", domain))
             .await
             .context("Error listing users")?;
+
         Ok(response.lines)
     }
 
-    pub async fn create_user(&mut self, jid: &str, password: &str) -> anyhow::Result<String> {
-        let response = self
-            .exec(&format!("user:create(\"{}\", \"{}\")", jid, password))
-            .await
-            .context("Error creating user")?;
+    pub async fn user_create(
+        &mut self,
+        jid: &str,
+        password: &Password,
+        role: Option<&str>,
+    ) -> anyhow::Result<String> {
+        #[cfg(feature = "secrecy")]
+        let password = secrecy::ExposeSecret::expose_secret(password);
+
+        let command = match role {
+            Some(role) => format!(r#"user:create("{jid}", "{password}", "{role}")"#),
+            None => format!(r#"user:create("{jid}", "{password}")"#),
+        };
+        let response = self.exec(&command).await.context("Error creating user")?;
+
         Ok(response.summary.unwrap_or_else(|| format!("Created {jid}")))
     }
 
-    pub async fn delete_user(&mut self, jid: &str) -> anyhow::Result<String> {
+    pub async fn user_delete(&mut self, jid: &str) -> anyhow::Result<String> {
         let response = self
-            .exec(&format!("user:delete(\"{}\")", jid))
+            .exec(&format!(r#"user:delete("{jid}")"#))
             .await
             .context("Error deleting user")?;
+
         Ok(response.summary.unwrap_or_else(|| format!("Deleted {jid}")))
+    }
+}
+
+#[cfg(feature = "mod_groups")]
+impl ProsodyShell {
+    pub async fn groups_create(
+        &mut self,
+        host: &str,
+        group_name: &str,
+        create_default_muc: Option<bool>,
+        group_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let command = match (create_default_muc, group_id) {
+            (None, None) => format!(r#"groups:create("{host}", "{group_name}")"#),
+            (Some(create_default_muc), None) => {
+                format!(r#"groups:create("{host}", "{group_name}", {create_default_muc})"#)
+            }
+            (Some(create_default_muc), Some(group_id)) => format!(
+                r#"groups:create("{host}", "{group_name}", {create_default_muc}, "{group_id}")"#
+            ),
+            (None, Some(group_id)) => {
+                format!(r#"groups:create("{host}", "{group_name}", nil, "{group_id}")"#)
+            }
+        };
+        let response = self.exec(&command).await.context("Error creating group")?;
+
+        Ok(response
+            .summary
+            .unwrap_or_else(|| format!("Created group {group_id:?}")))
+    }
+
+    pub async fn groups_add_member(
+        &mut self,
+        host: &str,
+        group_id: &str,
+        username: &str,
+        delay_update: Option<bool>,
+    ) -> anyhow::Result<String> {
+        let command = match delay_update {
+            Some(delay_update) => format!(
+                r#"groups:add_member("{host}", "{group_id}", "{username}", "{delay_update}")"#
+            ),
+            None => format!(r#"groups:add_member("{host}", "{group_id}", "{username}")"#),
+        };
+        let response = self
+            .exec(&command)
+            .await
+            .context("Error adding group member")?;
+
+        Ok(response
+            .summary
+            .unwrap_or_else(|| format!("Added {username} to group {group_id}")))
+    }
+
+    pub async fn groups_sync(&mut self, host: &str, group_id: &str) -> anyhow::Result<String> {
+        let response = self
+            .exec(&format!(r#"groups:sync_group("{host}", "{group_id}")"#))
+            .await
+            .context("Error synchronizing group")?;
+
+        Ok(response
+            .summary
+            .unwrap_or_else(|| format!("Synchronized {group_id}")))
     }
 }
 

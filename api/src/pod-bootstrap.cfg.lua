@@ -26,6 +26,7 @@ plugin_paths = { "/usr/local/lib/prosody/modules" }
 modules_enabled = {
   "auto_activate_hosts",
   "admin_shell",
+  "groups_shell",
 }
 
 -- Disable in-band registrations (done through the Prose Pod Dashboard/API)

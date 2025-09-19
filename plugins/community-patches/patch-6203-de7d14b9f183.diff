@@ -1,0 +1,34 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758275387 -25200
+#      Fri Sep 19 16:49:47 2025 +0700
+# Node ID de7d14b9f183183c6081ad657d1e73bce432f930
+# Parent  7012919c5cce2017b5ea4e79a960f19dbee4a88f
+mod_groups_shell: Also call `mod_groups.sync` on `groups:sync_group`
+
+This is useful when members were added with delayed update enabled
+(e.g. for performance reasons).
+
+Note that `groups:sync_group` will take longer to execute, but it’s
+an admin command so I don’t think it is an issue.
+
+diff -r 7012919c5cce -r de7d14b9f183 mod_groups_shell/mod_groups_shell.lua
+--- a/mod_groups_shell/mod_groups_shell.lua	Thu Sep 18 18:56:23 2025 +0700
++++ b/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 16:49:47 2025 +0700
+@@ -22,7 +22,16 @@
+ 		return false, "group id not given"
+ 	end
+ 
++	-- Emit `group-user-added` events in case it never fired (allowing
++	-- for example `mod_groups_muc_bookmarks` to inject bookmarks).
+ 	local ok, err = mod_groups.emit_member_events(group_id)
++	if not ok then
++		return ok, err
++	end
++
++	-- Perform group subscriptions (e.g. if it was delayed when adding a member).
++	-- NOTE: This operation is O(n^2).
++	ok, err = mod_groups.sync(group_id)
+ 	if ok then
+ 		return true, "Synchronised members"
+ 	else

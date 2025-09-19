@@ -5,12 +5,17 @@ edition = "2024"
 
 [lib]
 name = "prosodyctl"
-path = "src/prosodyctl.rs"
 
 [dependencies]
-anyhow = "1.0.99"
-tokio = { version = "1.47.1", features = ["rt-multi-thread", "time", "io-util", "process"] }
-tracing = "0.1.41"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "io-util", "process"] }
+tracing = "0.1"
+secrecy = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+[features]
+default = []
+secrecy = ["dep:secrecy"]
+mod_groups = []

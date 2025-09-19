@@ -10,7 +10,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.99"
 axum = "0.8.4"
-prosodyctl = { path = "crates/prosodyctl" }
+prosodyctl = { path = "crates/prosodyctl", features = ["secrecy", "mod_groups"] }
+rand = "0.9.2"
+secrecy = "0.10.3"
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "signal", "io-util", "process"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }

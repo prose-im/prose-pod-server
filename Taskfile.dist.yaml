@@ -36,3 +36,10 @@ tasks:
       - VERSION
       - Dockerfile
       - .dockerignore
+
+  internal:
+    cmds:
+      - pushd plugins/community
+      - hg init
+      - hg pull https://hg.prosody.im/prosody-modules/
+      - popd

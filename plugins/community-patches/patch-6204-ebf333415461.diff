@@ -1,0 +1,42 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758276424 -25200
+#      Fri Sep 19 17:07:04 2025 +0700
+# Node ID ebf333415461e3237e1f52fc1b13862cab53f2f8
+# Parent  de7d14b9f183183c6081ad657d1e73bce432f930
+mod_groups_shell: Add `groups:add_member`
+
+diff -r de7d14b9f183 -r ebf333415461 mod_groups_shell/mod_groups_shell.lua
+--- a/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 16:49:47 2025 +0700
++++ b/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 17:07:04 2025 +0700
+@@ -38,3 +38,30 @@
+ 		return ok, err
+ 	end
+ end
++
++function shell_env.groups:add_member(host, group_id, username, delay_update)
++	local print = self.session.print;
++
++	if not host then
++		return false, "host not given"
++	end
++
++	local mod_groups = modulemanager.get_module(host, "groups_internal")
++	if not mod_groups then
++		return false, host .. " does not have mod_groups_internal loaded"
++	end
++
++	if not group_id then
++		return false, "group id not given"
++	end
++	if not username then
++		return false, "username not given"
++	end
++
++	local ok, err = mod_groups.add_member(group_id, username, delay_update)
++	if ok then
++		return true, "Added " .. username .. " to group " .. group_id
++	else
++		return ok, err
++	end
++end

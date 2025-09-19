@@ -3,14 +3,13 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{io::Write, path::PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 
-use axum::{
-    Router,
-    http::StatusCode,
-    response::Response,
-    routing::{get, put},
-};
+use axum::Router;
+use axum::http::StatusCode;
+use axum::response::Response;
+use axum::routing::{get, put};
 
 pub fn startup_router() -> Router {
     Router::new()

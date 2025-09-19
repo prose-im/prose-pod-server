@@ -1,0 +1,30 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758196455 -25200
+#      Thu Sep 18 18:54:15 2025 +0700
+# Node ID 2dbabab46969977b2afed837b16f7a96c4becbe8
+# Parent  1c16bb49f6f661b9f402b083e82780691ea89316
+mod_http_admin_api: Return 404 when adding a member to an inexistent group
+
+Note that this behavior was documented in the OpenAPI description, but not implemented.
+
+diff -r 1c16bb49f6f6 -r 2dbabab46969 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Fri Apr 11 20:08:56 2025 -0500
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Thu Sep 18 18:54:15 2025 +0700
+@@ -632,10 +632,14 @@
+ 	do
+ 		local group_id, member_name = group:match("^([^/]+)/members/([^/]+)$");
+ 		if group_id and member_name then
+-			if not mod_groups.add_member(group_id, member_name) then
++			local ok, err = mod_groups.add_member(group_id, member_name);
++			if ok then
++				return 204;
++			elseif err == "group-not-found" then
++				return 404;
++			else
+ 				return 500;
+ 			end
+-			return 204;
+ 		end
+ 	end
+ 

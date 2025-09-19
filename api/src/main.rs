@@ -3,16 +3,22 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod config;
+mod models;
 mod router;
 mod startup;
+mod util;
 
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    str::FromStr,
+};
 
 use anyhow::anyhow;
 use axum::Router;
 use tokio::net::TcpListener;
 
-use crate::{router::startup_router, startup::startup};
+use crate::{config::AppConfig, router::startup_router, startup::startup};
 
 use self::router::router;
 
@@ -20,19 +26,31 @@ use self::router::router;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    main_inner()
+    let app_config = {
+        use crate::config::*;
+        use crate::models::jid::*;
+
+        AppConfig {
+            server: ServerConfig {
+                domain: JidDomain::from_str("example.org").unwrap(),
+            },
+            service_accounts: Default::default(),
+        }
+    };
+
+    main_inner(&app_config)
         .await
         .inspect_err(|err| tracing::error!("{err:#}"))
 }
 
-async fn main_inner() -> anyhow::Result<()> {
+async fn main_inner(app_config: &AppConfig) -> anyhow::Result<()> {
     // Bind to the API address to exit early if not available.
     let address = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080);
     let mut listener = TcpListener::bind(address).await?;
 
     // Run startup tasks.
     let startup_res = tokio::select! {
-        startup_res = startup() => match startup_res {
+        startup_res = startup(app_config) => match startup_res {
             Ok(prosody_handle) => Ok(Some(prosody_handle)),
             Err(err) => Err(err),
         },
