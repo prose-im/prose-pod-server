@@ -31,6 +31,7 @@ tasks:
       - plugins/**
       - prosody/**
       - api/src/**
+      - api/crates/**/src/**
       - api/Cargo.toml
       - pod-bootstrap.cfg.lua
       - VERSION
