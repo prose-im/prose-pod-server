@@ -58,7 +58,7 @@ function shell_env.groups:sync_group(host, group_id)
 	-- NOTE: This operation is O(n^2).
 	ok, err = mod_groups.sync(group_id)
 	if ok then
-		return true, "Synchronised members"
+		return true, "Synchronised group " .. group_id
 	else
 		return ok, err
 	end
