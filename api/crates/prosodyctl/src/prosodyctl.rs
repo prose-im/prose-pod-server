@@ -5,8 +5,6 @@
 
 //! See [prosodyctl – Prosody IM](https://prosody.im/doc/prosodyctl).
 
-use std::process::Stdio;
-
 use anyhow::anyhow;
 use tokio::{process::Command, task::JoinHandle};
 
@@ -36,8 +34,6 @@ impl Prosodyctl {
         };
 
         tokio::spawn(async move {
-            cmd.stdout(Stdio::null());
-
             let status = cmd.status().await?;
 
             if status.success() {

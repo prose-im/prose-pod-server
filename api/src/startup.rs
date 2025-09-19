@@ -39,15 +39,25 @@ pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow
     // prosody> | Result: nil
     //
     // -> Parse “Result:”
-    // -> “Result:”, “OK:”, “!” -> Get rid of `summary` + all into `result` (`Result`?)
 
-    // Got unexpected result line: "** Unable to connect to server - is it running? Is mod_admin_shell enabled?".
+    // !! > require"core.modulemanager".load_modules_for_host("admin.prose.local")
+
+    // > require"core.modulemanager".get_modules("example.org")
+    // > require"core.modulemanager".get_modules("admin.prose.local")
+    // > require"core.modulemanager".is_loaded("admin.prose.local", "groups_internal")
+    // > require"core.modulemanager".get_module("admin.prose.local", "groups_internal").exists("group_id")
+    // > require"core.modulemanager".get_module("error", "groups_internal").exists("group_id")
+    // > require"core.modulemanager".get_module("admin.prose.local", "groups_internal").exists("team")
 
     // let service_accounts_credentials =
     //     ServiceAccountsCredentials::new(app_config.as_ref(), &app_config.server.domain);
     // create_service_accounts(&mut prosodyctl, &service_accounts_credentials).await?;
 
     // create_groups(&mut prosodyctl).await?;
+
+    // add_service_accounts_to_groups(&mut prosodyctl).await?;
+
+    // synchronize_rosters(&mut prosodyctl).await?;
 
     Ok(prosody_handle)
 }
@@ -137,6 +147,24 @@ async fn create_service_accounts(
 
 /// Creates the “Team” group for now, maybe more later.
 async fn create_groups(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
+    // TODO: Test if exists before creation
+    todo!()
+}
+
+/// Adds the “prose-workspace” user to the “Team” group for now, maybe more later.
+async fn add_service_accounts_to_groups(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
+    todo!()
+}
+
+/// Synchronizes rosters (do group subscriptions).
+/// This ensures all group members are correctly subscribed.
+///
+/// Note that when creating groups in a previous step, most groups might have
+/// been skipped because they existed already. This means the automatic
+/// `do_all_group_subscriptions_by_group` might not be triggered. Since we are
+/// going to do the subscriptions here anyway, we used `delay_update` there.
+async fn synchronize_rosters(prosodyctl: &mut Prosodyctl) -> anyhow::Result<()> {
+    // - Synchronize rosters (if not already done by mod_auth_internal)
     todo!()
 }
 
