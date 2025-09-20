@@ -56,12 +56,10 @@ function shell_env.groups:sync_group(host, group_id)
 
 	-- Perform group subscriptions (e.g. if it was delayed when adding a member).
 	-- NOTE: This operation is O(n^2).
-	ok, err = mod_groups.sync(group_id)
-	if ok then
-		return true, "Synchronised group " .. group_id
-	else
-		return ok, err
-	end
+	mod_groups.sync(group_id);
+
+	-- NOTE: `mod_groups.sync` cannot fail.
+	return true, "Synchronised group " .. group_id
 end
 
 function shell_env.groups:add_member(host, group_id, username, delay_update)
