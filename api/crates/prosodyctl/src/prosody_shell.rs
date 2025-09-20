@@ -38,37 +38,16 @@ impl ProsodyShell {
         Self::default()
     }
 
-    #[must_use]
-    #[inline]
-    fn start_shell_<'a>(&'a mut self) -> anyhow::Result<&'a mut ProsodyShellHandle> {
-        let mut child = Command::new("prosodyctl")
-            .arg("shell")
-            .arg("--quiet")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("Failed spawning prosodyctl")?;
-
-        let stdin = (child.stdin.take()).ok_or(anyhow!("Failed to get prosodyctl stdin"))?;
-        let stdout = (child.stdout.take()).ok_or(anyhow!("Failed to get prosodyctl stdout"))?;
-        let reader = BufReader::new(stdout).lines();
-
-        let handle = self.handle.insert(ProsodyShellHandle {
-            process: child,
-            stdin,
-            stdout: reader,
-        });
-
-        Ok(handle)
-    }
-
     /// Get shell handle, starting the shell if needed.
     #[must_use]
-    fn get_handle_or_start<'a>(&'a mut self) -> anyhow::Result<&'a mut ProsodyShellHandle> {
+    async fn get_handle_or_start<'a>(&'a mut self) -> anyhow::Result<&'a mut ProsodyShellHandle> {
         match self.handle {
-            Some(ref mut handle) => Ok(handle),
-            None => self.start_shell_(),
+            Some(ref mut handle_ref) => Ok(handle_ref),
+            None => {
+                let handle = ProsodyShellHandle::new().await?;
+                let handle_ref = self.handle.insert(handle);
+                Ok(handle_ref)
+            }
         }
     }
 
@@ -88,12 +67,62 @@ impl ProsodyShell {
         command: &str,
         timeout: Duration,
     ) -> anyhow::Result<ProsodyResponse> {
+        // Get or start the shell.
+        let handle = self.get_handle_or_start().await?;
+
+        // Execute command.
+        handle.exec_with_timeout(command, timeout).await
+    }
+}
+
+impl ProsodyShellHandle {
+    #[must_use]
+    async fn new() -> anyhow::Result<Self> {
+        let mut child = Command::new("prosodyctl")
+            .arg("shell")
+            .arg("--quiet")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Failed spawning prosodyctl")?;
+
+        let stdin = (child.stdin.take()).ok_or(anyhow!("Failed to get prosodyctl stdin"))?;
+        let stdout = (child.stdout.take()).ok_or(anyhow!("Failed to get prosodyctl stdout"))?;
+        let reader = BufReader::new(stdout).lines();
+
+        let mut handle = ProsodyShellHandle {
+            process: child,
+            stdin,
+            stdout: reader,
+        };
+
+        // Import utilites to simplify commands later.
+        let imports = vec![
+            r#"> it = require"prosody.util.iterators""#,
+            r#"> dump = require"prosody.util.serialization".new({ preset = "oneline" })"#,
+            r#"> mm = require"core.modulemanager""#,
+            r#"> um = require"core.usermanager""#,
+        ];
+        let timeout = ProsodyShell::DEFAULT_TIMEOUT;
+        for import in imports {
+            (handle.exec_with_timeout(import, timeout))
+                .await
+                .context("Error when running `require`")?;
+        }
+
+        Ok(handle)
+    }
+
+    /// Execute a command with a custom timeout.
+    async fn exec_with_timeout(
+        &mut self,
+        command: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<ProsodyResponse> {
         // Check input.
         assert!(!command.is_empty());
-        assert!(command.len() < Self::MAX_COMMAND_LENGTH);
-
-        // Get or start the shell.
-        let handle = self.get_handle_or_start()?;
+        assert!(command.len() < ProsodyShell::MAX_COMMAND_LENGTH);
 
         // Log command (without args since they can contain sensitive data).
         {
@@ -105,11 +134,11 @@ impl ProsodyShell {
         }
 
         // Send command.
-        handle.stdin.write_all(command.as_bytes()).await?;
+        self.stdin.write_all(command.as_bytes()).await?;
         if !command.ends_with('\n') {
-            handle.stdin.write_u8(b'\n').await?;
+            self.stdin.write_u8(b'\n').await?;
         }
-        handle.stdin.flush().await?;
+        self.stdin.flush().await?;
 
         // Some constants to improve readability.
         const FIRST_LINE_PREFIX: &'static str = "prosody> ";
@@ -123,7 +152,7 @@ impl ProsodyShell {
         // Read response.
         let mut lines: Vec<String> = Vec::new();
         let mut result: Option<Result<String, String>> = None;
-        while let Some(full_line) = tokio::time::timeout(timeout, handle.stdout.next_line())
+        while let Some(full_line) = tokio::time::timeout(timeout, self.stdout.next_line())
             .await
             .context("Timeout")?
             .context("I/O error")?
@@ -185,6 +214,23 @@ impl ProsodyShell {
 
 // MARK: - Convenience methods for common operations
 
+// Miscellaneous
+impl ProsodyShell {
+    #[must_use]
+    pub async fn host_exists(&mut self, host: &str) -> anyhow::Result<bool> {
+        let command = format!(r#"> not not prosody.hosts["{host}"]"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error testing if host exists")?;
+
+        response
+            .result_bool()
+            .context(command_name(&command).to_owned())
+            .context("Error testing if host exists")
+    }
+}
+
 // usermanager
 impl ProsodyShell {
     /// Lists users on the specified host, optionally filtering with a pattern.
@@ -209,18 +255,20 @@ impl ProsodyShell {
     /// Tests if the specified user account exists.
     #[must_use]
     pub async fn user_exists(&mut self, username: &str, host: &str) -> anyhow::Result<bool> {
-        let command = format!(r#"> require"core.usermanager".user_exists("{username}", "{host}")"#);
+        if !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        let command = format!(r#"> um.user_exists("{username}", "{host}")"#);
 
         let response = (self.exec(&command))
             .await
             .context("Error testing if user account exists")?;
 
-        let result = response
+        response
             .result_bool()
             .context(command_name(&command).to_owned())
-            .context("Error testing if user account exists")?;
-
-        Ok(result)
+            .context("Error testing if user account exists")
     }
 
     /// Creates the specified user account, with an optional primary role
@@ -398,13 +446,53 @@ impl ProsodyShell {
 
     #[must_use]
     pub async fn module_is_loaded(&mut self, host: &str, module: &str) -> anyhow::Result<bool> {
-        let command = format!(r#"> require"core.modulemanager".is_loaded("{host}", "{module}")"#);
+        if host != "*" && !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        let command = format!(r#"> mm.is_loaded("{host}", "{module}")"#);
 
         let response = (self.exec(&command))
             .await
             .context("Error testing if module is loaded")?;
 
-        response.result_bool()
+        response
+            .result_bool()
+            .context(command_name(&command).to_owned())
+            .context("Error testing if module is loaded")
+    }
+
+    #[must_use]
+    pub async fn module_list(&mut self, host: &str) -> anyhow::Result<Vec<String>> {
+        if host != "*" && !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        // NOTE: We can’t just use `modulemanager.get_modules_for_host` as that
+        //   only returns *enabled* modules, and not the ones loaded via an
+        //   admin interface.
+        let command = format!(r#"> dump(it.to_array(it.keys(mm.get_modules("{host}"))))"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error listing modules")?;
+
+        response.result_string_array()
+    }
+
+    #[must_use]
+    pub async fn module_list_enabled(&mut self, host: &str) -> anyhow::Result<Vec<String>> {
+        if !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        let command = format!(r#"> dump(it.to_array(mm.get_modules_for_host("{host}")))"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error listing enabled modules")?;
+
+        response.result_string_array()
     }
 
     /// Just an internal helper.
@@ -413,6 +501,24 @@ impl ProsodyShell {
         if self.module_is_loaded(host, module).await? {
             Ok(())
         } else {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                match self.module_list(host).await {
+                    Ok(loaded) => {
+                        tracing::debug!("Loaded modules for '{host}': {loaded:?}");
+                    }
+                    Err(err) => {
+                        tracing::error!("Could not list loaded modules for '{host}': {err}")
+                    }
+                };
+                match self.module_list_enabled(host).await {
+                    Ok(enabled) => {
+                        tracing::debug!("Enabled modules for '{host}': {enabled:?}");
+                    }
+                    Err(err) => {
+                        tracing::error!("Could not list enabled modules for '{host}': {err}")
+                    }
+                };
+            }
             Err(anyhow!("Module '{module}' not loaded for '{host}'."))
         }
     }
@@ -427,7 +533,7 @@ impl ProsodyShell {
         create_default_muc: Option<bool>,
         group_id: Option<&str>,
     ) -> anyhow::Result<String> {
-        self.require_module(host, "groups_shell").await?;
+        self.require_module("*", "groups_shell").await?;
 
         let command = match (create_default_muc, group_id) {
             (None, None) => format!(r#"groups:create("{host}", "{group_name}")"#),
@@ -456,7 +562,7 @@ impl ProsodyShell {
         username: &str,
         delay_update: Option<bool>,
     ) -> anyhow::Result<String> {
-        self.require_module(host, "groups_shell").await?;
+        self.require_module("*", "groups_shell").await?;
 
         let command = match delay_update {
             None => format!(r#"groups:add_member("{host}", "{group_id}", "{username}")"#),
@@ -473,7 +579,7 @@ impl ProsodyShell {
     }
 
     pub async fn groups_sync(&mut self, host: &str, group_id: &str) -> anyhow::Result<String> {
-        self.require_module(host, "groups_shell").await?;
+        self.require_module("*", "groups_shell").await?;
 
         let command = format!(r#"groups:sync_group("{host}", "{group_id}")"#);
 
@@ -489,15 +595,19 @@ impl ProsodyShell {
     /// NOTE: Does not require `mod_groups_shell` to be loaded.
     #[must_use]
     pub async fn groups_exists(&mut self, host: &str, group_id: &str) -> anyhow::Result<bool> {
-        let command = format!(
-            r#"> require"core.modulemanager".get_module("{host}", "groups_internal").exists("{group_id}")"#
-        );
+        self.require_module(host, "groups_internal").await?;
+
+        let command =
+            format!(r#"> mm.get_module("{host}", "groups_internal").exists("{group_id}")"#);
 
         let response = (self.exec(&command))
             .await
             .context("Error testing if group exists")?;
 
-        Ok(response.result_bool()?)
+        response
+            .result_bool()
+            .context(command_name(&command).to_owned())
+            .context("Error testing if group exists")
     }
 }
 
@@ -544,6 +654,47 @@ impl ProsodyResponse {
             }
         }
     }
+
+    #[must_use]
+    #[inline]
+    pub fn result_string_array(&self) -> anyhow::Result<Vec<String>> {
+        let result = (self.result)
+            .as_ref()
+            .map_err(|err| anyhow::Error::msg(err.clone()))?;
+
+        Ok(lua_string_to_string_array(result))
+    }
+}
+
+fn lua_string_to_array_iter(lua: &str) -> impl Iterator<Item = &str> {
+    assert!(
+        lua.starts_with("{"),
+        "Lua array should start with `{{`. Got `{lua}`."
+    );
+    assert!(
+        lua.ends_with("}"),
+        "Lua array should end with `}}`. Got `{lua}`."
+    );
+    assert!(
+        !lua.contains('\n'),
+        "Lua array should not contain any `\\n` (use `dump`). Got `{lua}`."
+    );
+
+    lua[1..(lua.len() - 1)]
+        .trim()
+        .split("; ")
+        // Skip first empty strings.
+        // NOTE: While this might create unexpected results, it’s good enough
+        //   for now as it will likely only ever appear when the input string
+        //   is empty (what we are trying to handle).
+        .skip_while(|s| s.is_empty())
+}
+
+fn lua_string_to_string_array(lua: &str) -> Vec<String> {
+    (lua_string_to_array_iter(lua))
+        .map(|s| s.trim_matches('"'))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Command without args since they can contain sensitive data.
@@ -552,10 +703,18 @@ impl ProsodyResponse {
 #[must_use]
 #[inline]
 fn command_name<'a>(command: &'a str) -> &'a str {
-    assert!(command.contains("("));
-    let paren_idx = command
-        .find("(")
-        .expect("Commands should use the default or advanced syntaxes.");
+    let marker_idx = if let Some(paren_idx) = command.find("(") {
+        // NOTE: For cases like `> mm.is_loaded("example.org", "group_shell")`.
+        paren_idx
+    } else if let Some(bracket_idx) = command.find("[") {
+        // NOTE: For cases like `> not not prosody.hosts["example.org"]`.
+        bracket_idx
+    } else if command.contains("require") {
+        // NOTE: For cases like `> mm = require"core.modulemanager"`.
+        command.len()
+    } else {
+        panic!("Commands should use either the default or the advanced syntax.")
+    };
 
     // Check if using the
     // [advanced syntax](https://prosody.im/doc/console#advanced_usage).
@@ -567,11 +726,11 @@ fn command_name<'a>(command: &'a str) -> &'a str {
         // NOTE: `command.find("(").expect` isn’t enough.
         //   For example, a password could contain a `(`.
         if let Some(space_idx) = command.find(" ") {
-            assert!(space_idx > paren_idx);
+            assert!(space_idx > marker_idx);
         }
     }
 
-    &command[..paren_idx]
+    &command[..marker_idx]
 }
 
 #[cfg(test)]
@@ -580,13 +739,55 @@ mod tests {
     fn test_command_name() {
         use super::command_name;
 
+        // Base syntax.
         let command = r#"user:create("test@example.org", "password")"#;
         assert_eq!(command_name(command), "user:create");
 
+        // Advanced syntax.
         let command = r#"> require"core.modulemanager".is_loaded("example.org", "group_shell")"#;
         assert_eq!(
             command_name(command),
             r#"> require"core.modulemanager".is_loaded"#,
         );
+
+        // Advanced cases
+        let advanced = vec![
+            (
+                r#"> require"core.modulemanager".is_loaded("example.org", "group_shell")"#,
+                r#"> require"core.modulemanager".is_loaded"#,
+            ),
+            (
+                r#"> not not prosody.hosts["example.org"]"#,
+                r#"> not not prosody.hosts"#,
+            ),
+            (
+                r#"> mm = require"core.modulemanager""#,
+                r#"> mm = require"core.modulemanager""#,
+            ),
+        ];
+        for (command, name) in advanced.into_iter() {
+            assert_eq!(command_name(command), name, "command: {command}");
+        }
+    }
+
+    #[test]
+    fn test_lua_parse_array() {
+        use super::lua_string_to_string_array;
+
+        // NOTE: The format is enforced by `prosody.util.serialization`’s
+        //   preset `"oneline"` (imported as `dump`).
+        let cases = vec![
+            (r#"{}"#, vec![]),
+            (r#"{ "offline" }"#, vec!["offline"]),
+            (
+                r#"{ "offline"; "presence"; "c2s" }"#,
+                vec![
+                    "offline", "presence", "c2s",
+                ],
+            ),
+        ];
+        for (lua, rust) in cases {
+            assert_eq!(lua_string_to_string_array(lua), rust, "lua: {lua}");
+        }
     }
 }

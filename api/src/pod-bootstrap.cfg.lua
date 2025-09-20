@@ -38,6 +38,11 @@ s2s_require_encryption = true
 s2s_secure_auth = false
 
 -- Server hosts and components
+VirtualHost "{{server_domain}}"
+  modules_enabled = {
+    "groups_internal",
+  }
+
 VirtualHost "admin.prose.local"
   admins = { "prose-pod-api@admin.prose.local" }
 

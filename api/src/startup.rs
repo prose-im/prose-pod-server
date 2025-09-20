@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use prosodyctl::Prosodyctl;
@@ -17,11 +17,13 @@ use crate::models::{BareJid, JidDomain, JidNode, Password};
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 
 pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
+    let start = Instant::now();
+
     let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
 
     backup_prosody_conf_if_needed(prosody_config_file_path)?;
 
-    apply_bootstrap_config(prosody_config_file_path)?;
+    apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
 
     // Launch Prosody.
     let prosody = Prosodyctl::new();
@@ -32,9 +34,6 @@ pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut prosodyctl = Prosodyctl::new();
-
-    let todo = true;
-    // FIXME: Add `server.domain` VirtualHost!
 
     let service_accounts_credentials =
         ServiceAccountsCredentials::new(app_config.as_ref(), &app_config.server.domain);
@@ -60,6 +59,8 @@ pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow
         &app_config.server.domain,
     )
     .await?;
+
+    tracing::info!("Started up in {:.0?}.", start.elapsed());
 
     Ok(prosody_handle)
 }
@@ -110,7 +111,10 @@ fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> anyhow::Res
     }
 }
 
-fn apply_bootstrap_config(prosody_config_file_path: &Path) -> anyhow::Result<()> {
+fn apply_bootstrap_config(
+    prosody_config_file_path: &Path,
+    server_domain: &JidDomain,
+) -> anyhow::Result<()> {
     use std::fs::File;
     use std::io::Write as _;
 
@@ -121,8 +125,12 @@ fn apply_bootstrap_config(prosody_config_file_path: &Path) -> anyhow::Result<()>
         .open(prosody_config_file_path)
         .context("Error opening Prosody config file")?;
 
+    let bootstrap_config_template = include_str!("pod-bootstrap.cfg.lua");
+
+    let bootstrap_config = bootstrap_config_template.replace("{{server_domain}}", server_domain);
+
     prosody_config_file
-        .write_all(include_str!("pod-bootstrap.cfg.lua").as_bytes())
+        .write_all(bootstrap_config.as_bytes())
         .context("Error writing Prosody config file")?;
 
     Ok(())
@@ -142,13 +150,13 @@ async fn create_service_accounts(
     for (jid, password) in credentials.iter() {
         if prosodyctl.user_exists(&jid.node(), &jid.domain()).await? {
             let summary = prosodyctl.user_password(jid, password).await?;
-            tracing::info!("{summary}");
+            tracing::info!("user_password: {summary}");
 
             let summary = prosodyctl.user_set_role(jid, None, role).await?;
-            tracing::info!("{summary}");
+            tracing::info!("user_set_role: {summary}");
         } else {
             let summary = prosodyctl.user_create(jid, password, Some(role)).await?;
-            tracing::info!("{summary}");
+            tracing::info!("user_create: {summary}");
         };
     }
 
@@ -168,7 +176,7 @@ async fn create_groups(
             let summary = prosodyctl
                 .groups_create(host, &group_info.name, None, Some(group_id))
                 .await?;
-            tracing::info!("{summary}");
+            tracing::info!("groups_create: {summary}");
         }
     }
 
@@ -193,7 +201,7 @@ where
             let summary = prosodyctl
                 .groups_add_member(host, group_id, username, Some(true))
                 .await?;
-            tracing::info!("{summary}");
+            tracing::info!("groups_add_member: {summary}");
         }
     }
 
@@ -219,7 +227,7 @@ where
 
     for group_id in groups {
         let summary = prosodyctl.groups_sync(host, group_id).await?;
-        tracing::info!("{summary}");
+        tracing::info!("groups_sync: {summary}");
     }
 
     Ok(())
