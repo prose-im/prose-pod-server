@@ -4,9 +4,13 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod config;
+mod errors;
+mod extractors;
 mod models;
+mod responders;
 mod router;
 mod startup;
+mod state;
 mod util;
 
 use std::{
@@ -18,9 +22,10 @@ use anyhow::anyhow;
 use axum::Router;
 use tokio::net::TcpListener;
 
-use crate::{config::AppConfig, router::startup_router, startup::startup};
-
-use self::router::router;
+pub(crate) use self::config::AppConfig;
+use self::router::{router, startup_router};
+use self::startup::startup;
+pub(crate) use self::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,12 +44,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    main_inner(&app_config)
+    main_inner(app_config)
         .await
         .inspect_err(|err| tracing::error!("{err:#}"))
 }
 
-async fn main_inner(app_config: &AppConfig) -> anyhow::Result<()> {
+async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     // Bind to the API address to exit early if not available.
     let address = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080);
     let mut listener = TcpListener::bind(address).await?;
@@ -52,7 +57,7 @@ async fn main_inner(app_config: &AppConfig) -> anyhow::Result<()> {
     // Run startup tasks.
     let startup_res = tokio::select! {
         startup_res = startup(app_config) => match startup_res {
-            Ok(prosody_handle) => Ok(Some(prosody_handle)),
+            Ok(res) => Ok(Some(res)),
             Err(err) => Err(err),
         },
 
@@ -70,7 +75,7 @@ async fn main_inner(app_config: &AppConfig) -> anyhow::Result<()> {
     }?;
 
     // Stop now if we should shutdown gracefully.
-    let Some(prosody_handle) = startup_res else {
+    let Some((prosody_handle, app_state)) = startup_res else {
         return Ok(());
     };
 
@@ -79,11 +84,11 @@ async fn main_inner(app_config: &AppConfig) -> anyhow::Result<()> {
     tokio::select! {
         res = {
             tracing::info!("Now serving all routes on {address}…");
-            serve(listener, router())
+            serve(listener, router(app_state))
         } => res,
 
         // Keep Prosody running in the back.
-        join_res = prosody_handle => match join_res {
+        join_res = prosody_handle.into_future() => match join_res {
             Ok(res) => res,
             Err(join_err) => Err(anyhow!(join_err)),
         },

@@ -6,13 +6,54 @@ members = ["crates/*"]
 name = "prose-pod-server-api"
 version = "0.1.0"
 edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
 
 [dependencies]
 anyhow = "1.0.99"
 axum = "0.8.4"
+base64 = { version = "0.22.1", default-features = false }
+prosody-http = { path = "crates/prosody-http", features = ["secrecy", "mod_http_oauth2"] }
 prosodyctl = { path = "crates/prosodyctl", features = ["secrecy", "mod_groups"] }
 rand = "0.9.2"
 secrecy = "0.10.3"
+serde_json = "1.0.145"
+serde_with = "3.14.1"
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "signal", "io-util", "process"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+[dev-dependencies]
+axum = { version = "*", features = ["macros"] }
+
+# See defaults at <https://doc.rust-lang.org/cargo/reference/profiles.html#dev>.
+# NOTE: We made some values explicit, even if they're already the default.
+[profile.dev]
+opt-level = 0
+# NOTE: In most cases, we won't need debug information in the binary (which adds a LOT of bloat).
+#   If needed, use the `dev-debug` profile.
+debug = false
+debug-assertions = true
+
+[profile.dev-debug]
+inherits = "dev"
+debug = true
+
+[profile.staging]
+inherits = "dev"
+lto = "thin"
+debug = false
+debug-assertions = false
+panic = "unwind"
+incremental = true
+
+# See defaults at <https://doc.rust-lang.org/cargo/reference/profiles.html#release>.
+# NOTE: We made some values explicit, even if they're already the default.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+debug = false
+debug-assertions = false
+# NOTE: No need to `strip = "debuginfo"` since debug info won't be generated in the first place.
+strip = "symbols"
+panic = "unwind"

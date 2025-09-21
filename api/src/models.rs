@@ -9,6 +9,7 @@ pub mod jid {
 
     // TODO: Parse `BareJid`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    #[derive(serde_with::DeserializeFromStr)]
     #[repr(transparent)]
     pub struct BareJid(String);
 
@@ -60,6 +61,7 @@ pub mod jid {
 
     // TODO: Parse `JidNode`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    #[derive(serde_with::DeserializeFromStr)]
     #[repr(transparent)]
     pub struct JidNode(String);
 
@@ -95,6 +97,7 @@ pub mod jid {
 
     // TODO: Parse `JidDomain`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    #[derive(serde_with::DeserializeFromStr)]
     #[repr(transparent)]
     pub struct JidDomain(String);
 
@@ -131,7 +134,7 @@ pub use password::*;
 pub mod password {
     use secrecy::SecretString;
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     #[repr(transparent)]
     pub struct Password(SecretString);
 
@@ -140,7 +143,7 @@ pub mod password {
 
         // NOTE: Not just in `Default` to allow more explicit code.
         pub fn random() -> Self {
-            Self(crate::util::strong_random_password())
+            Self(crate::util::random_strong_password())
         }
     }
 
@@ -174,6 +177,43 @@ pub mod password {
 
         fn deref(&self) -> &Self::Target {
             &self.0
+        }
+    }
+}
+
+pub use auth::*;
+pub mod auth {
+    use secrecy::SecretString;
+
+    use crate::models::BareJid;
+
+    #[derive(Debug, Clone)]
+    #[repr(transparent)]
+    pub struct AuthToken(pub SecretString);
+
+    /// Information about who made the API call.
+    #[derive(Debug, Clone)]
+    pub struct CallerInfo {
+        pub jid: BareJid,
+        pub primary_role: String,
+    }
+
+    // MARK: Boilerplate
+
+    impl std::ops::Deref for AuthToken {
+        type Target = SecretString;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl<T> From<T> for AuthToken
+    where
+        SecretString: From<T>,
+    {
+        fn from(value: T) -> Self {
+            Self(SecretString::from(value))
         }
     }
 }

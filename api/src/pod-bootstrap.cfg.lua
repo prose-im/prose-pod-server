@@ -11,7 +11,7 @@ authentication = "internal_hashed"
 default_storage = "internal"
 
 log = {
-  debug = "*console",
+  debug = "*console";
 }
 
 -- Network interfaces/ports
@@ -24,9 +24,12 @@ https_ports = {}
 -- Modules
 plugin_paths = { "/usr/local/lib/prosody/modules" }
 modules_enabled = {
-  "auto_activate_hosts",
-  "admin_shell",
-  "groups_shell",
+  "auto_activate_hosts";
+  "admin_shell";
+  "groups_shell";
+}
+modules_disabled = {
+  "s2s";
 }
 
 -- Disable in-band registrations (done through the Prose Pod Dashboard/API)
@@ -34,22 +37,31 @@ allow_registration = false
 
 -- Mandate highest security levels
 c2s_require_encryption = true
-s2s_require_encryption = true
-s2s_secure_auth = false
 
 -- Server hosts and components
 VirtualHost "{{server_domain}}"
   modules_enabled = {
-    "groups_internal",
+    "groups_internal";
+    "http_oauth2";
   }
+
+  -- mod_http_oauth2
+  allowed_oauth2_grant_types = {
+    "authorization_code";
+    "refresh_token";
+    "password";
+  }
+  oauth2_access_token_ttl = 10800
+  oauth2_refresh_token_ttl = 0
+  random_oauth2_registration_key = "{{oauth2_registration_key}}"
 
 VirtualHost "admin.prose.local"
   admins = { "prose-pod-api@admin.prose.local" }
 
   -- Modules
   modules_enabled = {
-    "admin_rest",
-    "init_admin",
+    "admin_rest";
+    "init_admin";
   }
 
   -- HTTP settings

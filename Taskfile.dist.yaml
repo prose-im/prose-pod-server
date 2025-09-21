@@ -22,11 +22,16 @@ tasks:
 
   dev:build:
     desc: Build `proseim/prose-pod-server:local`
-    cmd: |-
-      docker build -t proseim/prose-pod-server:local \
-        --build-arg VERSION="$(cat VERSION)" \
-        --build-arg COMMIT="$(git rev-parse HEAD)" \
-        '{{ .ROOT_DIR }}'
+    cmds:
+      - |-
+        docker build -t proseim/prose-pod-server:local \
+          --build-arg VERSION="$(cat VERSION)" \
+          --build-arg COMMIT="$(git rev-parse HEAD)" \
+          --build-arg CARGO_PROFILE='{{ .CARGO_PROFILE }}' \
+          '{{ .ROOT_DIR }}'
+      - echo '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' > .task/checksum/dev-build-profile
+    vars:
+      CARGO_PROFILE: '{{ .CARGO_PROFILE | default "dev" }}'
     sources:
       - plugins/**
       - prosody/**
@@ -37,6 +42,9 @@ tasks:
       - VERSION
       - Dockerfile
       - .dockerignore
+    status:
+      - >-
+        [[ "$(cat .task/checksum/dev-build-profile)" == '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' ]]
 
   internal:
     cmds:

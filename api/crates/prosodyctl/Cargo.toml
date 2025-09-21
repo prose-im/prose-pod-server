@@ -2,6 +2,8 @@
 name = "prosodyctl"
 version = "0.1.0"
 edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
 
 [lib]
 name = "prosodyctl"
@@ -13,7 +15,7 @@ tracing = "0.1"
 secrecy = { version = "0.10", optional = true }
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = []

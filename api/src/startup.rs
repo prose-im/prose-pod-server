@@ -5,18 +5,26 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use prosody_http::mod_http_oauth2::OAuth2ClientConfig;
+use prosody_http::{ProsodyHttpConfig, mod_http_oauth2};
 use prosodyctl::Prosodyctl;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::config::AppConfig;
-use crate::models::{BareJid, JidDomain, JidNode, Password};
+use crate::models::{BareJid, JidDomain, JidNode};
+use crate::state::ServiceAccountsCredentials;
+use crate::util::random_oauth2_registration_key;
+use crate::{AppConfig, AppState};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 
-pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
+pub async fn startup(
+    app_config: AppConfig,
+) -> anyhow::Result<(JoinHandle<anyhow::Result<()>>, AppState)> {
     let start = Instant::now();
 
     let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
@@ -60,9 +68,29 @@ pub async fn startup(app_config: &AppConfig) -> anyhow::Result<JoinHandle<anyhow
     )
     .await?;
 
+    let prosody_http_config = Arc::new(ProsodyHttpConfig {
+        url: "http://localhost:5280".to_owned(),
+    });
+    let oauth2_client_config = OAuth2ClientConfig {
+        client_name: "Prose Pod Server API".to_owned(),
+        client_uri: "https://prose-pod-server:8080".to_owned(),
+        redirect_uris: vec!["https://prose-pod-server:8080/redirect".to_owned()],
+        ..Default::default()
+    };
+
+    let oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
+    oauth2.register().await?;
+
     tracing::info!("Started up in {:.0?}.", start.elapsed());
 
-    Ok(prosody_handle)
+    let app_state = AppState {
+        config: Arc::new(app_config),
+        prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+        service_accounts_credentials: Arc::new(service_accounts_credentials),
+        oauth2_client: Arc::new(oauth2),
+    };
+
+    Ok((prosody_handle, app_state))
 }
 
 // MARK: Steps
@@ -115,6 +143,7 @@ fn apply_bootstrap_config(
     prosody_config_file_path: &Path,
     server_domain: &JidDomain,
 ) -> anyhow::Result<()> {
+    use secrecy::ExposeSecret as _;
     use std::fs::File;
     use std::io::Write as _;
 
@@ -127,7 +156,13 @@ fn apply_bootstrap_config(
 
     let bootstrap_config_template = include_str!("pod-bootstrap.cfg.lua");
 
-    let bootstrap_config = bootstrap_config_template.replace("{{server_domain}}", server_domain);
+    let oauth2_registration_key = random_oauth2_registration_key();
+    let bootstrap_config = bootstrap_config_template
+        .replace("{{server_domain}}", server_domain)
+        .replace(
+            "{{oauth2_registration_key}}",
+            oauth2_registration_key.expose_secret(),
+        );
 
     prosody_config_file
         .write_all(bootstrap_config.as_bytes())
@@ -184,6 +219,10 @@ async fn create_groups(
 }
 
 /// Adds the “prose-workspace” user to the “Team” group for now, maybe more later.
+///
+/// NOTE: Adding the “prose-workspace” XMPP account to everyone’s rosters is
+///   required for them to receive Workspace icon/accent color updates
+///   (and all future PEP-based features).
 async fn add_service_accounts_to_groups<'a, A, G>(
     prosodyctl: &mut Prosodyctl,
     service_accounts: A,
@@ -237,23 +276,6 @@ where
 
 #[derive(Debug)]
 #[repr(transparent)]
-struct ServiceAccountsCredentials(HashMap<BareJid, Password>);
-
-impl ServiceAccountsCredentials {
-    fn new(config: &crate::config::ServiceAccountsConfig, server_domain: &JidDomain) -> Self {
-        let mut data: HashMap<BareJid, Password> = HashMap::with_capacity(1);
-
-        data.insert(
-            config.prose_workspace_jid(server_domain),
-            Password::random(),
-        );
-
-        Self(data)
-    }
-}
-
-#[derive(Debug)]
-#[repr(transparent)]
 struct Groups(HashMap<String, GroupInfo>);
 
 #[derive(Debug)]
@@ -289,14 +311,6 @@ fn unix_timestamp() -> u64 {
 }
 
 // MARK: - Boilerplate
-
-impl std::ops::Deref for ServiceAccountsCredentials {
-    type Target = HashMap<BareJid, Password>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 impl std::ops::Deref for Groups {
     type Target = HashMap<String, GroupInfo>;

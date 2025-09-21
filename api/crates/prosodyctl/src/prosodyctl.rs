@@ -11,6 +11,7 @@ use tokio::{process::Command, task::JoinHandle};
 use crate::prosody_shell::ProsodyShell;
 
 /// See [prosodyctl – Prosody IM](https://prosody.im/doc/prosodyctl).
+#[derive(Debug)]
 pub struct Prosodyctl {
     shell: ProsodyShell,
 }

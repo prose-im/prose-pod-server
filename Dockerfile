@@ -15,12 +15,15 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS api-build
 COPY --from=api-plan /usr/src/prose-pod-server-api/recipe.json recipe.json
+
+ARG CARGO_PROFILE='release'
+
 # Build dependencies.
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --recipe-path recipe.json --profile "${CARGO_PROFILE}"
 
 # Build the application.
 COPY api .
-RUN cargo install --path . --bin prose-pod-server-api
+RUN cargo install --path . --bin prose-pod-server-api --profile "${CARGO_PROFILE}"
 
 
 
