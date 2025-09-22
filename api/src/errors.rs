@@ -34,7 +34,7 @@ pub fn internal_server_error(
 
     // Log error debug information with a unique ID,
     // and reference this ID in the user-facing description.
-    let error_id = crate::util::random_string(8);
+    let error_id = crate::util::random_id(8);
     tracing::error!(error_id, "Internal error: {public_description}: {error:?}");
     let description = format!("{public_description} logged as {error_id}.");
 

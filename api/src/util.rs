@@ -31,7 +31,7 @@ pub mod rand {
     ///   [`crate::util::secrets::random_secret`].
     #[must_use]
     #[inline]
-    pub fn random_string(length: usize) -> String {
+    pub fn random_string_alphanumeric(length: usize) -> String {
         use rand::{Rng as _, distr::Alphanumeric};
 
         // NOTE: Code taken from <https://rust-lang-nursery.github.io/rust-cookbook/algorithms/randomness.html#create-random-passwords-from-a-set-of-alphanumeric-characters>.
@@ -40,6 +40,13 @@ pub mod rand {
             .take(length)
             .map(char::from)
             .collect::<String>()
+    }
+
+    /// Generates a random ID (essentially a random alphanumeric string)
+    #[must_use]
+    #[inline]
+    pub fn random_id(length: usize) -> String {
+        self::random_string_alphanumeric(length)
     }
 }
 
@@ -53,10 +60,11 @@ pub mod secrets {
     pub fn random_secret(length: usize) -> SecretString {
         assert!(length >= 16);
 
-        super::rand::random_string(length).into()
+        super::rand::random_string_alphanumeric(length).into()
     }
 
     /// Generates a very strong random password.
+    // FIXME: Use a wider character set.
     #[must_use]
     #[inline]
     pub fn random_strong_password() -> SecretString {
