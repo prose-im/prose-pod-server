@@ -35,11 +35,6 @@ module:provides("http", {
       local build_timestamp = read_version("BUILD_TIMESTAMP") or "";
       local build_date = string.sub(build_timestamp, 1, string.len('2000-01-01'));
 
-      -- Add "v" as a prefix in the tag if not already there (stylistic choice).
-      if string.sub(tag, 1, 1) ~= "v" then
-        tag = "v" .. tag;
-      end
-
       event.response.headers.content_type = "application/json";
       return json.encode({
         version = tag.." ("..build_date..")";
