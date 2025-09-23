@@ -69,7 +69,7 @@ pub async fn startup(
     .await?;
 
     let prosody_http_config = Arc::new(ProsodyHttpConfig {
-        url: "http://localhost:5280".to_owned(),
+        url: "http://prose-pod-server:5280".to_owned(),
     });
     let oauth2_client_config = OAuth2ClientConfig {
         client_name: "Prose Pod Server API".to_owned(),

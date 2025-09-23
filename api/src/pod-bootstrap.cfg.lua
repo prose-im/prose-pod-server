@@ -45,6 +45,9 @@ VirtualHost "{{server_domain}}"
     "http_oauth2";
   }
 
+  -- HTTP settings
+  http_host = "prose-pod-server"
+
   -- mod_http_oauth2
   allowed_oauth2_grant_types = {
     "authorization_code";
@@ -53,7 +56,7 @@ VirtualHost "{{server_domain}}"
   }
   oauth2_access_token_ttl = 10800
   oauth2_refresh_token_ttl = 0
-  random_oauth2_registration_key = "{{oauth2_registration_key}}"
+  oauth2_registration_key = "{{oauth2_registration_key}}"
 
 VirtualHost "admin.prose.local"
   admins = { "prose-pod-api@admin.prose.local" }

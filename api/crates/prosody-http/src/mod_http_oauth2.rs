@@ -334,6 +334,7 @@ pub struct OAuth2ClientMetadata {
     pub scope: Option<String>,
 
     /// See [`PartialClientMetadata::contacts`].
+    #[serde(default)]
     pub contacts: Vec<String>,
 
     /// See [`PartialClientMetadata::tos_uri`].

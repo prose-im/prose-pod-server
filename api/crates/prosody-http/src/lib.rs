@@ -112,7 +112,7 @@ impl From<ureq::Error> for ProsodyHttpError {
     fn from(err: ureq::Error) -> Self {
         match err {
             ureq::Error::StatusCode(403) => Self::forbidden("Check Prosody logs."),
-            _ => Self::Internal(anyhow::Error::new(err).context("Request error2")),
+            _ => Self::Internal(anyhow::Error::new(err).context("Request error")),
         }
     }
 }
