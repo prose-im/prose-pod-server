@@ -1,0 +1,48 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759553492 -28800
+#      Sat Oct 04 12:51:32 2025 +0800
+# Node ID 0ee669208ac15586dd7d56acea03891f383ffb81
+# Parent  c37333c4fe8619939711fb4663522c70359c4944
+mod_invites_register_api: Support rejecting invites by token via `DELETE /invite/*`
+
+diff -r c37333c4fe86 -r 0ee669208ac1 mod_invites_register_api/mod_invites_register_api.lua
+--- a/mod_invites_register_api/mod_invites_register_api.lua	Sat Sep 20 14:44:29 2025 +0700
++++ b/mod_invites_register_api/mod_invites_register_api.lua	Sat Oct 04 12:51:32 2025 +0800
+@@ -120,10 +120,36 @@
+ 	});
+ end
+ 
++function reject_invite(event, invite_token)
++	if not invite_token or #invite_token == 0 then
++		return 404;
++	end
++
++	local invite = invites.get(invite_token);
++	if not invite then
++		return 404;
++	end
++
++	local is_reusable = not not invite.reusable;
++	if is_reusable then
++		return 403, "invite-reusable";
++	end
++
++	if invite.type == "register" then
++		invites.delete_account_invite(invite_token);
++	else
++		-- Only allow deleting account invites.
++		return 403, "wrong-invite-type";
++	end
++
++	return 200;
++end
++
+ module:provides("http", {
+ 	default_path = "register_api";
+ 	route = {
+ 		["GET /invite/*"] = get_invite_info;
++		["DELETE /invite/*"] = reject_invite;
+ 		["POST /register"] = register_with_invite;
+ 	};
+ });

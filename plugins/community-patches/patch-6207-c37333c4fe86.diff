@@ -2,11 +2,11 @@
 # User Rémi Bardon <remi@remibardon.name>
 # Date 1758354269 -25200
 #      Sat Sep 20 14:44:29 2025 +0700
-# Node ID 4389f43715d4a640cab356de54a03210a8d3af21
-# Parent  29d960ec1fbc21dc9f0467d07d75b9c17db60993
+# Node ID c37333c4fe8619939711fb4663522c70359c4944
+# Parent  7a67c5be766c51527ee9fcb2c51ad29996e8561b
 mod_groups_shell: Fix return message of `groups:sync_group`
 
-diff -r 29d960ec1fbc -r 4389f43715d4 mod_groups_shell/mod_groups_shell.lua
+diff -r 7a67c5be766c -r c37333c4fe86 mod_groups_shell/mod_groups_shell.lua
 --- a/mod_groups_shell/mod_groups_shell.lua	Sat Sep 20 02:29:19 2025 +0700
 +++ b/mod_groups_shell/mod_groups_shell.lua	Sat Sep 20 14:44:29 2025 +0700
 @@ -56,12 +56,10 @@

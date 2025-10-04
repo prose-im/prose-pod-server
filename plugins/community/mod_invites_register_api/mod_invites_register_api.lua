@@ -20,6 +20,15 @@ function get_invite_info(event, invite_token)
 		return 404;
 	end
 
+	local additional_data = invite.additional_data;
+	local reset = additional_data and additional_data.allow_reset or nil;
+
+	if additional_data then
+		-- Remove keys already flattened (so “additional” data
+		-- really is additional in the JSON response itself).
+		additional_data.allow_reset = nil;
+	end
+
 	event.response.headers["Content-Type"] = json_content_type;
 	return json.encode({
 		site_name = site_name;
@@ -29,7 +38,11 @@ function get_invite_info(event, invite_token)
 		type = invite.type;
 		jid = invite.jid;
 		inviter = invite.inviter;
-		reset = invite.additional_data and invite.additional_data.allow_reset or nil;
+		created_at = invite.created_at;
+		expires = invite.expires;
+		reset = reset;
+		-- Add `additional_data` only if non-empty.
+		additional_data = additional_data and next(additional_data) and additional_data;
 	});
 end
 
@@ -120,10 +133,36 @@ function register_with_invite(event)
 	});
 end
 
+function reject_invite(event, invite_token)
+	if not invite_token or #invite_token == 0 then
+		return 404;
+	end
+
+	local invite = invites.get(invite_token);
+	if not invite then
+		return 404;
+	end
+
+	local is_reusable = not not invite.reusable;
+	if is_reusable then
+		return 403, "invite-reusable";
+	end
+
+	if invite.type == "register" then
+		invites.delete_account_invite(invite_token);
+	else
+		-- Only allow deleting account invites.
+		return 403, "wrong-invite-type";
+	end
+
+	return 200;
+end
+
 module:provides("http", {
 	default_path = "register_api";
 	route = {
 		["GET /invite/*"] = get_invite_info;
+		["DELETE /invite/*"] = reject_invite;
 		["POST /register"] = register_with_invite;
 	};
 });

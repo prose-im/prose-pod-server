@@ -2,13 +2,13 @@
 # User Rémi Bardon <remi@remibardon.name>
 # Date 1758196455 -25200
 #      Thu Sep 18 18:54:15 2025 +0700
-# Node ID 2dbabab46969977b2afed837b16f7a96c4becbe8
+# Node ID e29059c45cf972dc3310926011522afca2c4d904
 # Parent  1c16bb49f6f661b9f402b083e82780691ea89316
 mod_http_admin_api: Return 404 when adding a member to an inexistent group
 
 Note that this behavior was documented in the OpenAPI description, but not implemented.
 
-diff -r 1c16bb49f6f6 -r 2dbabab46969 mod_http_admin_api/mod_http_admin_api.lua
+diff -r 1c16bb49f6f6 -r e29059c45cf9 mod_http_admin_api/mod_http_admin_api.lua
 --- a/mod_http_admin_api/mod_http_admin_api.lua	Fri Apr 11 20:08:56 2025 -0500
 +++ b/mod_http_admin_api/mod_http_admin_api.lua	Thu Sep 18 18:54:15 2025 +0700
 @@ -632,10 +632,14 @@

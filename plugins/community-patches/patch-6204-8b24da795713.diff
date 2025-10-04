@@ -2,11 +2,11 @@
 # User Rémi Bardon <remi@remibardon.name>
 # Date 1758276424 -25200
 #      Fri Sep 19 17:07:04 2025 +0700
-# Node ID ebf333415461e3237e1f52fc1b13862cab53f2f8
-# Parent  de7d14b9f183183c6081ad657d1e73bce432f930
+# Node ID 8b24da7957133dde10387fa631c6bd228809fe7c
+# Parent  b0b0a20a7d872b6e95a1089ee74bd3fa90159d18
 mod_groups_shell: Add `groups:add_member`
 
-diff -r de7d14b9f183 -r ebf333415461 mod_groups_shell/mod_groups_shell.lua
+diff -r b0b0a20a7d87 -r 8b24da795713 mod_groups_shell/mod_groups_shell.lua
 --- a/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 16:49:47 2025 +0700
 +++ b/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 17:07:04 2025 +0700
 @@ -38,3 +38,30 @@

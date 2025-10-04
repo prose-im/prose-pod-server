@@ -1,0 +1,38 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759563500 -28800
+#      Sat Oct 04 15:38:20 2025 +0800
+# Node ID 0ed622b22a3e79a4cc701563acbd702c20b08cff
+# Parent  3b27af5e744564332ca223c2f7e1c5db5b9b6e96
+mod_invites_register_api: Also return non-processed `additional_data` in invite info objects
+
+diff -r 3b27af5e7445 -r 0ed622b22a3e mod_invites_register_api/mod_invites_register_api.lua
+--- a/mod_invites_register_api/mod_invites_register_api.lua	Sat Oct 04 15:36:58 2025 +0800
++++ b/mod_invites_register_api/mod_invites_register_api.lua	Sat Oct 04 15:38:20 2025 +0800
+@@ -20,6 +20,15 @@
+ 		return 404;
+ 	end
+ 
++	local additional_data = invite.additional_data;
++	local reset = additional_data and additional_data.allow_reset or nil;
++
++	if additional_data then
++		-- Remove keys already flattened (so “additional” data
++		-- really is additional in the JSON response itself).
++		additional_data.allow_reset = nil;
++	end
++
+ 	event.response.headers["Content-Type"] = json_content_type;
+ 	return json.encode({
+ 		site_name = site_name;
+@@ -31,7 +40,9 @@
+ 		inviter = invite.inviter;
+ 		created_at = invite.created_at;
+ 		expires = invite.expires;
+-		reset = invite.additional_data and invite.additional_data.allow_reset or nil;
++		reset = reset;
++		-- Add `additional_data` only if non-empty.
++		additional_data = additional_data and next(additional_data) and additional_data;
+ 	});
+ end
+ 

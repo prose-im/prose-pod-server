@@ -84,6 +84,17 @@ local function token_info_to_invite_info(token_info)
 	local source = additional_data and additional_data.source or nil;
 	local note = additional_data and additional_data.note or nil;
 	local reset = not not (additional_data and additional_data.allow_reset or nil);
+
+	if additional_data then
+		-- Remove keys already flattened (so “additional” data
+		-- really is additional in the JSON response itself).
+		additional_data.groups = nil;
+		additional_data.roles = nil;
+		additional_data.source = nil;
+		additional_data.note = nil;
+		additional_data.allow_reset = nil;
+	end
+
 	return {
 		id = token_info.token;
 		type = token_info.type;
@@ -99,6 +110,8 @@ local function token_info_to_invite_info(token_info)
 		source = source;
 		reset = reset;
 		note = note;
+		-- Add `additional_data` only if non-empty.
+		additional_data = additional_data and next(additional_data) and additional_data;
 	};
 end
 
@@ -150,7 +163,13 @@ function create_invite_type(event, invite_type)
 		if not options.username then
 			return 400;
 		end
-		invite = invites.create_account_reset(options.username, options.ttl);
+		local info = debug.getinfo(invites.create_account_reset, "u");
+		if info.nparams == 3 then
+			invite = invites.create_account_reset(options.username, options.additional_data, options.ttl);
+		else
+			-- COMPAT w/ previous versions not accepting `additional_data`
+			invite = invites.create_account_reset(options.username, options.ttl);
+		end
 	elseif invite_type == "group" then
 		if not options.groups then
 			return 400;
@@ -161,12 +180,14 @@ function create_invite_type(event, invite_type)
 			note = options.note;
 		}, options.ttl);
 	elseif invite_type == "account" then
-		invite = invites.create_account(options.username, {
-			source = source;
-			groups = options.groups;
-			roles = options.roles;
-			note = options.note;
-		}, options.ttl);
+		-- NOTE: This edits the table in-place. However we don’t care as we never
+		--   read the table later. This saves a clone operation.
+		local additional_data = options.additional_data or {};
+		additional_data.source = source;
+		additional_data.groups = options.groups;
+		additional_data.roles = options.roles;
+		additional_data.note = options.note;
+		invite = invites.create_account(options.username, additional_data, options.ttl);
 	else
 		return 400;
 	end
@@ -236,6 +257,7 @@ local function get_user_info(username)
 	end
 
 	return {
+		jid = jid.join(username, module.host);
 		username = username;
 		display_name = display_name;
 		role = primary_role and primary_role.name or nil;

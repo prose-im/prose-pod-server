@@ -1,0 +1,21 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759554165 -28800
+#      Sat Oct 04 13:02:45 2025 +0800
+# Node ID 0c2e3378e854d80fd41cc22ba9f41f0db8c9a38b
+# Parent  0ee669208ac15586dd7d56acea03891f383ffb81
+mod_http_admin_api: Remove property `token` from `Invite` docs
+
+diff -r 0ee669208ac1 -r 0c2e3378e854 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Sat Oct 04 12:51:32 2025 +0800
++++ b/mod_http_admin_api/openapi.yaml	Sat Oct 04 13:02:45 2025 +0800
+@@ -535,9 +535,6 @@
+           type: string
+           description: The JID of the invite, interpretation varies based by invite
+             type
+-        token:
+-          type: string
+-          description: Invite token
+         uri:
+           type: string
+           description: XMPP URI of the invite

@@ -1,0 +1,51 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759562984 -28800
+#      Sat Oct 04 15:29:44 2025 +0800
+# Node ID 1f7dadae87e2613fb656c1bd380e00196517e837
+# Parent  09c0781984a50f6051279586f593cb3f42c90402
+mod_http_admin_api: Also return non-processed `additional_data` in invite info objects
+
+diff -r 09c0781984a5 -r 1f7dadae87e2 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:26:22 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:29:44 2025 +0800
+@@ -84,6 +84,17 @@
+ 	local source = additional_data and additional_data.source or nil;
+ 	local note = additional_data and additional_data.note or nil;
+ 	local reset = not not (additional_data and additional_data.allow_reset or nil);
++
++	if additional_data then
++		-- Remove keys already flattened (so “additional” data
++		-- really is additional in the JSON response itself).
++		additional_data.groups = nil;
++		additional_data.roles = nil;
++		additional_data.source = nil;
++		additional_data.note = nil;
++		additional_data.allow_reset = nil;
++	end
++
+ 	return {
+ 		id = token_info.token;
+ 		type = token_info.type;
+@@ -99,6 +110,8 @@
+ 		source = source;
+ 		reset = reset;
+ 		note = note;
++		-- Add `additional_data` only if non-empty.
++		additional_data = additional_data and next(additional_data) and additional_data;
+ 	};
+ end
+ 
+diff -r 09c0781984a5 -r 1f7dadae87e2 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:26:22 2025 +0800
++++ b/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:29:44 2025 +0800
+@@ -578,6 +578,9 @@
+         reset:
+           type: boolean
+           description: "Indicates that this is an account reset for the account identified by 'username'"
++        additional_data:
++          type: object
++          description: Free-form object containing additional data attached to the invite.
+     NewAccountInvite:
+       type: object
+       properties:

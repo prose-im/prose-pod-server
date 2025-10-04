@@ -475,6 +475,9 @@ components:
     User:
       type: object
       properties:
+        jid:
+          type: string
+          description: XMPP bare JID of the user
         username:
           type: string
           description: XMPP username of the user
@@ -535,9 +538,6 @@ components:
           type: string
           description: The JID of the invite, interpretation varies based by invite
             type
-        token:
-          type: string
-          description: Invite token
         uri:
           type: string
           description: XMPP URI of the invite
@@ -578,6 +578,9 @@ components:
         reset:
           type: boolean
           description: "Indicates that this is an account reset for the account identified by 'username'"
+        additional_data:
+          type: object
+          description: Free-form object containing additional data attached to the invite.
     NewAccountInvite:
       type: object
       properties:
@@ -607,6 +610,10 @@ components:
           type: string
           nullable: true
           description: Free-form text note/annotation to help identify the invitation
+        additional_data:
+          type: object
+          description: Free-form object containing additional data to attach to the invite.
+          nullable: true
     NewGroupInvite:
       type: object
       properties:
@@ -642,6 +649,13 @@ components:
         ttl:
           type: number
           description: Time in seconds that the link will be valid. Defaults to 24 hours.
+          nullable: true
+        additional_data:
+          type: object
+          description: |-
+            Free-form object containing additional data to attach to the invite.
+
+            NOTE: Doesn’t work with all Prosody versions (needs a non-released patch).
           nullable: true
     NewGroup:
       type: object

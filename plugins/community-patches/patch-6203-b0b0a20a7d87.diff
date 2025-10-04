@@ -2,8 +2,8 @@
 # User Rémi Bardon <remi@remibardon.name>
 # Date 1758275387 -25200
 #      Fri Sep 19 16:49:47 2025 +0700
-# Node ID de7d14b9f183183c6081ad657d1e73bce432f930
-# Parent  7012919c5cce2017b5ea4e79a960f19dbee4a88f
+# Node ID b0b0a20a7d872b6e95a1089ee74bd3fa90159d18
+# Parent  0f0a835a5e55e6620074e08d3fcbdd4e4b4b72f1
 mod_groups_shell: Also call `mod_groups.sync` on `groups:sync_group`
 
 This is useful when members were added with delayed update enabled
@@ -12,7 +12,7 @@ This is useful when members were added with delayed update enabled
 Note that `groups:sync_group` will take longer to execute, but it’s
 an admin command so I don’t think it is an issue.
 
-diff -r 7012919c5cce -r de7d14b9f183 mod_groups_shell/mod_groups_shell.lua
+diff -r 0f0a835a5e55 -r b0b0a20a7d87 mod_groups_shell/mod_groups_shell.lua
 --- a/mod_groups_shell/mod_groups_shell.lua	Thu Sep 18 18:56:23 2025 +0700
 +++ b/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 16:49:47 2025 +0700
 @@ -22,7 +22,16 @@
