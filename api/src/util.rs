@@ -89,6 +89,8 @@ pub mod secrets {
 
 // MARK: - Error helpers
 
+pub const PROSODY_JIDS_ARE_VALID: &'static str = "JIDs coming from Prosody should always be valid";
+
 /// NOTE: Inspired by [`anyhow::Context`].
 pub trait Context<Res> {
     fn context(
@@ -148,6 +150,15 @@ impl Context<crate::responders::Error> for anyhow::Error {
 ///   context for the user if possible).
 pub trait NoContext<Res> {
     fn no_context(self) -> Res;
+}
+
+impl<E2> NoContext<E2> for anyhow::Error
+where
+    anyhow::Error: Context<E2>,
+{
+    fn no_context(self) -> E2 {
+        Context::context(self, crate::errors::ERROR_CODE_INTERNAL, "Internal error")
+    }
 }
 
 impl<T, E2> NoContext<Result<T, E2>> for Result<T, anyhow::Error>

@@ -42,7 +42,7 @@ pub fn internal_server_error(
         ERROR_KIND_INTERNAL,
         code,
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        "Internal server error".to_owned(),
+        "Internal server error",
         description,
     )
 }
@@ -58,7 +58,7 @@ pub fn unauthorized(description: impl Into<String>) -> Error {
         ERROR_KIND_AUTH,
         "UNAUTHORIZED",
         axum::http::StatusCode::UNAUTHORIZED,
-        "Unauthorized".to_owned(),
+        "Unauthorized",
         description,
     )
 }
@@ -70,7 +70,12 @@ pub fn forbidden(description: impl Into<String>) -> Error {
         ERROR_KIND_AUTH,
         "FORBIDDEN",
         axum::http::StatusCode::FORBIDDEN,
-        "Forbidden".to_owned(),
+        "Forbidden",
         description,
     )
 }
+
+// MARK: Other error kindw
+
+pub const ERROR_KIND_CONFLICT: &'static str = "CONFLICT_ERROR";
+pub const ERROR_KIND_VALIDATION: &'static str = "VALIDATION_ERROR";

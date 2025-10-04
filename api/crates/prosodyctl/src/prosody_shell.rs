@@ -14,6 +14,10 @@ use tokio::time::Duration;
 
 use crate::Password;
 
+pub mod errors {
+    pub use super::UserCreateError;
+}
+
 #[derive(Debug, Default)]
 pub struct ProsodyShell {
     handle: Option<ProsodyShellHandle>,
@@ -77,6 +81,7 @@ impl ProsodyShell {
 
 impl ProsodyShellHandle {
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, err)]
     async fn new() -> anyhow::Result<Self> {
         let mut child = Command::new("prosodyctl")
             .arg("shell")
@@ -115,6 +120,7 @@ impl ProsodyShellHandle {
     }
 
     /// Execute a command with a custom timeout.
+    #[tracing::instrument(level = "trace", skip_all, err)]
     async fn exec_with_timeout(
         &mut self,
         command: &str,
@@ -185,8 +191,8 @@ impl ProsodyShellHandle {
                 let line = &line[LOG_LINE_PREFIX.len()..];
                 lines.push(line.to_owned());
             } else if line.contains("warn\t") {
-                // NOTE: Prosody can show a warning on stdout when reading
-                //   its configuration file. It might look like:
+                // NOTE: Prosody can show a warning on stdout when starting up.
+                //   It might look like:
                 //
                 //   ```log
                 //   startup             warn\tConfiguration warning: /etc/prosody/prosody.cfg.lua:42: Duplicate option 'foo'
@@ -195,10 +201,20 @@ impl ProsodyShellHandle {
                 //   When we encounter it, we can just forward the log
                 //   and skip the line.
                 tracing::warn!("[prosody]: {line}");
+            } else if line.contains("error\t") {
+                // NOTE: Prosody can show an error on stdout when starting up.
+                //   It might look like:
+                //
+                //   ```log
+                //   certmanager         error\tError indexing certificate directory /etc/prosody/certs: cannot open /etc/prosody/certs: No such file or directory
+                //   ```
+                //
+                //   When we encounter it, abort.
+                return Err(anyhow!("Prosody error: {line:?}"));
             } else {
                 if cfg!(debug_assertions) {
                     // Raise error in debug mode to avoid missing such cases.
-                    return Err(anyhow!("Got unexpected result line: {line:?}."));
+                    return Err(anyhow!("Got unexpected result line: {line:?}"));
                 } else {
                     tracing::error!("[prosody]: {line}");
                 }
@@ -217,6 +233,7 @@ impl ProsodyShellHandle {
 // Miscellaneous
 impl ProsodyShell {
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(host), err)]
     pub async fn host_exists(&mut self, host: &str) -> anyhow::Result<bool> {
         let command = format!(r#"> not not prosody.hosts["{host}"]"#);
 
@@ -235,6 +252,7 @@ impl ProsodyShell {
 impl ProsodyShell {
     /// Lists users on the specified host, optionally filtering with a pattern.
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(domain, pattern), err)]
     pub async fn user_list(
         &mut self,
         domain: &str,
@@ -254,6 +272,7 @@ impl ProsodyShell {
 
     /// Tests if the specified user account exists.
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(username, host), err)]
     pub async fn user_exists(&mut self, username: &str, host: &str) -> anyhow::Result<bool> {
         if !self.host_exists(host).await? {
             return Err(anyhow!("Host '{host}' does not exit."));
@@ -276,12 +295,13 @@ impl ProsodyShell {
     ///
     /// WARN: Raises an error if the user already exists (does not update the
     ///   password like `usermanager.create_user` does II(@RemiBardon)RC).
+    #[tracing::instrument(level = "trace", skip_all, fields(jid, role), err)]
     pub async fn user_create(
         &mut self,
         jid: &str,
         password: &Password,
         role: Option<&str>,
-    ) -> anyhow::Result<String> {
+    ) -> Result<String, UserCreateError> {
         #[cfg(feature = "secrecy")]
         let password = secrecy::ExposeSecret::expose_secret(password);
 
@@ -294,10 +314,11 @@ impl ProsodyShell {
             .await
             .context("Error creating user account")?;
 
-        Ok(response.result.map_err(anyhow::Error::msg)?)
+        Ok(response.result?)
     }
 
     /// Sets the password for the specified user account.
+    #[tracing::instrument(level = "trace", skip_all, fields(jid), err)]
     pub async fn user_password(
         &mut self,
         jid: &str,
@@ -317,6 +338,7 @@ impl ProsodyShell {
 
     /// Shows the primary role for a user.
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(jid, host), err)]
     pub async fn user_role(&mut self, jid: &str, host: Option<&str>) -> anyhow::Result<String> {
         let command = match host {
             None => format!(r#"user:role("{jid}")"#),
@@ -339,6 +361,7 @@ impl ProsodyShell {
     }
 
     /// Sets the primary role of a user.
+    #[tracing::instrument(level = "trace", skip_all, fields(jid, host, new_role), err)]
     pub async fn user_set_role(
         &mut self,
         jid: &str,
@@ -358,6 +381,7 @@ impl ProsodyShell {
     }
 
     /// Disables the specified user account, preventing login.
+    #[tracing::instrument(level = "trace", skip_all, fields(jid), err)]
     pub async fn user_disable(&mut self, jid: &str) -> anyhow::Result<String> {
         let command = format!(r#"user:disable("{jid}")"#);
 
@@ -369,6 +393,7 @@ impl ProsodyShell {
     }
 
     /// Enables the specified user account, restoring login access.
+    #[tracing::instrument(level = "trace", skip_all, fields(jid), err)]
     pub async fn user_enable(&mut self, jid: &str) -> anyhow::Result<String> {
         let command = format!(r#"user:enable("{jid}")"#);
 
@@ -380,6 +405,7 @@ impl ProsodyShell {
     }
 
     /// Permanently removes the specified user account.
+    #[tracing::instrument(level = "trace", skip_all, fields(jid), err)]
     pub async fn user_delete(&mut self, jid: &str) -> anyhow::Result<String> {
         let command = format!(r#"user:delete("{jid}")"#);
 
@@ -389,10 +415,47 @@ impl ProsodyShell {
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
+
+    #[tracing::instrument(level = "trace", skip(self), err)]
+    pub async fn user_get_jids_with_role(
+        &mut self,
+        host: &str,
+        role_name: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        if !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        let command = format!(r#"> um.get_jids_with_role("{host}", "{role_name}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error listing enabled modules")?;
+
+        response.result_string_array()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UserCreateError {
+    #[error("User already exists.")]
+    Conflict,
+    #[error("{0}")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl From<String> for UserCreateError {
+    fn from(error: String) -> Self {
+        match error.as_str() {
+            "User exists" => Self::Conflict,
+            _ => Self::Internal(anyhow::Error::msg(error)),
+        }
+    }
 }
 
 // modulemanager
 impl ProsodyShell {
+    #[tracing::instrument(level = "trace", skip_all, fields(module, host), err)]
     pub async fn module_load(
         &mut self,
         module: &str,
@@ -410,6 +473,7 @@ impl ProsodyShell {
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(module, host), err)]
     pub async fn module_unload(
         &mut self,
         module: &str,
@@ -427,6 +491,7 @@ impl ProsodyShell {
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(module, host), err)]
     pub async fn module_reload(
         &mut self,
         module: &str,
@@ -445,6 +510,7 @@ impl ProsodyShell {
     }
 
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(host, module), err)]
     pub async fn module_is_loaded(&mut self, host: &str, module: &str) -> anyhow::Result<bool> {
         if host != "*" && !self.host_exists(host).await? {
             return Err(anyhow!("Host '{host}' does not exit."));
@@ -463,6 +529,7 @@ impl ProsodyShell {
     }
 
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(host), err)]
     pub async fn module_list(&mut self, host: &str) -> anyhow::Result<Vec<String>> {
         if host != "*" && !self.host_exists(host).await? {
             return Err(anyhow!("Host '{host}' does not exit."));
@@ -481,6 +548,7 @@ impl ProsodyShell {
     }
 
     #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(host), err)]
     pub async fn module_list_enabled(&mut self, host: &str) -> anyhow::Result<Vec<String>> {
         if !self.host_exists(host).await? {
             return Err(anyhow!("Host '{host}' does not exit."));
@@ -497,6 +565,7 @@ impl ProsodyShell {
 
     /// Just an internal helper.
     #[inline]
+    #[tracing::instrument(level = "trace", skip_all, fields(host, module), err)]
     async fn require_module(&mut self, host: &str, module: &str) -> anyhow::Result<()> {
         if self.module_is_loaded(host, module).await? {
             Ok(())
@@ -526,6 +595,7 @@ impl ProsodyShell {
 
 #[cfg(feature = "mod_groups")]
 impl ProsodyShell {
+    #[tracing::instrument(level = "trace", skip(self), err)]
     pub async fn groups_create(
         &mut self,
         host: &str,
@@ -555,6 +625,7 @@ impl ProsodyShell {
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    #[tracing::instrument(level = "trace", skip(self), err)]
     pub async fn groups_add_member(
         &mut self,
         host: &str,
@@ -578,6 +649,7 @@ impl ProsodyShell {
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 
+    #[tracing::instrument(level = "trace", skip(self), err)]
     pub async fn groups_sync(&mut self, host: &str, group_id: &str) -> anyhow::Result<String> {
         self.require_module("*", "groups_shell").await?;
 
@@ -594,6 +666,7 @@ impl ProsodyShell {
     ///
     /// NOTE: Does not require `mod_groups_shell` to be loaded.
     #[must_use]
+    #[tracing::instrument(level = "trace", skip(self), err)]
     pub async fn groups_exists(&mut self, host: &str, group_id: &str) -> anyhow::Result<bool> {
         self.require_module(host, "groups_internal").await?;
 
@@ -609,6 +682,47 @@ impl ProsodyShell {
             .context(command_name(&command).to_owned())
             .context("Error testing if group exists")
     }
+}
+
+#[cfg(feature = "mod_invites")]
+impl ProsodyShell {
+    // NOTE: Example output for `prosodyctl shell invite list example.org`:
+    //
+    //   ```txt
+    //   Token                    | Expires              | Description
+    //   tCydHSBO9PmORhiNW3Xb2b3u | 2025-10-06T16:05:34  | Register on example.org with username test
+    //   SPmxTuui_2u48UcI3BY-Qz9c | 2025-10-06T16:04:01  | Register on example.org
+    //   OK: 2 pending invites
+    //   ```
+    #[tracing::instrument(level = "trace", skip(self), err)]
+    pub async fn invite_list(&mut self, host: &str) -> anyhow::Result<Vec<InviteRow>> {
+        self.require_module(host, "invites").await?;
+
+        let command = format!(r#"invite:list("{host}")"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error listing invites")?;
+
+        let res = response.lines.into_iter().skip(1).map(|row| {
+            let mut cells = row
+                .splitn(3, " | ")
+                .map(|cell| cell.trim_ascii().to_owned());
+            InviteRow {
+                token: cells.next().unwrap(),
+                expires_at: cells.next().unwrap(),
+                description: cells.next().unwrap(),
+            }
+        });
+
+        Ok(res.collect())
+    }
+}
+
+pub struct InviteRow {
+    pub token: String,
+    pub expires_at: String,
+    pub description: String,
 }
 
 // MARK: - Plumbing

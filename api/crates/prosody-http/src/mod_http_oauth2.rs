@@ -50,6 +50,8 @@ impl ProsodyOAuth2Client {
     }
 
     pub async fn userinfo(&self, token: &Password) -> crate::Result<UserInfoResponse> {
+        // NOTE: `403 Forbidden` doesn’t map to `500 Internal Server Error`
+        //   thanks to `From<ureq::Error> for ProsodyHttpError`.
         let mut response = ureq::get(self.url("userinfo")).bearer_auth(token).call()?;
 
         let body: UserInfoResponse = response
@@ -62,7 +64,7 @@ impl ProsodyOAuth2Client {
 }
 
 impl ProsodyOAuth2Client {
-    /// Utility (non-OAuth 2.0) function that
+    /// Utility function (i.e. non-OAuth 2.0) that
     /// logs a user in using their credentials.
     pub async fn util_log_in(
         &self,
@@ -96,7 +98,14 @@ impl ProsodyOAuth2Client {
             ])?;
 
         let status = response.status();
-        if status == StatusCode::BAD_REQUEST {
+        if status.is_success() {
+            let body: TokenResponse = response
+                .body_mut()
+                .read_json()
+                .context(BAD_RESPONSE_CONTEXT)?;
+
+            Ok(body)
+        } else if status == StatusCode::BAD_REQUEST {
             // Read the reponse body, as `mod_http_oauth2` isn’t very
             // expressive with HTTP status codes.
             let body = response.body_mut().read_to_string()?;
@@ -110,13 +119,6 @@ impl ProsodyOAuth2Client {
             } else {
                 Err(crate::Error::from(response))
             }
-        } else if status.is_success() {
-            let body: TokenResponse = response
-                .body_mut()
-                .read_json()
-                .context(BAD_RESPONSE_CONTEXT)?;
-
-            Ok(body)
         } else {
             Err(crate::Error::from(response))
         }

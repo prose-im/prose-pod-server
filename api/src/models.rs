@@ -9,7 +9,7 @@ pub mod jid {
 
     // TODO: Parse `BareJid`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    #[derive(serde_with::DeserializeFromStr)]
+    #[derive(serde_with::DeserializeFromStr, serde_with::SerializeDisplay)]
     #[repr(transparent)]
     pub struct BareJid(String);
 
@@ -61,7 +61,7 @@ pub mod jid {
 
     // TODO: Parse `JidNode`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    #[derive(serde_with::DeserializeFromStr)]
+    #[derive(serde_with::DeserializeFromStr, serde_with::SerializeDisplay)]
     #[repr(transparent)]
     pub struct JidNode(String);
 
@@ -97,7 +97,7 @@ pub mod jid {
 
     // TODO: Parse `JidDomain`.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    #[derive(serde_with::DeserializeFromStr)]
+    #[derive(serde_with::DeserializeFromStr, serde_with::SerializeDisplay)]
     #[repr(transparent)]
     pub struct JidDomain(String);
 
@@ -134,7 +134,10 @@ pub use password::*;
 pub mod password {
     use secrecy::SecretString;
 
+    use crate::errors::ERROR_KIND_VALIDATION;
+
     #[derive(Debug, Clone)]
+    #[derive(serde_with::DeserializeFromStr)]
     #[repr(transparent)]
     pub struct Password(SecretString);
 
@@ -148,13 +151,26 @@ pub mod password {
     }
 
     // NOTE: Allows public creation while keeping `.0` private.
-    impl From<SecretString> for Password {
-        fn from(secret: SecretString) -> Self {
+    impl TryFrom<SecretString> for Password {
+        type Error = crate::responders::Error;
+
+        fn try_from(secret: SecretString) -> Result<Self, Self::Error> {
             use secrecy::ExposeSecret as _;
 
-            assert!(secret.expose_secret().len() >= Self::MIN_PASSWORD_LENGTH);
-
-            Self(secret)
+            if secret.expose_secret().len() >= Self::MIN_PASSWORD_LENGTH {
+                Ok(Self(secret))
+            } else {
+                Err(crate::responders::Error::new(
+                    ERROR_KIND_VALIDATION,
+                    "PASSWORD_TOO_SHORT",
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Password too short",
+                    format!(
+                        "Passwords must be at least {min_length} characters long.",
+                        min_length = Self::MIN_PASSWORD_LENGTH
+                    ),
+                ))
+            }
         }
     }
 
@@ -179,11 +195,20 @@ pub mod password {
             &self.0
         }
     }
+
+    impl std::str::FromStr for Password {
+        type Err = <Self as TryFrom<SecretString>>::Error;
+
+        fn from_str(str: &str) -> Result<Self, Self::Err> {
+            Self::try_from(SecretString::from(str))
+        }
+    }
 }
 
 pub use auth::*;
 pub mod auth {
     use secrecy::SecretString;
+    use serde::Serialize;
 
     use crate::models::BareJid;
 
@@ -193,8 +218,10 @@ pub mod auth {
 
     /// Information about who made the API call.
     #[derive(Debug, Clone)]
+    #[derive(Serialize)]
     pub struct CallerInfo {
         pub jid: BareJid,
+        #[serde(rename = "role")]
         pub primary_role: String,
     }
 

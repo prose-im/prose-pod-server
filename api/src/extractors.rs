@@ -15,7 +15,7 @@ mod prelude {
     pub(crate) use crate::{AppState, responders};
 }
 
-use crate::extractors::prelude::*;
+use crate::{extractors::prelude::*, util::PROSODY_JIDS_ARE_VALID};
 
 impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     type Rejection = responders::Error;
@@ -94,8 +94,7 @@ impl FromRequestParts<AppState> for crate::models::CallerInfo {
 
         let res: CachedValue = match state.oauth2_client.userinfo(&token).await {
             Ok(res) => {
-                let jid = (BareJid::from_str(res.jid()))
-                    .expect("JIDs coming from Prosody should always be valid");
+                let jid = (BareJid::from_str(res.jid())).expect(PROSODY_JIDS_ARE_VALID);
 
                 // FIXME: Replace calls to `prosodyctl` by calls to
                 //   Prosody modules to avoid blocking shared access

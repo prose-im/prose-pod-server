@@ -22,7 +22,7 @@ http_ports = { 5280 }
 https_ports = {}
 
 -- Modules
-plugin_paths = { "/usr/local/lib/prosody/modules" }
+plugin_paths = { "/usr/local/lib/prosody/modules/" }
 modules_enabled = {
   "auto_activate_hosts";
   "admin_shell";
@@ -43,6 +43,7 @@ VirtualHost "{{server_domain}}"
   modules_enabled = {
     "groups_internal";
     "http_oauth2";
+    "invites";
   }
 
   -- HTTP settings

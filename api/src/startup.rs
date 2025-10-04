@@ -180,7 +180,7 @@ async fn create_service_accounts(
     //   don’t have a concept of non-user account. Until we have our own roles,
     //   we will create service accounts as if it were normal users.
     // TODO: Use special role for service accounts.
-    let role = "prosody:member";
+    let role = "prosody:registered";
 
     for (jid, password) in credentials.iter() {
         if prosodyctl.user_exists(&jid.node(), &jid.domain()).await? {

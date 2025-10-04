@@ -48,9 +48,10 @@ impl Error {
         kind: &'static str,
         code: &'static str,
         status: StatusCode,
-        message: String,
+        message: impl Into<String>,
         description: impl Into<String>,
     ) -> Self {
+        let message: String = message.into();
         let description: String = description.into();
 
         // Check values.
@@ -84,6 +85,10 @@ impl Error {
             debug_assert_or_log_error(
                 !message.is_empty(),
                 format!("Error message cannot be empty."),
+            );
+            debug_assert_or_log_error(
+                !message.ends_with("."),
+                format!("Error message cannot end with a period (`.`)."),
             );
 
             debug_assert_or_log_error(
@@ -124,5 +129,11 @@ impl IntoResponse for Error {
         });
 
         (status, axum::Json(body)).into_response()
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.message, f)
     }
 }

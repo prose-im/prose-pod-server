@@ -6,6 +6,7 @@
 mod prosody_shell;
 mod prosodyctl;
 
+pub use prosody_shell::errors::*;
 pub use prosody_shell::{ProsodyResponse, ProsodyShell};
 pub use prosodyctl::Prosodyctl;
 #[cfg(feature = "secrecy")]
