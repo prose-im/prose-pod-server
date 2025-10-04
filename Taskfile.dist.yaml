@@ -28,6 +28,7 @@ tasks:
           --build-arg VERSION="$(cat VERSION)" \
           --build-arg COMMIT="$(git rev-parse HEAD)" \
           --build-arg CARGO_PROFILE='{{ .CARGO_PROFILE }}' \
+          {{ .CLI_ARGS }} \
           '{{ .ROOT_DIR }}'
       - echo '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' > .task/checksum/dev-build-profile
     vars:
