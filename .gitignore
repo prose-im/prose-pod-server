@@ -1,5 +1,5 @@
 # Bloat
-plugins/community/.hg*
+plugins/community/.hg
 .task
 
 # Editor
