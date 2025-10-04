@@ -1,1 +1,52 @@
-.gitignore
+# Bloat
+.task
+**/.hg*
+api/target
+
+# Prosody Community modules conflicting with internal plugins (merged)
+# See `for f in $(rg -l Stage-Merged --no-ignore-vcs); do print -- "$(dirname "$f")"; done | sort`
+plugins/community/mod_auth_any
+plugins/community/mod_auth_ldap
+plugins/community/mod_bookmarks2
+plugins/community/mod_invites
+plugins/community/mod_invites_adhoc
+plugins/community/mod_invites_register
+plugins/community/mod_stanzadebug
+plugins/community/mod_storage_memory
+plugins/community/mod_turn_external
+
+# Other plugins we probably don’t want
+# See `for f in $(rg -li 'Stage-(Broken|Obsolete)' --no-ignore-vcs); do print -- "$(dirname "$f")"; done | sort`
+# TIP: See all statuses uing `rg -Ioi 'Stage-[a-z]+' | sort -u`
+plugins/community/mod_bidi
+plugins/community/mod_bookmarks
+plugins/community/mod_carbons
+plugins/community/mod_checkcerts
+plugins/community/mod_csi
+plugins/community/mod_http_upload
+plugins/community/mod_limits
+plugins/community/mod_listusers
+plugins/community/mod_mam
+plugins/community/mod_mam_muc
+plugins/community/mod_muc_log
+plugins/community/mod_muc_log_http
+plugins/community/mod_muc_occupant_id
+plugins/community/mod_muc_ping
+plugins/community/mod_muc_restrict_pm
+plugins/community/mod_profile
+plugins/community/mod_prometheus
+plugins/community/mod_s2s_auth_dane
+plugins/community/mod_s2s_smacks_timeout
+plugins/community/mod_smacks
+plugins/community/mod_smacks_offline
+plugins/community/mod_sslv3_warn
+plugins/community/mod_statistics
+plugins/community/mod_telnet_tlsinfo
+plugins/community/mod_turncredentials
+
+# Editor
+.nova
+.zed
+
+# macOS
+**/.DS_Store
