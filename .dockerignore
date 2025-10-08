@@ -1,5 +1,6 @@
 # Bloat
 .task
+**/.git*
 **/.hg*
 api/target
 
