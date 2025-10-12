@@ -17,6 +17,9 @@ plugins/community/mod_stanzadebug
 plugins/community/mod_storage_memory
 plugins/community/mod_turn_external
 
+# Broken Prosody Community modules
+plugins/community/mod_vcard_command
+
 # Other plugins we probably don’t want
 # See `for f in $(rg -li 'Stage-(Broken|Obsolete)' --no-ignore-vcs); do print -- "$(dirname "$f")"; done | sort`
 # TIP: See all statuses uing `rg -Ioi 'Stage-[a-z]+' | sort -u`
