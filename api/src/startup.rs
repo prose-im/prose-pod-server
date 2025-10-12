@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use crate::models::{BareJid, JidDomain, JidNode, Password};
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
-use crate::util::random_oauth2_registration_key;
+use crate::util::{jid_0_12_to_jid_0_11, random_oauth2_registration_key};
 use crate::{AppConfig, AppState};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
@@ -51,15 +51,23 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
         store: SecretsStore::new(&app_config),
         oauth2: oauth2.clone(),
     };
-    let service_accounts =
-        create_service_accounts(&app_config, &mut prosodyctl, &oauth2, &secrets).await?;
+    let service_accounts = create_service_accounts(
+        &app_config,
+        &mut prosodyctl,
+        &prosody_rest,
+        &oauth2,
+        &secrets,
+    )
+    .await?;
 
     let groups = Groups::new(app_config.as_ref());
     create_groups(&mut prosodyctl, &groups, &app_config.server.domain).await?;
 
     add_service_accounts_to_groups(
         &mut prosodyctl,
-        service_accounts.iter().map(BareJid::node),
+        service_accounts
+            .iter()
+            .flat_map(|jid| jid.node().map(JidNode::from)),
         groups.keys().into_iter(),
         &app_config.server.domain,
     )
@@ -185,9 +193,12 @@ async fn register_oauth2_client() -> anyhow::Result<ProsodyOAuth2Client> {
 async fn create_service_accounts(
     app_config: &AppConfig,
     prosodyctl: &mut Prosodyctl,
+    prosody_rest: &ProsodyRest,
     oauth2: &ProsodyOAuth2Client,
     secrets: &SecretsService,
 ) -> anyhow::Result<Vec<BareJid>> {
+    use prosody_rest::prose_xmpp::stanza::{VCard4, vcard4};
+
     // NOTE: [Prosody’s built-in roles](https://prosody.im/doc/roles#built-in-roles)
     //   don’t have a concept of non-user account. Until we have our own roles,
     //   we will create service accounts as if it were normal users.
@@ -195,8 +206,9 @@ async fn create_service_accounts(
     let role = "prosody:registered";
 
     // Read service accounts credentials from app configuration.
-    let accounts: Vec<(BareJid, Option<Password>)> = vec![(
+    let accounts: Vec<(BareJid, String, Option<Password>)> = vec![(
         app_config.workspace_jid(),
+        app_config.server.domain.to_string(),
         app_config.service_accounts.prose_workspace.password.clone(),
     )];
 
@@ -205,18 +217,20 @@ async fn create_service_accounts(
     let mut passwords_guard = secrets.passwords_rw_guard().await;
     let mut tokens_guard = secrets.tokens_rw_guard().await;
 
-    for (jid, password_opt) in accounts.iter() {
+    for (jid, name, password_opt) in accounts.iter() {
         let password = password_opt.clone().unwrap_or_else(Password::random);
 
         // Create the account if needed, or update password.
-        if prosodyctl.user_exists(&jid.node(), &jid.domain()).await? {
-            let summary = prosodyctl.user_password(jid, &password).await?;
+        if prosodyctl.user_exists(jid.as_str(), &jid.domain()).await? {
+            let summary = prosodyctl.user_password(jid.as_str(), &password).await?;
             tracing::info!("user_password: {summary}");
 
-            let summary = prosodyctl.user_set_role(jid, None, role).await?;
+            let summary = prosodyctl.user_set_role(jid.as_str(), None, role).await?;
             tracing::info!("user_set_role: {summary}");
         } else {
-            let summary = prosodyctl.user_create(jid, &password, Some(role)).await?;
+            let summary = prosodyctl
+                .user_create(jid.as_str(), &password, Some(role))
+                .await?;
             tracing::info!("user_create: {summary}");
         };
 
@@ -232,9 +246,12 @@ async fn create_service_accounts(
 
         // Create an authentication token to speed up future API calls
         // and avoid having thousands of tokens per service account.
-        let token = oauth2.util_log_in(jid, &password).await?.access_token;
+        let token = oauth2
+            .util_log_in(jid.as_str(), &password)
+            .await?
+            .access_token;
         #[cfg_attr(not(debug_assertions), allow(unused))]
-        let previous_token = secrets.save_token(jid.clone(), token.into()).await;
+        let previous_token = secrets.save_token(jid.clone(), token.clone().into()).await;
 
         // NOTE: We just changed the password and hold a lock on tokens
         //   therefore we can be sure any previously stored token has been
@@ -243,9 +260,37 @@ async fn create_service_accounts(
             previous_token.is_none(),
             "Token not discarded when changing password via `SecretService`."
         );
+
+        // Create vCard if necessary.
+        let creds = prosody_rest::CallerCredentials {
+            bare_jid: jid_0_12_to_jid_0_11(jid),
+            auth_token: token.clone(),
+        };
+        {
+            let vcard_opt = prosody_rest
+                .get_own_vcard(&creds)
+                .await
+                .context("Error getting vCard for `{jid}`")?;
+            if vcard_opt.is_none() {
+                let vcard = VCard4 {
+                    fn_: vec![vcard4::Fn_ {
+                        value: name.clone(),
+                    }],
+                    // NOTE: See [XEP-0292: vCard4 Over XMPP](https://xmpp.org/extensions/xep-0292.html#apps)
+                    //   and [RFC 6473: vCard KIND:application](https://www.rfc-editor.org/rfc/rfc6473.html).
+                    kind: Some(vcard4::Kind::Application),
+                    ..Default::default()
+                };
+                prosody_rest
+                    .set_own_vcard(vcard, &creds)
+                    .await
+                    .context("Error creating vCard for `{jid}`")?;
+                tracing::info!("Created vCard for `{jid}`.");
+            }
+        }
     }
 
-    let accounts_jids: Vec<BareJid> = accounts.into_iter().map(|(jid, _)| jid).collect();
+    let accounts_jids: Vec<BareJid> = accounts.into_iter().map(|(jid, _, _)| jid).collect();
 
     Ok(accounts_jids)
 }
@@ -256,7 +301,7 @@ async fn create_groups(
     groups: &Groups,
     server_domain: &JidDomain,
 ) -> anyhow::Result<()> {
-    let host: &str = server_domain.as_ref();
+    let host: &str = server_domain.as_str();
 
     for (group_id, group_info) in groups.iter() {
         if !prosodyctl.groups_exists(host, group_id).await? {
@@ -285,7 +330,7 @@ where
     A: Iterator<Item = JidNode>,
     G: Iterator<Item = &'a String> + Clone,
 {
-    let host: &str = server_domain.as_ref();
+    let host: &str = server_domain.as_str();
 
     for ref username in service_accounts {
         for group_id in groups.clone() {
@@ -314,7 +359,7 @@ async fn synchronize_rosters<'a, G>(
 where
     G: Iterator<Item = &'a String>,
 {
-    let host: &str = server_domain.as_ref();
+    let host: &str = server_domain.as_str();
 
     for group_id in groups {
         let summary = prosodyctl.groups_sync(host, group_id).await?;

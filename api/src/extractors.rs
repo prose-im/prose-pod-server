@@ -105,7 +105,10 @@ impl FromRequestParts<AppState> for crate::models::CallerInfo {
                 //   to `prosodyctl` (all calls are mutating).
                 let mut prosodyctl = state.prosodyctl.write().await;
 
-                let primary_role = prosodyctl.user_role(&jid, None).await.no_context()?;
+                let primary_role = prosodyctl
+                    .user_role(jid.as_str(), None)
+                    .await
+                    .no_context()?;
 
                 drop(prosodyctl);
 

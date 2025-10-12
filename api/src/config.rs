@@ -78,7 +78,7 @@ pub mod service_accounts {
         pub const PROSE_WORKSPACE_USERNAME: &'static str = "prose-workspace";
 
         pub fn prose_workspace_jid(&self, server_domain: &JidDomain) -> BareJid {
-            BareJid::new(&self.prose_workspace.xmpp_node, server_domain)
+            BareJid::from_parts(Some(&self.prose_workspace.xmpp_node), server_domain)
         }
     }
 

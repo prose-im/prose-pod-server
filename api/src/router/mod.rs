@@ -122,10 +122,10 @@ async fn init_first_account(
     }
 
     // Create first admin account.
-    let jid = BareJid::new(&dto.username, &app_config.server.domain);
+    let jid = BareJid::from_parts(Some(&dto.username), &app_config.server.domain);
     let role = "prosody:admin";
     let result = prosodyctl
-        .user_create(&jid, &dto.password, Some(role))
+        .user_create(jid.as_str(), &dto.password, Some(role))
         .await;
 
     // Release lock ASAP.

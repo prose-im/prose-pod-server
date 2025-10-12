@@ -4,7 +4,9 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub use jid::*;
-pub mod jid;
+pub mod jid {
+    pub use jid::{BareJid, DomainPart as JidDomain, NodePart as JidNode};
+}
 
 pub use password::*;
 pub mod password {

@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::errors::{invalid_avatar, prelude::*};
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
 use crate::state::AppState;
-use crate::util::NoContext;
+use crate::util::{NoContext, jid_0_12_to_jid_0_11};
 use crate::{AppConfig, responders};
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
@@ -152,7 +152,7 @@ async fn set_workspace_accent_color(
     let ref ctx = service_account_credentials(app_state, jid).await?;
 
     let Some(mut vcard) = service_account_vcard(app_state, ctx).await? else {
-        return Err(workspace_initialization_required_error("No vCard."));
+        return Err(workspace_not_initialized_error("No vCard."));
     };
 
     // FIXME: Do not override all unknown properties! Improve the `prose_xmpp`
@@ -240,7 +240,7 @@ async fn service_account_credentials(
         .await
         .no_context()?;
     Ok(prosody_rest::CallerCredentials {
-        bare_jid: jid.into(),
+        bare_jid: jid_0_12_to_jid_0_11(jid),
         auth_token: token.inner().to_owned(),
     })
 }
@@ -255,7 +255,7 @@ async fn service_account_vcard(
         .prosody_rest
         .get_vcard(&creds.bare_jid, creds)
         .await
-        .context("Could not get Workspace vCard")
+        .context("Could not get service account vCard")
         .no_context()
 }
 
@@ -270,7 +270,7 @@ async fn service_account_avatar(
         .prosody_rest
         .get_avatar(&creds.bare_jid, creds)
         .await
-        .context("Could not get Workspace icon")
+        .context("Could not get service account avatar")
         .no_context()?
     {
         Some(avatar_data) => Ok(Some(Avatar::try_from(avatar_data).map_err(invalid_avatar)?)),
@@ -295,23 +295,11 @@ async fn get_workspace_profile_minimal(
 
 #[must_use]
 #[inline]
-pub fn workspace_not_initialized_error(description: impl std::fmt::Display) -> Error {
-    tracing::debug!("Workspace not initialized: {description}");
-    crate::errors::not_initialized_error(
+pub fn workspace_not_initialized_error(error: impl std::fmt::Debug) -> Error {
+    crate::errors::internal_server_error(
+        error,
         "WORKSPACE_NOT_INITIALIZED",
-        "Workspace not initialized",
-        "Choose a name for your Workspace to initialize it.",
-    )
-}
-
-#[must_use]
-#[inline]
-pub fn workspace_initialization_required_error(description: impl std::fmt::Display) -> Error {
-    tracing::debug!("Workspace not initialized: {description}");
-    crate::errors::initialization_required_error(
-        "WORKSPACE_NOT_INITIALIZED",
-        "Workspace not initialized",
-        "Choose a name for your Workspace to initialize it.",
+        "Workspace account not initialized",
     )
 }
 

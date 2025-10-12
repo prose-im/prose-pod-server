@@ -107,7 +107,11 @@ impl SecretsService {
         if !cache.read().await.contains_key(jid) {
             let password = self.get_password(jid).await?;
 
-            let token = self.oauth2.util_log_in(jid, &password).await?.access_token;
+            let token = self
+                .oauth2
+                .util_log_in(jid.as_str(), &password)
+                .await?
+                .access_token;
 
             cache.write().await.insert(jid.clone(), token.into());
 

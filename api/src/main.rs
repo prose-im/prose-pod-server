@@ -15,10 +15,7 @@ mod startup;
 mod state;
 mod util;
 
-use std::{
-    net::{Ipv4Addr, SocketAddrV4},
-    str::FromStr as _,
-};
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 use anyhow::anyhow;
 use axum::Router;
@@ -33,9 +30,12 @@ pub(crate) use self::state::AppState;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
+    let todo = "Read app config file";
+
     let app_config = {
         use crate::config::*;
         use crate::models::jid::*;
+        use std::str::FromStr as _;
         use tokio::time::Duration;
 
         AppConfig {

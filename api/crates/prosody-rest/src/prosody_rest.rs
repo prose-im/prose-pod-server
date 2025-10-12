@@ -77,6 +77,14 @@ impl ProsodyRest {
     }
 
     #[must_use]
+    pub async fn get_own_vcard(
+        &self,
+        caller: &CallerCredentials,
+    ) -> Result<Option<prose_xmpp::stanza::VCard4>, ProsodyRestError> {
+        self.get_vcard(&caller.bare_jid, caller).await
+    }
+
+    #[must_use]
     pub async fn set_own_vcard(
         &self,
         vcard: prose_xmpp::stanza::VCard4,

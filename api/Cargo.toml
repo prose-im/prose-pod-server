@@ -14,6 +14,7 @@ anyhow = "1.0.99"
 axum = "0.8.4"
 base64 = { version = "0.22.1", default-features = false }
 iso8601-duration = { version = "0.2.0", default-features = false, features = ["serde"] }
+jid = { version = "0.12.0", default-features = false, features = ["serde"] }
 media-type-detect = { path = "crates/media-type-detect" }
 prosody-child-process = { path = "crates/prosody-child-process" }
 prosody-http = { path = "crates/prosody-http", features = ["secrecy", "mod_http_oauth2"] }

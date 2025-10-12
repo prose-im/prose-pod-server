@@ -117,57 +117,6 @@ pub fn validation_error(
     )
 }
 
-pub const ERROR_KIND_PRECONDITION: &'static str = "PRECONDITION_ERROR";
-
-// #[must_use]
-// #[inline]
-// pub fn precondition_error(
-//     code: &'static str,
-//     status: StatusCode,
-//     message: impl Into<String>,
-//     description: impl Into<String>,
-// ) -> Error {
-//     Error::new(
-//         ERROR_KIND_PRECONDITION,
-//         code,
-//         StatusCode::UNPROCESSABLE_ENTITY,
-//         message,
-//         description,
-//     )
-// }
-
-#[must_use]
-#[inline]
-pub fn initialization_required_error(
-    code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
-) -> Error {
-    Error::new(
-        ERROR_KIND_PRECONDITION,
-        code,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        message,
-        description,
-    )
-}
-
-#[must_use]
-#[inline]
-pub fn not_initialized_error(
-    code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
-) -> Error {
-    Error::new(
-        ERROR_KIND_PRECONDITION,
-        code,
-        StatusCode::NOT_FOUND,
-        message,
-        description,
-    )
-}
-
 // MARK: - Conversions
 
 pub fn invalid_avatar(err: impl ToString) -> Error {
