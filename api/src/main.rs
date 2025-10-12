@@ -9,13 +9,15 @@ mod extractors;
 mod models;
 mod responders;
 mod router;
+mod secrets_service;
+mod secrets_store;
 mod startup;
 mod state;
 mod util;
 
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    str::FromStr,
+    str::FromStr as _,
 };
 
 use anyhow::anyhow;
@@ -34,10 +36,16 @@ async fn main() -> anyhow::Result<()> {
     let app_config = {
         use crate::config::*;
         use crate::models::jid::*;
+        use tokio::time::Duration;
 
         AppConfig {
             server: ServerConfig {
                 domain: JidDomain::from_str("example.org").unwrap(),
+                local_hostname: "localhost".to_owned(),
+                http_port: 5280,
+            },
+            auth: AuthConfig {
+                token_ttl: Duration::from_secs(3 * 3600),
             },
             service_accounts: Default::default(),
             teams: Default::default(),
@@ -75,9 +83,11 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     }?;
 
     // Stop now if we should shutdown gracefully.
-    let Some((prosody_handle, app_state)) = startup_res else {
+    let Some(app_state) = startup_res else {
         return Ok(());
     };
+
+    let secrets_service = app_state.secrets_service.clone();
 
     // Then serve all routes once Prosody has started.
     listener = TcpListener::bind(address).await?;
@@ -87,14 +97,11 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
             serve(listener, router(app_state))
         } => res,
 
-        // Keep Prosody running in the back.
-        join_res = prosody_handle.into_future() => match join_res {
-            Ok(res) => res,
-            Err(join_err) => Err(anyhow!(join_err)),
-        },
-
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
+
+        // Run cache purge tasks in the background.
+        () = secrets_service.run_purge_tasks() => unreachable!(),
     }
 }
 

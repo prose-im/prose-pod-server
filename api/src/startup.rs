@@ -9,23 +9,25 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use prosody_http::mod_http_oauth2::OAuth2ClientConfig;
+use prosody_child_process::ProsodyChildProcess;
+use prosody_http::mod_http_oauth2::{OAuth2ClientConfig, ProsodyOAuth2Client};
 use prosody_http::{ProsodyHttpConfig, mod_http_oauth2};
+use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 
-use crate::models::{BareJid, JidDomain, JidNode};
-use crate::state::ServiceAccountsCredentials;
+use crate::models::{BareJid, JidDomain, JidNode, Password};
+use crate::secrets_service::SecretsService;
+use crate::secrets_store::SecretsStore;
 use crate::util::random_oauth2_registration_key;
 use crate::{AppConfig, AppState};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 
-pub async fn startup(
-    app_config: AppConfig,
-) -> anyhow::Result<(JoinHandle<anyhow::Result<()>>, AppState)> {
+pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
     let start = Instant::now();
+
+    let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
     let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
 
@@ -34,8 +36,8 @@ pub async fn startup(
     apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
 
     // Launch Prosody.
-    let prosody = Prosodyctl::new();
-    let prosody_handle = prosody.start();
+    let mut prosody = ProsodyChildProcess::new();
+    prosody.start().await.context("Failed starting Prosody")?;
 
     // Wait for Prosody to start.
     // TODO: Get rid of constant sleep.
@@ -43,19 +45,21 @@ pub async fn startup(
 
     let mut prosodyctl = Prosodyctl::new();
 
-    let service_accounts_credentials =
-        ServiceAccountsCredentials::new(app_config.as_ref(), &app_config.server.domain);
-    create_service_accounts(&mut prosodyctl, &service_accounts_credentials).await?;
+    let oauth2 = Arc::new(register_oauth2_client().await?);
+
+    let secrets = SecretsService {
+        store: SecretsStore::new(&app_config),
+        oauth2: oauth2.clone(),
+    };
+    let service_accounts =
+        create_service_accounts(&app_config, &mut prosodyctl, &oauth2, &secrets).await?;
 
     let groups = Groups::new(app_config.as_ref());
     create_groups(&mut prosodyctl, &groups, &app_config.server.domain).await?;
 
     add_service_accounts_to_groups(
         &mut prosodyctl,
-        service_accounts_credentials
-            .keys()
-            .into_iter()
-            .map(BareJid::node),
+        service_accounts.iter().map(BareJid::node),
         groups.keys().into_iter(),
         &app_config.server.domain,
     )
@@ -68,29 +72,18 @@ pub async fn startup(
     )
     .await?;
 
-    let prosody_http_config = Arc::new(ProsodyHttpConfig {
-        url: "http://prose-pod-server:5280".to_owned(),
-    });
-    let oauth2_client_config = OAuth2ClientConfig {
-        client_name: "Prose Pod Server API".to_owned(),
-        client_uri: "https://prose-pod-server:8080".to_owned(),
-        redirect_uris: vec!["https://prose-pod-server:8080/redirect".to_owned()],
-        ..Default::default()
-    };
-
-    let oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
-    oauth2.register().await?;
-
     tracing::info!("Started up in {:.0?}.", start.elapsed());
 
     let app_state = AppState {
         config: Arc::new(app_config),
+        prosody: Arc::new(RwLock::new(prosody)),
         prosodyctl: Arc::new(RwLock::new(prosodyctl)),
-        service_accounts_credentials: Arc::new(service_accounts_credentials),
-        oauth2_client: Arc::new(oauth2),
+        prosody_rest,
+        oauth2_client: oauth2,
+        secrets_service: secrets,
     };
 
-    Ok((prosody_handle, app_state))
+    Ok(app_state)
 }
 
 // MARK: Steps
@@ -171,31 +164,90 @@ fn apply_bootstrap_config(
     Ok(())
 }
 
+async fn register_oauth2_client() -> anyhow::Result<ProsodyOAuth2Client> {
+    let prosody_http_config = Arc::new(ProsodyHttpConfig {
+        url: "http://prose-pod-server:5280".to_owned(),
+    });
+    let oauth2_client_config = OAuth2ClientConfig {
+        client_name: "Prose Pod Server API".to_owned(),
+        client_uri: "https://prose-pod-server:8080".to_owned(),
+        redirect_uris: vec!["https://prose-pod-server:8080/redirect".to_owned()],
+        ..Default::default()
+    };
+
+    let oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
+    oauth2.register().await?;
+
+    Ok(oauth2)
+}
+
 /// Creates the “prose-workspace” user for now, maybe more later.
 async fn create_service_accounts(
+    app_config: &AppConfig,
     prosodyctl: &mut Prosodyctl,
-    credentials: &ServiceAccountsCredentials,
-) -> anyhow::Result<()> {
+    oauth2: &ProsodyOAuth2Client,
+    secrets: &SecretsService,
+) -> anyhow::Result<Vec<BareJid>> {
     // NOTE: [Prosody’s built-in roles](https://prosody.im/doc/roles#built-in-roles)
     //   don’t have a concept of non-user account. Until we have our own roles,
     //   we will create service accounts as if it were normal users.
     // TODO: Use special role for service accounts.
     let role = "prosody:registered";
 
-    for (jid, password) in credentials.iter() {
+    // Read service accounts credentials from app configuration.
+    let accounts: Vec<(BareJid, Option<Password>)> = vec![(
+        app_config.workspace_jid(),
+        app_config.service_accounts.prose_workspace.password.clone(),
+    )];
+
+    // Lock credentials with exclusive write access
+    // to prevent race conditions.
+    let mut passwords_guard = secrets.passwords_rw_guard().await;
+    let mut tokens_guard = secrets.tokens_rw_guard().await;
+
+    for (jid, password_opt) in accounts.iter() {
+        let password = password_opt.clone().unwrap_or_else(Password::random);
+
+        // Create the account if needed, or update password.
         if prosodyctl.user_exists(&jid.node(), &jid.domain()).await? {
-            let summary = prosodyctl.user_password(jid, password).await?;
+            let summary = prosodyctl.user_password(jid, &password).await?;
             tracing::info!("user_password: {summary}");
 
             let summary = prosodyctl.user_set_role(jid, None, role).await?;
             tracing::info!("user_set_role: {summary}");
         } else {
-            let summary = prosodyctl.user_create(jid, password, Some(role)).await?;
+            let summary = prosodyctl.user_create(jid, &password, Some(role)).await?;
             tracing::info!("user_create: {summary}");
         };
+
+        // Store the password in the secrets store for later use.
+        secrets
+            .set_password(
+                jid.clone(),
+                password.clone(),
+                &mut passwords_guard,
+                &mut tokens_guard,
+            )
+            .await?;
+
+        // Create an authentication token to speed up future API calls
+        // and avoid having thousands of tokens per service account.
+        let token = oauth2.util_log_in(jid, &password).await?.access_token;
+        #[cfg_attr(not(debug_assertions), allow(unused))]
+        let previous_token = secrets.save_token(jid.clone(), token.into()).await;
+
+        // NOTE: We just changed the password and hold a lock on tokens
+        //   therefore we can be sure any previously stored token has been
+        //   discarded already. For safety, here is a debug-only assertion.
+        debug_assert!(
+            previous_token.is_none(),
+            "Token not discarded when changing password via `SecretService`."
+        );
     }
 
-    Ok(())
+    let accounts_jids: Vec<BareJid> = accounts.into_iter().map(|(jid, _)| jid).collect();
+
+    Ok(accounts_jids)
 }
 
 /// Creates the “Team” group for now, maybe more later.

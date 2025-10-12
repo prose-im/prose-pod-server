@@ -9,7 +9,11 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod prelude {
-    pub(crate) use axum::{extract::FromRequestParts, http::request};
+    pub(crate) use axum::{
+        body::Bytes,
+        extract::{FromRequest, FromRequestParts, Request},
+        http::request,
+    };
 
     pub(crate) use crate::util::{Context as _, NoContext as _};
     pub(crate) use crate::{AppState, responders};
@@ -117,5 +121,66 @@ impl FromRequestParts<AppState> for crate::models::CallerInfo {
         tracing::debug!("Cache stored.");
 
         res
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AvatarFromRequestError {
+    #[error("Invalid bytes: {0}")]
+    InvalidBytes(#[from] axum::extract::rejection::BytesRejection),
+    #[error("Invalid string: {0}")]
+    InvalidString(#[from] axum::extract::rejection::StringRejection),
+    #[error("Invalid JSON: {0}")]
+    InvalidJson(#[from] axum::extract::rejection::JsonRejection),
+    #[error("Invalid avatar: {0}")]
+    InvalidAvatar(#[from] crate::models::AvatarDecodeError),
+    #[error("Unsupported media type.")]
+    UnsupportedMediaType,
+}
+
+impl FromRequest<AppState> for crate::models::Avatar {
+    type Rejection = AvatarFromRequestError;
+
+    async fn from_request(req: Request, _state: &AppState) -> Result<Self, Self::Rejection> {
+        use crate::models::Avatar;
+        use axum::Json;
+
+        let content_type = req.headers().get("Content-Type");
+
+        async fn from_bytes(req: Request) -> Result<Avatar, AvatarFromRequestError> {
+            let bytes = Bytes::from_request(req, &()).await?;
+            // TODO: Find a way to avoid this copy?
+            let avatar = Avatar::try_from_bytes(bytes.to_vec().into_boxed_slice())?;
+            Ok(avatar)
+        }
+
+        async fn from_text(req: Request) -> Result<Avatar, AvatarFromRequestError> {
+            let string = String::from_request(req, &()).await?;
+            let avatar = Avatar::try_from_base64_string(string)?;
+            Ok(avatar)
+        }
+
+        async fn from_json(req: Request) -> Result<Avatar, AvatarFromRequestError> {
+            let Json(string) = Json::<String>::from_request(req, &()).await?;
+            let avatar = Avatar::try_from_base64_string(string)?;
+            Ok(avatar)
+        }
+
+        match content_type {
+            None => from_bytes(req).await,
+            Some(ct) if ct == "application/octet-stream" => from_bytes(req).await,
+            Some(ct) if ct.as_bytes().starts_with("image/".as_bytes()) => from_bytes(req).await,
+            Some(ct) if ct == "text/plain" => from_text(req).await,
+            Some(ct) if ct == "application/json" => from_json(req).await,
+            _ => Err(Self::Rejection::UnsupportedMediaType),
+        }
+    }
+}
+
+// MARK: - Boilerplate
+
+impl axum::response::IntoResponse for AvatarFromRequestError {
+    fn into_response(self) -> axum::response::Response {
+        crate::errors::invalid_avatar(self).into_response()
     }
 }

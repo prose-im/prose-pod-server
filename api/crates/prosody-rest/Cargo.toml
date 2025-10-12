@@ -1,0 +1,25 @@
+[package]
+name = "prosody-rest"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+
+[dependencies]
+media-metadata = { path = "../media-metadata" }
+media-type-detect = { path = "../media-type-detect" }
+parking_lot = { version = "0.12", default-features = false }
+prose-xmpp = { git = "https://github.com/prose-im/prose-core-client.git", rev = "f387a04e4081f51cf4f4cbd3a7b4c20f93ace2aa", default-features = false }
+thiserror = { version = "2", default-features = false }
+ureq = { version = "3", default-features = false }
+
+# `prose-xmpp` dependencies.
+# NOTE: See <https://github.com/prose-im/prose-core-client/blob/master/Cargo.toml>
+#   for up-to-date versions (make sure to switch to the appropriate tag).
+anyhow = { version = "1", default-features = false }
+async-trait = { version = "0.1", default-features = false }
+jid = { version = "0.11", default-features = false }
+minidom = { version = "0.16", default-features = false }
+secrecy = { version = "0.10", default-features = false }
+tokio = { version = "1", default-features = false }
+xmpp-parsers = { version = "0.21", default-features = false }

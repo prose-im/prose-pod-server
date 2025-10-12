@@ -3,22 +3,23 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod workspace;
+
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use prosodyctl::UserCreateError;
 use serde::{Deserialize, Serialize};
 
 use crate::AppConfig;
-use crate::errors::{self, ERROR_KIND_CONFLICT};
 use crate::models::{BareJid, CallerInfo, JidNode, Password};
 use crate::responders::Error;
 use crate::state::AppState;
-use crate::util::{NoContext, PROSODY_JIDS_ARE_VALID};
+use crate::util::{NoContext, PROSODY_JIDS_ARE_VALID, debug_panic_or_log_error};
 
 pub fn startup_router() -> Router {
     Router::new()
@@ -29,17 +30,14 @@ pub fn startup_router() -> Router {
 pub fn router(app_state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
-        .route("/lifecycle/reload", put(reload))
-        .route("/lifecycle/restart", put(restart))
+        .route("/lifecycle/reload", post(reload))
+        .route("/lifecycle/restart", post(restart))
         .route("/init/first-account", put(init_first_account))
         .route("/users-util/stats", get(users_stats))
         .route("/users-util/admin-jids", get(list_admin_jids))
         .route("/users-util/self", get(self_user_info))
         .route("/invitations-util/stats", get(invitations_stats))
-        .route(
-            "/service-accounts/{username}/password",
-            get(get_service_account_password),
-        )
+        .merge(workspace::router())
         .layer(axum::middleware::from_fn(log_request))
         .with_state(app_state)
 }
@@ -57,12 +55,38 @@ async fn health() -> &'static str {
     "OK"
 }
 
-async fn reload() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+async fn reload(State(ref app_state): State<AppState>) -> StatusCode {
+    let mut prosody = app_state.prosody.write().await;
+
+    match prosody.reload().await {
+        Ok(()) => StatusCode::OK,
+        Err(err) => {
+            // Release lock ASAP.
+            drop(prosody);
+
+            // Log debug info.
+            debug_panic_or_log_error(format!("Could not reload Prosody: {err}"));
+
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
-async fn restart() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+async fn restart(State(ref app_state): State<AppState>) -> StatusCode {
+    let mut prosody = app_state.prosody.write().await;
+
+    match prosody.restart().await {
+        Ok(()) => StatusCode::OK,
+        Err(err) => {
+            // Release lock ASAP.
+            drop(prosody);
+
+            // Log debug info.
+            debug_panic_or_log_error(format!("Could not restart Prosody: {err}"));
+
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,12 +114,10 @@ async fn init_first_account(
         .await
         .map_err(NoContext::no_context)?;
     if !users.is_empty() {
-        return Err(Error::new(
-            ERROR_KIND_CONFLICT,
+        return Err(crate::errors::conflict_error(
             "FIRST_ACCOUNT_ALREADY_CREATED",
-            StatusCode::CONFLICT,
             "First account already created",
-            "Now you need an invitation to join.",
+            "You now need an invitation to join.",
         ));
     }
 
@@ -199,34 +221,6 @@ async fn invitations_stats(
 #[derive(Serialize)]
 struct GetInvitationsStatsResponse {
     pub count: usize,
-}
-
-async fn get_service_account_password(
-    State(ref app_state): State<AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-    caller_info: CallerInfo,
-    Path(ref username): Path<JidNode>,
-) -> Result<Password, Error> {
-    // Ensure the caller is an admin.
-    // FIXME: Make this more flexible by checking rights instead of roles
-    //   (which can be extended).
-    match caller_info.primary_role.as_str() {
-        "prosody:admin" | "prosody:operator" => {}
-        _ => return Err(errors::forbidden("Only admins can do that.")),
-    }
-
-    tracing::info!(
-        "{jid} requested service account passwords.",
-        jid = caller_info.jid,
-    );
-
-    let jid = BareJid::new(username, &app_config.server.domain);
-    let password = (app_state.service_accounts_credentials)
-        .get(&jid)
-        .expect(&format!("Service account `{jid}` should exist"))
-        .clone();
-
-    Ok(password)
 }
 
 // MARK: - Utilities

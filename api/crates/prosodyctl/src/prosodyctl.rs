@@ -6,7 +6,7 @@
 //! See [prosodyctl – Prosody IM](https://prosody.im/doc/prosodyctl).
 
 use anyhow::anyhow;
-use tokio::{process::Command, task::JoinHandle};
+use tokio::process::Command;
 
 use crate::prosody_shell::ProsodyShell;
 
@@ -24,38 +24,16 @@ impl Prosodyctl {
     }
 
     /// Start Prosody in the foreground (blocking).
-    pub fn start(&self) -> JoinHandle<anyhow::Result<()>> {
-        let mut cmd = {
-            let mut cmd = Command::new("prosody");
+    pub async fn start(&self) -> anyhow::Result<()> {
+        let output = Command::new("prosodyctl").arg("start").output().await?;
 
-            // Don’t daemonize.
-            cmd.arg("--foreground");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to stop Prosody: {stderr}"));
+        }
 
-            cmd
-        };
-
-        tokio::spawn(async move {
-            let status = cmd.status().await?;
-
-            if status.success() {
-                Ok(())
-            } else {
-                Err(anyhow!(
-                    "Prosody exited with code: {code:?}",
-                    code = status.code(),
-                ))
-            }
-        })
-    }
-
-    /// Check if Prosody is already running.
-    pub async fn is_running(&self) -> bool {
-        // Try to connect to the telnet console as a health check.
-        use std::net::TcpStream;
-        use std::time::Duration;
-
-        TcpStream::connect_timeout(&"127.0.0.1:5582".parse().unwrap(), Duration::from_secs(1))
-            .is_ok()
+        tracing::info!("Prosody started successfully");
+        Ok(())
     }
 
     /// Stop Prosody gracefully.

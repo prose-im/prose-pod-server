@@ -1,4 +1,5 @@
 local id = require "util.id";
+local jid = require "util.jid";
 local json = require "util.json";
 local usermanager = require "core.usermanager";
 local nodeprep = require "util.encodings".stringprep.nodeprep;
@@ -66,6 +67,18 @@ function register_with_invite(event)
 	local invite = invites.get(token);
 	if not invite then
 		return 404;
+	end
+
+	if invite.jid then
+		local invite_user = jid.node(invite.jid);
+		if invite_user then
+			if user and user ~= invite_user then
+				module:log("warn", "Username already defined in invite");
+				return 400;
+			else
+				user = invite_user;
+			end
+		end
 	end
 
 	response.headers["Content-Type"] = json_content_type;

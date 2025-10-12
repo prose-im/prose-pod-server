@@ -5,6 +5,13 @@
 
 //! Utilities.
 
+mod cache;
+mod rw_lock_guards;
+pub mod serde;
+
+pub use cache::Cache;
+pub use rw_lock_guards::OptionRwLockReadGuard;
+
 #[must_use]
 #[inline]
 pub const fn is_upper_snake_case(b: u8) -> bool {
@@ -13,10 +20,22 @@ pub const fn is_upper_snake_case(b: u8) -> bool {
 
 /// Equivalent of [`debug_assert!`] but still
 /// logs an error message in release mode.
+#[inline(always)]
 pub fn debug_assert_or_log_error(cond: bool, msg: String) {
     if cfg!(debug_assertions) {
         assert!(cond, "{msg}");
     } else if !cond {
+        tracing::error!(msg);
+    }
+}
+
+/// [`panic!`] in debug mode, [`tracing::error!`] in release.
+#[inline(always)]
+pub fn debug_panic_or_log_error(msg: impl AsRef<str>) {
+    let msg = msg.as_ref();
+    if cfg!(debug_assertions) {
+        panic!("{msg}");
+    } else {
         tracing::error!(msg);
     }
 }

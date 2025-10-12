@@ -26,7 +26,7 @@ pub struct ProsodyOAuth2Client {
 impl ProsodyOAuth2Client {
     pub fn new(http_config: Arc<ProsodyHttpConfig>, client_config: OAuth2ClientConfig) -> Self {
         Self {
-            http_config: http_config.clone(),
+            http_config,
             client_config,
         }
     }
@@ -38,7 +38,7 @@ impl ProsodyOAuth2Client {
     }
 
     pub async fn register(&self) -> crate::Result<OAuth2ClientMetadata> {
-        let data = json!(self.client_config);
+        let data = json!(&self.client_config);
         let mut response = ureq::post(self.url("register")).send_json(data)?;
 
         let body: OAuth2ClientMetadata = response
@@ -60,6 +60,21 @@ impl ProsodyOAuth2Client {
             .context(BAD_RESPONSE_CONTEXT)?;
 
         Ok(body)
+    }
+
+    pub async fn revoke(&self, token: Password) -> crate::Result<()> {
+        use secrecy::ExposeSecret as _;
+
+        let data = json!({
+            "token": token.expose_secret(),
+        });
+        // NOTE: `403 Forbidden` doesn’t map to `500 Internal Server Error`
+        //   thanks to `From<ureq::Error> for ProsodyHttpError`.
+        ureq::post(self.url("revoke"))
+            .bearer_auth(&token)
+            .send_json(data)?;
+
+        Ok(())
     }
 }
 

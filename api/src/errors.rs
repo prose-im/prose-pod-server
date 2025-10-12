@@ -3,7 +3,15 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use crate::responders::Error;
+pub mod prelude {
+    pub use axum::http::StatusCode;
+
+    #[allow(unused)]
+    pub(crate) use crate::errors;
+    pub use crate::responders::Error;
+}
+
+use prelude::*;
 
 // MARK: Internal errors
 
@@ -41,7 +49,7 @@ pub fn internal_server_error(
     Error::new(
         ERROR_KIND_INTERNAL,
         code,
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::INTERNAL_SERVER_ERROR,
         "Internal server error",
         description,
     )
@@ -49,7 +57,7 @@ pub fn internal_server_error(
 
 // MARK: Auth errors
 
-pub const ERROR_KIND_AUTH: &'static str = "AUTH_ERROR";
+const ERROR_KIND_AUTH: &'static str = "AUTH_ERROR";
 
 #[must_use]
 #[inline]
@@ -57,7 +65,7 @@ pub fn unauthorized(description: impl Into<String>) -> Error {
     Error::new(
         ERROR_KIND_AUTH,
         "UNAUTHORIZED",
-        axum::http::StatusCode::UNAUTHORIZED,
+        StatusCode::UNAUTHORIZED,
         "Unauthorized",
         description,
     )
@@ -69,13 +77,99 @@ pub fn forbidden(description: impl Into<String>) -> Error {
     Error::new(
         ERROR_KIND_AUTH,
         "FORBIDDEN",
-        axum::http::StatusCode::FORBIDDEN,
+        StatusCode::FORBIDDEN,
         "Forbidden",
         description,
     )
 }
 
-// MARK: Other error kindw
+// MARK: Other error kinds
 
-pub const ERROR_KIND_CONFLICT: &'static str = "CONFLICT_ERROR";
-pub const ERROR_KIND_VALIDATION: &'static str = "VALIDATION_ERROR";
+#[must_use]
+#[inline]
+pub fn conflict_error(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        "CONFLICT_ERROR",
+        code,
+        StatusCode::CONFLICT,
+        message,
+        description,
+    )
+}
+
+#[must_use]
+#[inline]
+pub fn validation_error(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        "VALIDATION_ERROR",
+        code,
+        StatusCode::BAD_REQUEST,
+        message,
+        description,
+    )
+}
+
+pub const ERROR_KIND_PRECONDITION: &'static str = "PRECONDITION_ERROR";
+
+// #[must_use]
+// #[inline]
+// pub fn precondition_error(
+//     code: &'static str,
+//     status: StatusCode,
+//     message: impl Into<String>,
+//     description: impl Into<String>,
+// ) -> Error {
+//     Error::new(
+//         ERROR_KIND_PRECONDITION,
+//         code,
+//         StatusCode::UNPROCESSABLE_ENTITY,
+//         message,
+//         description,
+//     )
+// }
+
+#[must_use]
+#[inline]
+pub fn initialization_required_error(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_PRECONDITION,
+        code,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        message,
+        description,
+    )
+}
+
+#[must_use]
+#[inline]
+pub fn not_initialized_error(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_PRECONDITION,
+        code,
+        StatusCode::NOT_FOUND,
+        message,
+        description,
+    )
+}
+
+// MARK: - Conversions
+
+pub fn invalid_avatar(err: impl ToString) -> Error {
+    self::validation_error("INVALID_AVATAR", "Invalid avatar", err.to_string())
+}

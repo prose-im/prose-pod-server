@@ -18,6 +18,16 @@ impl IntoResponse for crate::models::Password {
     }
 }
 
+impl IntoResponse for crate::models::AuthToken {
+    fn into_response(self) -> Response {
+        use secrecy::ExposeSecret as _;
+
+        let bytes = axum::body::Bytes::copy_from_slice(self.expose_secret().as_bytes());
+        let body = axum::body::Body::from(bytes);
+        Response::new(body)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Error {
     /// Error kind (to group error codes).

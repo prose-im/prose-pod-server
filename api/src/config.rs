@@ -3,37 +3,82 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use serde::Deserialize;
+
 #[derive(Debug)]
+#[derive(Deserialize)]
 pub struct AppConfig {
+    pub auth: AuthConfig,
     pub server: ServerConfig,
     pub service_accounts: ServiceAccountsConfig,
     pub teams: TeamsConfig,
 }
 
+pub use auth::*;
+pub mod auth {
+    use serde::Deserialize;
+    use tokio::time::Duration;
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    pub struct AuthConfig {
+        #[serde(with = "crate::util::serde::iso8601_duration")]
+        pub token_ttl: Duration,
+    }
+}
+
 pub use server::*;
 pub mod server {
+    use serde::Deserialize;
+
     use crate::models::JidDomain;
 
     #[derive(Debug)]
+    #[derive(Deserialize)]
     pub struct ServerConfig {
         pub domain: JidDomain,
+
+        pub local_hostname: String,
+
+        pub http_port: u16,
+    }
+
+    impl ServerConfig {
+        pub fn http_url(&self) -> String {
+            format!("http://{}:{}", self.local_hostname, self.http_port)
+        }
     }
 }
 
 pub use service_accounts::*;
 pub mod service_accounts {
-    use crate::models::{BareJid, JidDomain, JidNode};
+    use serde::Deserialize;
+
+    use crate::models::{BareJid, JidDomain, JidNode, Password};
+
+    use super::AppConfig;
 
     #[derive(Debug)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
     pub struct ServiceAccountsConfig {
-        prose_workspace_username: JidNode,
+        pub prose_workspace: ServiceAccountConfig,
+    }
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct ServiceAccountConfig {
+        pub xmpp_node: JidNode,
+        #[serde(default)]
+        pub password: Option<Password>,
     }
 
     impl ServiceAccountsConfig {
         pub const PROSE_WORKSPACE_USERNAME: &'static str = "prose-workspace";
 
         pub fn prose_workspace_jid(&self, server_domain: &JidDomain) -> BareJid {
-            BareJid::new(&self.prose_workspace_username, server_domain)
+            BareJid::new(&self.prose_workspace.xmpp_node, server_domain)
         }
     }
 
@@ -42,16 +87,29 @@ pub mod service_accounts {
             use std::str::FromStr as _;
 
             Self {
-                prose_workspace_username: JidNode::from_str(Self::PROSE_WORKSPACE_USERNAME)
-                    .expect("The `PROSE_WORKSPACE_USERNAME` constant should be valid."),
+                prose_workspace: ServiceAccountConfig {
+                    xmpp_node: JidNode::from_str(Self::PROSE_WORKSPACE_USERNAME)
+                        .expect("The `PROSE_WORKSPACE_USERNAME` constant should be valid."),
+                    password: None,
+                },
             }
+        }
+    }
+
+    impl AppConfig {
+        pub fn workspace_jid(&self) -> BareJid {
+            self.service_accounts
+                .prose_workspace_jid(&self.server.domain)
         }
     }
 }
 
 pub use teams::*;
 pub mod teams {
+    use serde::Deserialize;
+
     #[derive(Debug)]
+    #[derive(Deserialize)]
     pub struct TeamsConfig {
         pub main_team_name: String,
     }

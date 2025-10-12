@@ -148,9 +148,14 @@ impl ProsodyShellHandle {
 
         // Some constants to improve readability.
         const FIRST_LINE_PREFIX: &'static str = "prosody> ";
-        // NOTE: E.g. “** Unable to connect to server - is it running? Is mod_admin_shell enabled?”
+        // NOTE: E.g. “** Unable to connect to server - is it running? Is mod_admin_shell enabled?”.
         const EXCEPTION_LINE_PREFIX: &'static str = "** ";
+        // NOTE: E.g. “! console:1: attempt to index a nil value (global 'mm')”
+        //   or “! /lib/prosody/core/usermanager.lua:125: attempt to index a nil value (field '?')”.
         const ERROR_LINE_PREFIX: &'static str = "! ";
+        // NOTE: When a function returns `nil, "message"`.
+        //   E.g. “! Error: Auth failed. Invalid username”.
+        const ERROR_RESULT_PREFIX: &'static str = "! Error: ";
         const SUMMARY_LINE_PREFIX: &'static str = "| OK: ";
         const RESULT_LINE_PREFIX: &'static str = "| Result: ";
         const LOG_LINE_PREFIX: &'static str = "| ";
@@ -174,6 +179,10 @@ impl ProsodyShellHandle {
             if line.starts_with(EXCEPTION_LINE_PREFIX) {
                 let exception_msg = &line[EXCEPTION_LINE_PREFIX.len()..];
                 result = Some(Err(exception_msg.to_owned()));
+                break;
+            } else if line.starts_with(ERROR_RESULT_PREFIX) {
+                let error_msg = &line[ERROR_RESULT_PREFIX.len()..];
+                result = Some(Err(error_msg.to_owned()));
                 break;
             } else if line.starts_with(ERROR_LINE_PREFIX) {
                 let error_msg = &line[ERROR_LINE_PREFIX.len()..];
@@ -285,7 +294,7 @@ impl ProsodyShell {
             .context("Error testing if user account exists")?;
 
         response
-            .result_bool()
+            .result_bool_expecting(["Auth failed. Invalid username"].into_iter())
             .context(command_name(&command).to_owned())
             .context("Error testing if user account exists")
     }
@@ -426,7 +435,7 @@ impl ProsodyShell {
             return Err(anyhow!("Host '{host}' does not exit."));
         }
 
-        let command = format!(r#"> um.get_jids_with_role("{host}", "{role_name}")"#);
+        let command = format!(r#"> um.get_jids_with_role("{role_name}", "{host}")"#);
 
         let response = (self.exec(&command))
             .await
@@ -766,6 +775,23 @@ impl ProsodyResponse {
                     Ok(false)
                 }
             }
+        }
+    }
+
+    /// In Lua, it is common for functions acting as boolean checks
+    /// to return `nil` instead of `false`. However, this results in
+    /// the shell raising an error instead of returning `false`/`nil`
+    /// (e.g. `usermanager.user_exists`). If we know in advance what
+    /// errors would be sent instead, we can do the mapping here.
+    #[must_use]
+    #[inline]
+    pub fn result_bool_expecting<'a>(
+        &self,
+        mut expected_errors: impl Iterator<Item = &'a str>,
+    ) -> anyhow::Result<bool> {
+        match self.result.as_ref() {
+            Err(err) if expected_errors.any(|e| e.eq(err)) => Ok(false),
+            _ => self.result_bool(),
         }
     }
 
