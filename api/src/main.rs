@@ -3,7 +3,7 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-mod config;
+mod app_config;
 mod errors;
 mod extractors;
 mod models;
@@ -15,13 +15,11 @@ mod startup;
 mod state;
 mod util;
 
-use std::net::{Ipv4Addr, SocketAddrV4};
-
 use anyhow::anyhow;
 use axum::Router;
 use tokio::net::TcpListener;
 
-pub(crate) use self::config::AppConfig;
+pub(crate) use self::app_config::AppConfig;
 use self::router::{router, startup_router};
 use self::startup::startup;
 pub(crate) use self::state::AppState;
@@ -30,27 +28,7 @@ pub(crate) use self::state::AppState;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let todo = "Read app config file";
-
-    let app_config = {
-        use crate::config::*;
-        use crate::models::jid::*;
-        use std::str::FromStr as _;
-        use tokio::time::Duration;
-
-        AppConfig {
-            server: ServerConfig {
-                domain: JidDomain::from_str("example.org").unwrap(),
-                local_hostname: "localhost".to_owned(),
-                http_port: 5280,
-            },
-            auth: AuthConfig {
-                token_ttl: Duration::from_secs(3 * 3600),
-            },
-            service_accounts: Default::default(),
-            teams: Default::default(),
-        }
-    };
+    let app_config = AppConfig::from_default_figment()?;
 
     main_inner(app_config)
         .await
@@ -59,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     // Bind to the API address to exit early if not available.
-    let address = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080);
+    let address = app_config.server_api.address();
     let mut listener = TcpListener::bind(address).await?;
 
     // Run startup tasks.

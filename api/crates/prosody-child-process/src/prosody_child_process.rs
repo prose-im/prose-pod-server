@@ -3,7 +3,10 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::process::Stdio;
+use std::{
+    ffi::{OsStr, OsString},
+    process::Stdio,
+};
 
 use anyhow::Context as _;
 use nix::{
@@ -17,6 +20,7 @@ use crate::util::debug_panic_or_log_warning;
 #[derive(Debug)]
 pub struct ProsodyChildProcess {
     handle: Option<ProsodyHandle>,
+    envs: Vec<(OsString, OsString)>,
 }
 
 #[derive(Debug)]
@@ -27,12 +31,21 @@ struct ProsodyHandle {
 
 impl ProsodyChildProcess {
     pub fn new() -> Self {
-        Self { handle: None }
+        Self {
+            handle: None,
+            envs: Vec::new(),
+        }
+    }
+
+    pub fn env<K: AsRef<OsStr>, V: AsRef<OsStr>>(mut self, key: K, value: V) -> Self {
+        self.envs
+            .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
+        self
     }
 
     /// Start Prosody in the background (non blocking).
     pub async fn start(&mut self) -> Result<(), anyhow::Error> {
-        let handle = ProsodyHandle::new().await?;
+        let handle = ProsodyHandle::new(self.envs.clone().into_iter()).await?;
 
         self.handle = Some(handle);
 
@@ -90,12 +103,13 @@ impl ProsodyChildProcess {
 impl ProsodyHandle {
     #[must_use]
     #[tracing::instrument(level = "trace", skip_all, err)]
-    async fn new() -> Result<Self, anyhow::Error> {
+    async fn new(envs: impl Iterator<Item = (OsString, OsString)>) -> Result<Self, anyhow::Error> {
         let child = Command::new("prosody")
             .arg("--no-daemonize")
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
+            .envs(envs)
             .spawn()
             .context("Failed spawning prosody")?;
 

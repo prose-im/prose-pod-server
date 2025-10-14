@@ -13,6 +13,7 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 anyhow = "1.0.99"
 axum = "0.8.4"
 base64 = { version = "0.22.1", default-features = false }
+figment = { version = "0.10.19", default-features = false, features = ["env", "toml"] }
 iso8601-duration = { version = "0.2.0", default-features = false, features = ["serde"] }
 jid = { version = "0.12.0", default-features = false, features = ["serde"] }
 media-type-detect = { path = "crates/media-type-detect" }
@@ -28,6 +29,7 @@ serde_with = { version = "3.14.1", features = ["base64"] }
 thiserror = { version = "2.0.17", default-features = false }
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "signal", "io-util", "process", "sync", "time"] }
 tokio-util = { version = "0.7.16", default-features = false, features = ["time"] }
+toml = { version = "0.9.8", default-features = false, features = ["display", "serde"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 

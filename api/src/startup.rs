@@ -36,8 +36,7 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
     apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
 
     // Launch Prosody.
-    let mut prosody = ProsodyChildProcess::new();
-    prosody.start().await.context("Failed starting Prosody")?;
+    let prosody = start_prosody(&app_config).await?;
 
     // Wait for Prosody to start.
     // TODO: Get rid of constant sleep.
@@ -172,6 +171,18 @@ fn apply_bootstrap_config(
     Ok(())
 }
 
+async fn start_prosody(app_config: &AppConfig) -> anyhow::Result<ProsodyChildProcess> {
+    use secrecy::ExposeSecret as _;
+
+    let mut prosody = ProsodyChildProcess::new().env(
+        "OAUTH2_REGISTRATION_KEY",
+        app_config.auth.oauth2_registration_key.expose_secret(),
+    );
+    prosody.start().await.context("Failed starting Prosody")?;
+
+    Ok(prosody)
+}
+
 async fn register_oauth2_client() -> anyhow::Result<ProsodyOAuth2Client> {
     let prosody_http_config = Arc::new(ProsodyHttpConfig {
         url: "http://prose-pod-server:5280".to_owned(),
@@ -220,14 +231,22 @@ async fn create_service_accounts(
     for (jid, name, password_opt) in accounts.iter() {
         let password = password_opt.clone().unwrap_or_else(Password::random);
 
+        let Some(username) = jid.node() else {
+            tracing::warn!("Service account `{jid}` has no node part. Can’t create it.");
+            continue;
+        };
+
         // Create the account if needed, or update password.
-        if prosodyctl.user_exists(jid.as_str(), &jid.domain()).await? {
+        if prosodyctl.user_exists(username, jid.domain()).await? {
+            tracing::debug!("Setting user `{jid}` password…");
             let summary = prosodyctl.user_password(jid.as_str(), &password).await?;
             tracing::info!("user_password: {summary}");
 
+            tracing::debug!("Setting user `{jid}` role…");
             let summary = prosodyctl.user_set_role(jid.as_str(), None, role).await?;
             tracing::info!("user_set_role: {summary}");
         } else {
+            tracing::debug!("Creating user `{jid}`…");
             let summary = prosodyctl
                 .user_create(jid.as_str(), &password, Some(role))
                 .await?;
@@ -251,7 +270,9 @@ async fn create_service_accounts(
             .await?
             .access_token;
         #[cfg_attr(not(debug_assertions), allow(unused))]
-        let previous_token = secrets.save_token(jid.clone(), token.clone().into()).await;
+        let previous_token = secrets
+            .save_token(jid.clone(), token.clone().into(), &mut tokens_guard)
+            .await;
 
         // NOTE: We just changed the password and hold a lock on tokens
         //   therefore we can be sure any previously stored token has been
@@ -267,10 +288,11 @@ async fn create_service_accounts(
             auth_token: token.clone(),
         };
         {
+            tracing::debug!("Getting vCard for `{jid}`…");
             let vcard_opt = prosody_rest
                 .get_own_vcard(&creds)
                 .await
-                .context("Error getting vCard for `{jid}`")?;
+                .context(format!("Error getting vCard for `{jid}`"))?;
             if vcard_opt.is_none() {
                 let vcard = VCard4 {
                     fn_: vec![vcard4::Fn_ {
@@ -281,10 +303,11 @@ async fn create_service_accounts(
                     kind: Some(vcard4::Kind::Application),
                     ..Default::default()
                 };
+                tracing::debug!("Creating vCard for `{jid}`…");
                 prosody_rest
                     .set_own_vcard(vcard, &creds)
                     .await
-                    .context("Error creating vCard for `{jid}`")?;
+                    .context(format!("Error creating vCard for `{jid}`"))?;
                 tracing::info!("Created vCard for `{jid}`.");
             }
         }
@@ -305,6 +328,7 @@ async fn create_groups(
 
     for (group_id, group_info) in groups.iter() {
         if !prosodyctl.groups_exists(host, group_id).await? {
+            tracing::debug!("Creating group `{group_id}` on host `{host}`…");
             let summary = prosodyctl
                 .groups_create(host, &group_info.name, None, Some(group_id))
                 .await?;
@@ -334,6 +358,7 @@ where
 
     for ref username in service_accounts {
         for group_id in groups.clone() {
+            tracing::debug!("Adding `{username}` to group `{group_id}`…");
             let summary = prosodyctl
                 .groups_add_member(host, group_id, username, Some(true))
                 .await?;
@@ -362,6 +387,7 @@ where
     let host: &str = server_domain.as_str();
 
     for group_id in groups {
+        tracing::debug!("Synchronizing groups…");
         let summary = prosodyctl.groups_sync(host, group_id).await?;
         tracing::info!("groups_sync: {summary}");
     }
@@ -381,12 +407,12 @@ struct GroupInfo {
 }
 
 impl Groups {
-    fn new(config: &crate::config::TeamsConfig) -> Self {
+    fn new(config: &crate::app_config::TeamsConfig) -> Self {
         let mut data: HashMap<String, GroupInfo> = HashMap::with_capacity(1);
 
-        use crate::config::TeamsConfig;
+        use crate::app_config::defaults;
         data.insert(
-            TeamsConfig::MAIN_TEAM_GROUP_ID.to_owned(),
+            defaults::MAIN_TEAM_GROUP_ID.to_owned(),
             GroupInfo {
                 name: config.main_team_name.clone(),
             },

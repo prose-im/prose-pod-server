@@ -55,21 +55,43 @@ async fn health() -> &'static str {
     "OK"
 }
 
-async fn reload(State(ref app_state): State<AppState>) -> StatusCode {
+async fn reload(
+    State(ref app_state): State<AppState>,
+    State(ref app_config): State<Arc<AppConfig>>,
+) -> StatusCode {
     let mut prosody = app_state.prosody.write().await;
 
-    match prosody.reload().await {
-        Ok(()) => StatusCode::OK,
-        Err(err) => {
-            // Release lock ASAP.
-            drop(prosody);
+    let reload_res = prosody.reload().await;
 
-            // Log debug info.
-            debug_panic_or_log_error(format!("Could not reload Prosody: {err}"));
+    // Release lock ASAP.
+    drop(prosody);
 
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+    if let Err(err) = reload_res {
+        // Log debug info.
+        debug_panic_or_log_error(format!("Could not reload Prosody: {err}"));
+
+        return StatusCode::INTERNAL_SERVER_ERROR;
     }
+
+    let mut prosodyctl = app_state.prosodyctl.write().await;
+
+    let main_host = app_config.server.domain.as_str();
+    // TODO: Impact of runnning every time?
+    let modules_load_res = prosodyctl.module_load_modules_for_host(main_host).await;
+
+    // Release lock ASAP.
+    drop(prosodyctl);
+
+    if let Err(err) = modules_load_res {
+        // Log debug info.
+        debug_panic_or_log_error(format!(
+            "Could not load Prosody modules for `{main_host}`: {err}"
+        ));
+
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    StatusCode::OK
 }
 
 async fn restart(State(ref app_state): State<AppState>) -> StatusCode {

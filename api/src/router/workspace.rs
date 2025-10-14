@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use axum::extract::State;
-use axum::routing::{MethodRouter, get};
+use axum::routing::{MethodRouter, put};
 use axum::{Json, Router};
 use prosody_rest::prose_xmpp::stanza::VCard4;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::errors::{invalid_avatar, prelude::*};
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
@@ -22,7 +22,13 @@ const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/workspace", get(get_workspace))
+        .route("/workspace-init", put(init_workspace))
+        .route(
+            "/workspace",
+            MethodRouter::new()
+                .get(get_workspace)
+                .patch(patch_workspace),
+        )
         .route(
             "/workspace/name",
             MethodRouter::new()
@@ -51,6 +57,55 @@ struct WorkspaceProfile {
     accent_color: Option<Color>,
 }
 
+/// In the Dashboard, one can set the name of their Workspace before creating
+/// the first admin account. This means they have to be able to use an
+/// unauthenticated route to set the Workspace profile. This route enables it,
+/// and works only until the first admin account is created. After that, it’ll
+/// return 410 Gone.
+async fn init_workspace(
+    State(ref app_state): State<AppState>,
+    State(ref app_config): State<Arc<AppConfig>>,
+    Json(req): Json<InitWorkspaceRequest>,
+) -> Result<(), Error> {
+    let server_domain = app_config.server.domain.as_str();
+    let mut prosodyctl = app_state.prosodyctl.write().await;
+    let user_count = prosodyctl
+        .user_get_jids_with_role(server_domain, "prosody:member")
+        .await
+        .no_context()?
+        .len();
+
+    if user_count > 0 {
+        return Err(errors::too_late(
+            "WORKSPACE_ALREADY_INITIALIZED",
+            "Workspace already initialized",
+            "You now need to log in as an admin to do that.",
+        ));
+    }
+
+    let ref jid = app_config.workspace_jid();
+    let ref creds = service_account_credentials(app_state, jid).await?;
+
+    patch_workspace_vcard_unchecked(
+        app_state,
+        creds,
+        PatchWorkspaceRequest {
+            name: Some(req.name),
+            accent_color: req.accent_color.map(Some),
+        },
+    )
+    .await
+}
+
+#[derive(Debug)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitWorkspaceRequest {
+    name: String,
+    #[serde(default)]
+    accent_color: Option<Color>,
+}
+
 async fn get_workspace(
     State(ref app_state): State<AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
@@ -72,6 +127,37 @@ async fn get_workspace(
     Ok(Json(workspace))
 }
 
+async fn patch_workspace(
+    State(ref app_state): State<AppState>,
+    State(ref app_config): State<Arc<AppConfig>>,
+    caller_info: CallerInfo,
+    Json(req): Json<PatchWorkspaceRequest>,
+) -> Result<(), Error> {
+    // Ensure the caller is an admin.
+    // FIXME: Make this more flexible by checking rights instead of roles
+    //   (which can be extended).
+    match caller_info.primary_role.as_str() {
+        "prosody:admin" | "prosody:operator" => {}
+        _ => return Err(errors::forbidden("Only admins can do that.")),
+    }
+
+    let ref jid = app_config.workspace_jid();
+    let ref creds = service_account_credentials(app_state, jid).await?;
+
+    patch_workspace_vcard_unchecked(app_state, creds, req).await
+}
+
+#[derive(Debug, Default)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchWorkspaceRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+
+    #[serde(default, with = "crate::util::serde::null_as_some_none")]
+    pub accent_color: Option<Option<Color>>,
+}
+
 async fn get_workspace_name(
     State(ref app_state): State<AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
@@ -90,8 +176,6 @@ async fn set_workspace_name(
     caller_info: CallerInfo,
     Json(name): Json<String>,
 ) -> Result<(), Error> {
-    use prosody_rest::prose_xmpp::stanza::vcard4;
-
     // Ensure the caller is an admin.
     // FIXME: Make this more flexible by checking rights instead of roles
     //   (which can be extended).
@@ -101,22 +185,17 @@ async fn set_workspace_name(
     }
 
     let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref creds = service_account_credentials(app_state, jid).await?;
 
-    let mut vcard = service_account_vcard(app_state, ctx)
-        .await?
-        .unwrap_or_default();
-
-    vcard.fn_ = vec![vcard4::Fn_ { value: name }];
-
-    app_state
-        .prosody_rest
-        .set_own_vcard(vcard, ctx)
-        .await
-        .context("Could not set Workspace vCard")
-        .no_context()?;
-
-    Ok(())
+    patch_workspace_vcard_unchecked(
+        app_state,
+        creds,
+        PatchWorkspaceRequest {
+            name: Some(name),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 async fn get_workspace_accent_color(
@@ -137,9 +216,6 @@ async fn set_workspace_accent_color(
     caller_info: CallerInfo,
     Json(color_opt): Json<Option<Color>>,
 ) -> Result<(), Error> {
-    use prosody_rest::minidom::Element;
-    use prosody_rest::prose_xmpp::ns;
-
     // Ensure the caller is an admin.
     // FIXME: Make this more flexible by checking rights instead of roles
     //   (which can be extended).
@@ -149,35 +225,17 @@ async fn set_workspace_accent_color(
     }
 
     let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref creds = service_account_credentials(app_state, jid).await?;
 
-    let Some(mut vcard) = service_account_vcard(app_state, ctx).await? else {
-        return Err(workspace_not_initialized_error("No vCard."));
-    };
-
-    // FIXME: Do not override all unknown properties! Improve the `prose_xmpp`
-    //   API to expose mutating methods and use it here instead.
-    match color_opt {
-        Some(color) => {
-            vcard.unknown_properties = vec![
-                Element::builder(ACCENT_COLOR_EXTENSION_KEY, ns::VCARD4)
-                    .append(Element::builder("text", ns::VCARD4).append(color.to_string()))
-                    .build(),
-            ]
-            .into_iter()
-            .collect()
-        }
-        None => vcard.unknown_properties = Default::default(),
-    };
-
-    app_state
-        .prosody_rest
-        .set_own_vcard(vcard, ctx)
-        .await
-        .context("Could not set Workspace vCard")
-        .no_context()?;
-
-    Ok(())
+    patch_workspace_vcard_unchecked(
+        app_state,
+        creds,
+        PatchWorkspaceRequest {
+            accent_color: Some(color_opt),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 async fn get_workspace_icon(
@@ -218,7 +276,7 @@ async fn set_workspace_icon(
 
     app_state
         .prosody_rest
-        .set_own_avatar(icon.bytes, ctx)
+        .set_own_avatar(icon.into_bytes(), ctx)
         .await
         .context("Could not set Workspace icon")
         .no_context()?;
@@ -289,6 +347,52 @@ async fn get_workspace_profile_minimal(
         Some(vcard) => WorkspaceProfile::try_from(vcard),
         None => Err(workspace_not_initialized_error("No vCard.")),
     }
+}
+
+#[must_use]
+#[inline]
+async fn patch_workspace_vcard_unchecked(
+    app_state: &AppState,
+    creds: &prosody_rest::CallerCredentials,
+    req: PatchWorkspaceRequest,
+) -> Result<(), Error> {
+    use prosody_rest::minidom::Element;
+    use prosody_rest::prose_xmpp::ns;
+    use prosody_rest::prose_xmpp::stanza::vcard4;
+
+    let mut vcard = service_account_vcard(app_state, creds)
+        .await?
+        .unwrap_or_default();
+
+    if let Some(name) = req.name {
+        vcard.fn_ = vec![vcard4::Fn_ { value: name }];
+    }
+
+    if let Some(color_opt) = req.accent_color {
+        // FIXME: Do not override all unknown properties! Improve the `prose_xmpp`
+        //   API to expose mutating methods and use it here instead.
+        match color_opt {
+            Some(color) => {
+                vcard.unknown_properties = vec![
+                    Element::builder(ACCENT_COLOR_EXTENSION_KEY, ns::VCARD4)
+                        .append(Element::builder("text", ns::VCARD4).append(color.to_string()))
+                        .build(),
+                ]
+                .into_iter()
+                .collect()
+            }
+            None => vcard.unknown_properties = Default::default(),
+        };
+    }
+
+    app_state
+        .prosody_rest
+        .set_own_vcard(vcard, creds)
+        .await
+        .context("Could not set Workspace vCard")
+        .no_context()?;
+
+    Ok(())
 }
 
 // MARK: - Errors

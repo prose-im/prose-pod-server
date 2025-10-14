@@ -15,7 +15,7 @@ use crate::{AppConfig, secrets_service::SecretsService};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
-    pub config: Arc<AppConfig>,
+    pub(crate) config: Arc<AppConfig>,
     pub prosody: Arc<RwLock<ProsodyChildProcess>>,
     pub prosodyctl: Arc<RwLock<Prosodyctl>>,
     pub prosody_rest: ProsodyRest,

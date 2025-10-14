@@ -10,7 +10,7 @@ use std::process::Stdio;
 use anyhow::{Context as _, anyhow};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::time::Duration;
+use tokio::time::{Duration, Instant};
 
 use crate::Password;
 
@@ -58,7 +58,15 @@ impl ProsodyShell {
     /// 200ms is enough: Prosody is fast and running on the same machine.
     const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
+    /// Some actions are O(n^2) and take longer. This timeout can be used then.
+    const LONG_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// If a command takes more than this duration to execute,
+    /// log execution time.
+    const EXEC_LOG_THRESHOLD: Duration = Duration::from_millis(1000);
+
     /// Execute a command.
+    #[must_use]
     pub async fn exec(&mut self, command: &str) -> anyhow::Result<ProsodyResponse> {
         self.exec_with_timeout(command, Self::DEFAULT_TIMEOUT).await
     }
@@ -66,16 +74,28 @@ impl ProsodyShell {
     const MAX_COMMAND_LENGTH: usize = 1024;
 
     /// Execute a command with a custom timeout.
+    #[must_use]
     pub async fn exec_with_timeout(
         &mut self,
         command: &str,
         timeout: Duration,
     ) -> anyhow::Result<ProsodyResponse> {
+        let start = Instant::now();
+
         // Get or start the shell.
         let handle = self.get_handle_or_start().await?;
 
         // Execute command.
-        handle.exec_with_timeout(command, timeout).await
+        let res = handle.exec_with_timeout(command, timeout).await;
+
+        // Log execution time if too long.
+        let elapsed = start.elapsed();
+        if elapsed > Self::EXEC_LOG_THRESHOLD {
+            let command = command_name(command);
+            tracing::warn!("Command `{command}` took {elapsed:.0?} to execute.");
+        }
+
+        res
     }
 }
 
@@ -140,6 +160,7 @@ impl ProsodyShellHandle {
         }
 
         // Send command.
+        tracing::trace!("[>] {command}");
         self.stdin.write_all(command.as_bytes()).await?;
         if !command.ends_with('\n') {
             self.stdin.write_u8(b'\n').await?;
@@ -168,6 +189,8 @@ impl ProsodyShellHandle {
             .context("Timeout")?
             .context("I/O error")?
         {
+            tracing::trace!("[<] {full_line}");
+
             // Remove first line prefix.
             let line = if full_line.starts_with(FIRST_LINE_PREFIX) {
                 &full_line[FIRST_LINE_PREFIX.len()..]
@@ -283,6 +306,8 @@ impl ProsodyShell {
     #[must_use]
     #[tracing::instrument(level = "trace", skip_all, fields(username, host), err)]
     pub async fn user_exists(&mut self, username: &str, host: &str) -> anyhow::Result<bool> {
+        debug_assert!(!username.contains("@"));
+
         if !self.host_exists(host).await? {
             return Err(anyhow!("Host '{host}' does not exit."));
         }
@@ -435,9 +460,9 @@ impl ProsodyShell {
             return Err(anyhow!("Host '{host}' does not exit."));
         }
 
-        let command = format!(r#"> um.get_jids_with_role("{role_name}", "{host}")"#);
+        let command = format!(r#"> dump(um.get_jids_with_role("{role_name}", "{host}"))"#);
 
-        let response = (self.exec(&command))
+        let response = (self.exec_with_timeout(&command, Self::LONG_TIMEOUT))
             .await
             .context("Error listing enabled modules")?;
 
@@ -572,6 +597,23 @@ impl ProsodyShell {
         response.result_string_array()
     }
 
+    #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, fields(host), err)]
+    pub async fn module_load_modules_for_host(&mut self, host: &str) -> anyhow::Result<()> {
+        if !self.host_exists(host).await? {
+            return Err(anyhow!("Host '{host}' does not exit."));
+        }
+
+        let command = format!(r#"> mm.load_modules_for_host("{host}")"#);
+
+        let reponse = self
+            .exec(&command)
+            .await
+            .context("Error loading modules for host")?;
+
+        reponse.result_unit()
+    }
+
     /// Just an internal helper.
     #[inline]
     #[tracing::instrument(level = "trace", skip_all, fields(host, module), err)]
@@ -664,7 +706,7 @@ impl ProsodyShell {
 
         let command = format!(r#"groups:sync_group("{host}", "{group_id}")"#);
 
-        let response = (self.exec(&command))
+        let response = (self.exec_with_timeout(&command, Self::LONG_TIMEOUT))
             .await
             .context("Error synchronizing group")?;
 
@@ -757,6 +799,15 @@ impl Drop for ProsodyShell {
 impl ProsodyResponse {
     #[must_use]
     #[inline]
+    pub fn result_unit(self) -> anyhow::Result<()> {
+        match self.result {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::msg(err)),
+        }
+    }
+
+    #[must_use]
+    #[inline]
     pub fn result_bool(&self) -> anyhow::Result<bool> {
         let result = (self.result)
             .as_ref()
@@ -813,7 +864,7 @@ fn lua_string_to_array_iter(lua: &str) -> impl Iterator<Item = &str> {
     );
     assert!(
         lua.ends_with("}"),
-        "Lua array should end with `}}`. Got `{lua}`."
+        "Lua array should end with `}}`. Got `{lua}`. Make sure to call `dump` to force formatting on one line."
     );
     assert!(
         !lua.contains('\n'),

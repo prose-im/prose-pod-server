@@ -31,7 +31,7 @@ pub struct SecretsStore {
 }
 
 impl SecretsStore {
-    pub fn new(app_config: &crate::AppConfig) -> Self {
+    pub(crate) fn new(app_config: &crate::AppConfig) -> Self {
         // NOTE: To make sure there is no instant where tokens are invalid,
         //   we can refresh them before they expire. `token_ttl` is in the
         //   hours range and refresing tokens takes milliseconds so we can

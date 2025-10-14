@@ -3,12 +3,11 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use serde::de;
 use serde::{Deserialize, Deserializer};
 
 pub mod iso8601_duration {
     use tokio::time::Duration;
-
-    use serde::de;
 
     use super::*;
 
@@ -24,5 +23,20 @@ pub mod iso8601_duration {
                 Use for example `P365D` or `P30D` to make your expected result explicit.",
             )),
         }
+    }
+}
+
+pub mod null_as_some_none {
+    use super::*;
+
+    /// Any value that is present is considered `Some` value, including `null`.
+    ///
+    /// Copyright: [Treat null and missing field as being different · Issue #984 · serde-rs/serde](https://github.com/serde-rs/serde/issues/984#issuecomment-314143738).
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        T: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer).map(Some)
     }
 }

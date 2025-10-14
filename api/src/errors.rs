@@ -83,6 +83,26 @@ pub fn forbidden(description: impl Into<String>) -> Error {
     )
 }
 
+// MARK: Lifecycle errors (initialization done, restarting…)
+
+const ERROR_KIND_LIFECYCLE: &'static str = "LIFECYCLE_ERROR";
+
+#[must_use]
+#[inline]
+pub fn too_late(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_LIFECYCLE,
+        code,
+        StatusCode::GONE,
+        message,
+        description,
+    )
+}
+
 // MARK: Other error kinds
 
 #[must_use]

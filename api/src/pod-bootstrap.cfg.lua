@@ -24,8 +24,8 @@ https_ports = {}
 -- Modules
 plugin_paths = { "/usr/local/lib/prosody/modules/" }
 modules_enabled = {
-  "auto_activate_hosts";
   "admin_shell";
+  "auto_activate_hosts";
   "groups_shell";
 }
 modules_disabled = {
@@ -44,6 +44,8 @@ VirtualHost "{{server_domain}}"
     "groups_internal";
     "http_oauth2";
     "invites";
+    "rest";
+    "vcard4";
   }
 
   -- HTTP settings
@@ -52,26 +54,9 @@ VirtualHost "{{server_domain}}"
   -- mod_http_oauth2
   allowed_oauth2_grant_types = {
     "authorization_code";
-    "refresh_token";
     "password";
+    "refresh_token";
   }
   oauth2_access_token_ttl = 10800
   oauth2_refresh_token_ttl = 0
-  oauth2_registration_key = "{{oauth2_registration_key}}"
-
-VirtualHost "admin.prose.local"
-  admins = { "prose-pod-api@admin.prose.local" }
-
-  -- Modules
-  modules_enabled = {
-    "admin_rest";
-    "init_admin";
-  }
-
-  -- HTTP settings
-  http_host = "prose-pod-server-admin"
-
-  -- mod_init_admin
-  init_admin_jid = "prose-pod-api@admin.prose.local"
-  init_admin_password_env_var_name = "PROSE_BOOTSTRAP__PROSE_POD_API_XMPP_PASSWORD"
-  init_admin_default_password = "bootstrap"
+  oauth2_registration_key = ENV_OAUTH2_REGISTRATION_KEY

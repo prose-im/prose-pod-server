@@ -130,9 +130,13 @@ impl SecretsService {
         }))
     }
 
-    pub async fn save_token(&self, jid: BareJid, token: AuthToken) -> Option<AuthToken> {
-        let mut tokens_cache = self.store.tokens_cache.write().await;
-        tokens_cache.insert(jid, token)
+    pub async fn save_token(
+        &self,
+        jid: BareJid,
+        token: AuthToken,
+        tokens_guard: &mut TokensWriteGuard<'_>,
+    ) -> Option<AuthToken> {
+        tokens_guard.guard.insert(jid, token)
     }
 
     pub async fn run_purge_tasks(&self) {

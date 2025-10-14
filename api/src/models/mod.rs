@@ -145,11 +145,11 @@ pub mod avatar {
         /// Fixed-size slice of bytes.
         #[serde(rename = "base64")]
         #[serde_as(as = "serde_with::base64::Base64")]
-        pub bytes: Box<[u8]>,
+        bytes: Box<[u8]>,
 
         /// Media type, infered from magic bytes for security reasons.
         #[serde(rename = "type")]
-        pub media_type: MediaType,
+        media_type: MediaType,
     }
 
     #[derive(Debug, thiserror::Error)]
@@ -202,6 +202,13 @@ pub mod avatar {
         #[inline]
         pub fn try_from_base64_string(string: String) -> Result<Self, AvatarDecodeError> {
             Self::try_from_base64(string.into_bytes().into_boxed_slice())
+        }
+    }
+
+    impl Avatar {
+        #[inline]
+        pub fn into_bytes(self) -> Box<[u8]> {
+            self.bytes
         }
     }
 }
