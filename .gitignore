@@ -6,6 +6,9 @@
 **/.hg/hgrc.d/
 
 # Prosody Community modules conflicting with internal plugins (merged)
+plugins/community/mod_pep_vcard_avatar
+plugins/community/mod_server_contact_info
+plugins/community/mod_server_info
 # See `for f in $(rg -l Stage-Merged --no-ignore-vcs); do print -- "$(dirname "$f")"; done | sort`
 plugins/community/mod_auth_any
 plugins/community/mod_auth_ldap
