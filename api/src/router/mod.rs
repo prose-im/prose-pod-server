@@ -15,11 +15,11 @@ use axum::{Json, Router};
 use prosodyctl::UserCreateError;
 use serde::{Deserialize, Serialize};
 
-use crate::AppConfig;
 use crate::models::{BareJid, CallerInfo, JidNode, Password};
 use crate::responders::Error;
 use crate::state::AppState;
 use crate::util::{NoContext, PROSODY_JIDS_ARE_VALID, debug_panic_or_log_error};
+use crate::{AppConfig, errors};
 
 pub fn startup_router() -> Router {
     Router::new()
@@ -130,12 +130,21 @@ async fn init_first_account(
 ) -> Result<Json<CreateAccountResponse>, Error> {
     let mut prosodyctl = app_state.prosodyctl.write().await;
 
-    // Ensure no user already exist.
-    let users = prosodyctl
-        .user_list(&app_config.server.domain, None)
+    let first_account_role = "prosody:admin";
+
+    // Ensure no user already exists.
+    // FIX: While it shouldn’t be possible to delete the last admin
+    //   (see [prose-im/prose-pod-api#344](https://github.com/prose-im/prose-pod-api/issues/344)),
+    //   we can re-enable this route whenever no admin exists,
+    //   for convenience. I (@RemiBardon) feel like it’s going to
+    //   save us from a bad situation one day and that day I’ll
+    //   thank myself for taking this decision.
+    let user_count = prosodyctl
+        .user_get_jids_with_role(&app_config.server.domain, first_account_role)
         .await
-        .map_err(NoContext::no_context)?;
-    if !users.is_empty() {
+        .no_context()?
+        .len();
+    if user_count > 0 {
         return Err(crate::errors::conflict_error(
             "FIRST_ACCOUNT_ALREADY_CREATED",
             "First account already created",
@@ -145,9 +154,8 @@ async fn init_first_account(
 
     // Create first admin account.
     let jid = BareJid::from_parts(Some(&dto.username), &app_config.server.domain);
-    let role = "prosody:admin";
     let result = prosodyctl
-        .user_create(jid.as_str(), &dto.password, Some(role))
+        .user_create(jid.as_str(), &dto.password, Some(first_account_role))
         .await;
 
     // Release lock ASAP.
@@ -158,14 +166,21 @@ async fn init_first_account(
             tracing::info!("{summary}");
             let response = CreateAccountResponse {
                 username: dto.username,
-                role: role.to_owned(),
+                role: first_account_role.to_owned(),
             };
             Ok(Json(response))
         }
         Err(UserCreateError::Conflict) => {
-            // NOTE: Even more so since we lock the prosodyctl shell between
-            //   listing users and creating the first admin account.
-            unreachable!("There shouldn’t be any user")
+            // // NOTE: Even more so since we lock the prosodyctl shell between
+            // //   listing users and creating the first admin account.
+            // unreachable!("There shouldn’t be any user")
+            // NOTE: Because we now check for admins only,
+            //   there might still be a conflict.
+            Err(errors::conflict_error(
+                "USERNAME_ALREADY_TAKEN",
+                "Username already taken",
+                "Choose another username.",
+            ))
         }
         Err(UserCreateError::Internal(error)) => Err(error.no_context()),
     }
@@ -179,12 +194,18 @@ async fn users_stats(
 
     let mut prosodyctl = app_state.prosodyctl.write().await;
 
-    let users = prosodyctl.user_list(domain, None).await.no_context()?;
+    // NOTE: We need to filter out service accounts,
+    //   which don’t have the `prosody:member` role.
+    let user_count = prosodyctl
+        .user_get_jids_with_role(domain, "prosody:member")
+        .await
+        .no_context()?
+        .len();
 
     // Release lock ASAP.
     drop(prosodyctl);
 
-    Ok(Json(GetUsersStatsResponse { count: users.len() }))
+    Ok(Json(GetUsersStatsResponse { count: user_count }))
 }
 
 #[derive(Serialize)]

@@ -474,7 +474,7 @@ impl ProsodyShell {
 pub enum UserCreateError {
     #[error("User already exists.")]
     Conflict,
-    #[error("{0}")]
+    #[error("{0:#}")]
     Internal(#[from] anyhow::Error),
 }
 

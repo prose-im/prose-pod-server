@@ -30,6 +30,11 @@ where
     }
 
     pub fn insert(&mut self, key: CacheKey, value: Value) -> Option<Value> {
+        // NOTE: A TTL of 0 is used in tests.
+        if self.ttl.is_zero() {
+            return None;
+        }
+
         let delay = self.expirations.insert(key.clone(), self.ttl.clone());
 
         self.entries.insert(key, (value, delay)).map(|(val, _)| val)
@@ -65,6 +70,11 @@ where
         use std::task::Waker;
 
         let ttl = cache.read().await.ttl.clone();
+
+        // NOTE: A TTL of 0 is used in tests.
+        if ttl.is_zero() {
+            return;
+        }
 
         let mut interval = tokio::time::interval(ttl);
         loop {

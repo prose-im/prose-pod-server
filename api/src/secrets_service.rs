@@ -139,8 +139,8 @@ impl SecretsService {
         tokens_guard.guard.insert(jid, token)
     }
 
-    pub async fn run_purge_tasks(&self) {
-        Cache::purge_task(self.store.tokens_cache.clone()).await
+    pub fn run_purge_tasks(&self) -> impl Future<Output = ()> + 'static {
+        Cache::purge_task(self.store.tokens_cache.clone())
     }
 }
 

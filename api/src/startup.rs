@@ -40,7 +40,7 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
 
     // Wait for Prosody to start.
     // TODO: Get rid of constant sleep.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let mut prosodyctl = Prosodyctl::new();
 
@@ -78,6 +78,9 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
         &app_config.server.domain,
     )
     .await?;
+
+    // Run cache purge tasks in the background.
+    tokio::spawn(secrets.run_purge_tasks());
 
     tracing::info!("Started up in {:.0?}.", start.elapsed());
 

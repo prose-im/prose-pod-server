@@ -1,0 +1,36 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1760456813 -28800
+#      Tue Oct 14 23:46:53 2025 +0800
+# Node ID d1be0f55e36755d6510a20a2a5f2a22928b2ab0d
+# Parent  0ed622b22a3e79a4cc701563acbd702c20b08cff
+mod_invites_register_api: Do not require choosing a username if register invite already has a JID defined
+
+diff -r 0ed622b22a3e -r d1be0f55e367 mod_invites_register_api/mod_invites_register_api.lua
+--- a/mod_invites_register_api/mod_invites_register_api.lua	Sat Oct 04 15:38:20 2025 +0800
++++ b/mod_invites_register_api/mod_invites_register_api.lua	Tue Oct 14 23:46:53 2025 +0800
+@@ -1,4 +1,5 @@
+ local id = require "util.id";
++local jid = require "util.jid";
+ local json = require "util.json";
+ local usermanager = require "core.usermanager";
+ local nodeprep = require "util.encodings".stringprep.nodeprep;
+@@ -68,6 +69,18 @@
+ 		return 404;
+ 	end
+ 
++	if invite.jid then
++		local invite_user = jid.node(invite.jid);
++		if invite_user then
++			if user and user ~= invite_user then
++				module:log("warn", "Username already defined in invite");
++				return 400;
++			else
++				user = invite_user;
++			end
++		end
++	end
++
+ 	response.headers["Content-Type"] = json_content_type;
+ 
+ 	if not user or #user == 0 or not password or #password == 0 or not token then

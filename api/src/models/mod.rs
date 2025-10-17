@@ -18,8 +18,6 @@ pub mod password {
     pub struct Password(SecretString);
 
     impl Password {
-        pub const MIN_PASSWORD_LENGTH: usize = 16;
-
         // NOTE: Not just in `Default` to allow more explicit code.
         pub fn random() -> Self {
             Self(crate::util::random_strong_password())
@@ -27,24 +25,9 @@ pub mod password {
     }
 
     // NOTE: Allows public creation while keeping `.0` private.
-    impl TryFrom<SecretString> for Password {
-        type Error = crate::responders::Error;
-
-        fn try_from(secret: SecretString) -> Result<Self, Self::Error> {
-            use secrecy::ExposeSecret as _;
-
-            if secret.expose_secret().len() >= Self::MIN_PASSWORD_LENGTH {
-                Ok(Self(secret))
-            } else {
-                Err(crate::errors::validation_error(
-                    "PASSWORD_TOO_SHORT",
-                    "Password too short",
-                    format!(
-                        "Passwords must be at least {min_length} characters long.",
-                        min_length = Self::MIN_PASSWORD_LENGTH
-                    ),
-                ))
-            }
+    impl From<SecretString> for Password {
+        fn from(secret: SecretString) -> Self {
+            Self(secret)
         }
     }
 
@@ -71,10 +54,10 @@ pub mod password {
     }
 
     impl std::str::FromStr for Password {
-        type Err = <Self as TryFrom<SecretString>>::Error;
+        type Err = std::convert::Infallible;
 
         fn from_str(str: &str) -> Result<Self, Self::Err> {
-            Self::try_from(SecretString::from(str))
+            Ok(Self::from(SecretString::from(str)))
         }
     }
 }

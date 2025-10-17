@@ -26,6 +26,8 @@ pub(crate) use self::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let todo = "Migrate to Prosody 13";
+
     init_tracing();
 
     let app_config = AppConfig::from_default_figment()?;
@@ -65,8 +67,6 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let secrets_service = app_state.secrets_service.clone();
-
     // Then serve all routes once Prosody has started.
     listener = TcpListener::bind(address).await?;
     tokio::select! {
@@ -77,9 +77,6 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
-
-        // Run cache purge tasks in the background.
-        () = secrets_service.run_purge_tasks() => unreachable!(),
     }
 }
 

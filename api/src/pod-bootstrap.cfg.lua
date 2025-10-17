@@ -27,6 +27,12 @@ modules_enabled = {
   "admin_shell";
   "auto_activate_hosts";
   "groups_shell";
+  -- NOTE: While we don’t use it during bootstrapping, we need to enable
+  --   `reload_modules` right away so it can reload modules when itself gets
+  --   loaded. It’s an edge case, but it causes the modules loaded during
+  --   bootstrapping to not reload their configuration keys after the Pod API
+  --   loads the real configuration for the first time.
+  "reload_modules";
 }
 modules_disabled = {
   "s2s";

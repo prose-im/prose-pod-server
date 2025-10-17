@@ -57,7 +57,7 @@ pub enum ProsodyRestError {
     ConnectionError(#[from] ConnectionError),
     #[error("{0}")]
     RequestError(#[from] RequestError),
-    #[error("{0}")]
+    #[error("{0:#}")]
     Other(#[from] anyhow::Error),
 }
 
