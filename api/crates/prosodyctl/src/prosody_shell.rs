@@ -37,6 +37,8 @@ pub struct ProsodyResponse {
 }
 
 impl ProsodyShell {
+    /// NOTE: This constructor is lazy. The shell will start
+    ///   when you make the first request.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -277,6 +279,30 @@ impl ProsodyShell {
             .result_bool()
             .context(command_name(&command).to_owned())
             .context("Error testing if host exists")
+    }
+
+    #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, err)]
+    pub async fn prosody_paths_config(&mut self) -> anyhow::Result<String> {
+        let command = format!(r#"> prosody.paths.config"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error getting Prosody config path")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
+    }
+
+    #[must_use]
+    #[tracing::instrument(level = "trace", skip_all, err)]
+    pub async fn prosody_paths_data(&mut self) -> anyhow::Result<String> {
+        let command = format!(r#"> prosody.paths.data"#);
+
+        let response = (self.exec(&command))
+            .await
+            .context("Error getting Prosody data path")?;
+
+        Ok(response.result.map_err(anyhow::Error::msg)?)
     }
 }
 
@@ -903,8 +929,13 @@ fn command_name<'a>(command: &'a str) -> &'a str {
     } else if command.contains("require") {
         // NOTE: For cases like `> mm = require"core.modulemanager"`.
         command.len()
+    } else if command.contains("\"") {
+        panic!(
+            "Command `{command}` potentially contains sensitive information. \
+            Add a case to support it."
+        )
     } else {
-        panic!("Commands should use either the default or the advanced syntax.")
+        command.len()
     };
 
     // Check if using the

@@ -8,6 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context as _, anyhow};
 use prosody_http::mod_http_oauth2::ProsodyOAuth2Client;
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     models::{AuthToken, BareJid, Password},
@@ -139,8 +140,21 @@ impl SecretsService {
         tokens_guard.guard.insert(jid, token)
     }
 
-    pub fn run_purge_tasks(&self) -> impl Future<Output = ()> + 'static {
-        Cache::purge_task(self.store.tokens_cache.clone())
+    pub fn run_purge_tasks(
+        &self,
+        cancellation_token: CancellationToken,
+    ) -> impl Future<Output = ()> + 'static {
+        let cache = self.store.tokens_cache.clone();
+        async move {
+            tokio::select! {
+                () = Cache::purge_task(cache) => {
+                    tracing::error!("Cache purge task ended.")
+                }
+                () = cancellation_token.cancelled_owned() => {
+                    tracing::debug!("Cache purge task cancelled.")
+                }
+            }
+        }
     }
 }
 

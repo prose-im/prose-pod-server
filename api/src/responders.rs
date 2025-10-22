@@ -28,6 +28,47 @@ impl IntoResponse for crate::models::AuthToken {
     }
 }
 
+impl IntoResponse for &crate::state::AppStatus {
+    fn into_response(self) -> Response {
+        use crate::errors;
+        use crate::state::AppStatus as Status;
+        use crate::util::ResponseExt as _;
+
+        match self {
+            Status::Starting => errors::too_early(
+                "SERVER_STARTING",
+                "A moment please",
+                "Your Prose Server is starting.",
+            )
+            .into_response()
+            .retry_after(1),
+            Status::Running => StatusCode::OK.into_response(),
+            Status::Restarting => errors::too_early(
+                "SERVER_RESTARTING",
+                "A moment please",
+                "Your Prose Server is restarting.",
+            )
+            .into_response()
+            .retry_after(1),
+            Status::RestartFailed(err) => errors::internal_server_error(
+                err,
+                "RESTART_FAILED",
+                "Something went wrong while restarting your Prose Server.",
+            )
+            .into_response(),
+            Status::Misconfigured(err) => errors::bad_configuration(err).into_response(),
+            Status::UndergoingFactoryReset => errors::service_unavailable(
+                "FACTORY_RESET_IN_PROGRESS",
+                "Factory reset in progress",
+                "Come back in a few moments to find your brand-new Prose Workspace.",
+            )
+            .into_response()
+            // FIXME: Test if this value makes sense.
+            .retry_after(15),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Error {
     /// Error kind (to group error codes).

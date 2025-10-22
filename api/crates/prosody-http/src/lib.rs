@@ -90,7 +90,7 @@ pub enum ProsodyHttpError {
     Forbidden { reason: String },
 
     /// We made a mistake somewhere.
-    #[error("{0:#}")]
+    #[error("{0:?}")]
     Internal(#[from] anyhow::Error),
 }
 

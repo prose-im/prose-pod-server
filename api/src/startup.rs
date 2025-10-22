@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -15,34 +16,66 @@ use prosody_http::{ProsodyHttpConfig, mod_http_oauth2};
 use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use crate::models::{BareJid, JidDomain, JidNode, Password};
+use crate::router::main_router;
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
-use crate::util::{jid_0_12_to_jid_0_11, random_oauth2_registration_key};
-use crate::{AppConfig, AppState};
+use crate::state::{AppStatus, Layer0AppState, Layer1AppState};
+use crate::util::jid_0_12_to_jid_0_11;
+use crate::{AppConfig, Layer2AppState};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 
-pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
+/// See [docs/initialization-phases.md](../docs/initialization-phases.md).
+///
+/// WARN: This function doesn’t start Prosody.
+pub async fn init(layer0_app_state: Layer0AppState) -> anyhow::Result<Layer1AppState> {
+    tracing::info!("Initializing Prosody…");
     let start = Instant::now();
 
-    let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
-
     let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
-
     backup_prosody_conf_if_needed(prosody_config_file_path)?;
-
-    apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
+    apply_init_config(prosody_config_file_path)?;
 
     // Launch Prosody.
-    let prosody = start_prosody(&app_config).await?;
+    let prosody = ProsodyChildProcess::new();
 
-    // Wait for Prosody to start.
-    // TODO: Get rid of constant sleep.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let prosodyctl = Prosodyctl::new();
 
-    let mut prosodyctl = Prosodyctl::new();
+    let layer1_app_state = Layer1AppState {
+        layer0: layer0_app_state,
+        restart_bound_cancellation_token: CancellationToken::new(),
+        prosody: Arc::new(RwLock::new(prosody)),
+        prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+        is_server_bootstrapping_done: Arc::new(AtomicBool::new(false)),
+    };
+
+    tracing::info!("Prosody initialization took {:.0?}.", start.elapsed());
+    Ok(layer1_app_state)
+}
+
+/// See [docs/initialization-phases.md](../docs/initialization-phases.md).
+pub async fn bootstrap(
+    app_config: AppConfig,
+    layer1_app_state: Layer1AppState,
+) -> anyhow::Result<Layer2AppState> {
+    tracing::info!("Bootstrapping…");
+    let start = Instant::now();
+
+    let reload_bound_cancellation_token = CancellationToken::new();
+
+    let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
+    apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
+
+    let todo = "Delete `localhost` data.";
+
+    // Launch Prosody.
+    start_prosody(&app_config, &layer1_app_state).await?;
+
+    let mut prosodyctl = layer1_app_state.prosodyctl.write().await;
+    let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
     let oauth2 = Arc::new(register_oauth2_client().await?);
 
@@ -50,6 +83,9 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
         store: SecretsStore::new(&app_config),
         oauth2: oauth2.clone(),
     };
+    // Run cache purge tasks in the background.
+    tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
+
     let service_accounts = create_service_accounts(
         &app_config,
         &mut prosodyctl,
@@ -79,24 +115,68 @@ pub async fn startup(app_config: AppConfig) -> anyhow::Result<AppState> {
     )
     .await?;
 
-    // Run cache purge tasks in the background.
-    tokio::spawn(secrets.run_purge_tasks());
+    drop(prosodyctl);
 
-    tracing::info!("Started up in {:.0?}.", start.elapsed());
+    layer1_app_state
+        .is_server_bootstrapping_done
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 
-    let app_state = AppState {
+    let layer2_app_state = Layer2AppState {
+        layer1: layer1_app_state,
         config: Arc::new(app_config),
-        prosody: Arc::new(RwLock::new(prosody)),
-        prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+        reload_bound_cancellation_token,
         prosody_rest,
         oauth2_client: oauth2,
         secrets_service: secrets,
     };
 
-    Ok(app_state)
+    tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
+    Ok(layer2_app_state)
+}
+
+pub async fn startup(
+    app_config: AppConfig,
+    layer0_app_state: Layer0AppState,
+) -> anyhow::Result<()> {
+    tracing::info!("Running startup actions…");
+
+    let start = Instant::now();
+
+    let layer1_app_state = init(layer0_app_state.clone()).await?;
+    let layer2_app_state = bootstrap(app_config, layer1_app_state).await?;
+
+    layer0_app_state.set_state(
+        AppStatus::Running,
+        main_router().with_state(layer2_app_state),
+    );
+    tracing::info!("Now serving all routes.");
+
+    tracing::info!("Startup took {:.0?}.", start.elapsed());
+
+    Ok(())
 }
 
 // MARK: Steps
+
+fn apply_init_config(prosody_config_file_path: &Path) -> anyhow::Result<()> {
+    use std::fs::File;
+    use std::io::Write as _;
+
+    let mut prosody_config_file = File::options()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(prosody_config_file_path)
+        .context("Error opening Prosody config file")?;
+
+    let bootstrap_config = include_str!("prosody-init.cfg.lua");
+
+    prosody_config_file
+        .write_all(bootstrap_config.as_bytes())
+        .context("Error writing Prosody config file")?;
+
+    Ok(())
+}
 
 fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> anyhow::Result<()> {
     use std::fs::File;
@@ -146,7 +226,6 @@ fn apply_bootstrap_config(
     prosody_config_file_path: &Path,
     server_domain: &JidDomain,
 ) -> anyhow::Result<()> {
-    use secrecy::ExposeSecret as _;
     use std::fs::File;
     use std::io::Write as _;
 
@@ -157,15 +236,9 @@ fn apply_bootstrap_config(
         .open(prosody_config_file_path)
         .context("Error opening Prosody config file")?;
 
-    let bootstrap_config_template = include_str!("pod-bootstrap.cfg.lua");
+    let bootstrap_config_template = include_str!("prosody-bootstrap.cfg.lua");
 
-    let oauth2_registration_key = random_oauth2_registration_key();
-    let bootstrap_config = bootstrap_config_template
-        .replace("{{server_domain}}", server_domain)
-        .replace(
-            "{{oauth2_registration_key}}",
-            oauth2_registration_key.expose_secret(),
-        );
+    let bootstrap_config = bootstrap_config_template.replace("{{server_domain}}", server_domain);
 
     prosody_config_file
         .write_all(bootstrap_config.as_bytes())
@@ -174,16 +247,24 @@ fn apply_bootstrap_config(
     Ok(())
 }
 
-async fn start_prosody(app_config: &AppConfig) -> anyhow::Result<ProsodyChildProcess> {
+async fn start_prosody(
+    app_config: &AppConfig,
+    layer1_app_state: &Layer1AppState,
+) -> anyhow::Result<()> {
     use secrecy::ExposeSecret as _;
 
-    let mut prosody = ProsodyChildProcess::new().env(
+    let mut prosody = layer1_app_state.prosody.write().await;
+    prosody.set_env(
         "OAUTH2_REGISTRATION_KEY",
         app_config.auth.oauth2_registration_key.expose_secret(),
     );
     prosody.start().await.context("Failed starting Prosody")?;
 
-    Ok(prosody)
+    // Wait for Prosody to start.
+    // TODO: Get rid of constant sleep.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    Ok(())
 }
 
 async fn register_oauth2_client() -> anyhow::Result<ProsodyOAuth2Client> {

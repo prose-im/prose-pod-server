@@ -49,6 +49,67 @@ pub fn jid_0_12_to_jid_0_11(jid_0_12: &jid::BareJid) -> prosody_rest::BareJid {
     prosody_rest::BareJid::new(jid_0_12.as_str()).unwrap()
 }
 
+pub trait ResponseExt {
+    fn retry_after(self, duration: u8) -> Self;
+}
+
+impl ResponseExt for axum::response::Response {
+    fn retry_after(mut self, seconds: u8) -> Self {
+        use axum::http::HeaderValue;
+
+        self.headers_mut().append(
+            "Retry-After",
+            HeaderValue::from_str(seconds.to_string().as_str()).unwrap(),
+        );
+
+        self
+    }
+}
+
+#[macro_export]
+macro_rules! app_status_if_matching {
+    ($pattern:pat) => {
+        async move |State(ref app_state): State<Layer0AppState>| {
+            use axum::response::IntoResponse;
+
+            match app_state.status().as_ref() {
+                status @ $pattern => status.into_response(),
+                status => {
+                    if cfg!(debug_assertions) {
+                        unreachable!()
+                    } else {
+                        errors::internal_server_error(
+                            &anyhow::anyhow!("Unexpected app status: {status}"),
+                            ERROR_CODE_INTERNAL,
+                            "Internal error",
+                        )
+                        .into_response()
+                    }
+                }
+            }
+        }
+    };
+}
+
+#[inline]
+pub fn empty_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    use std::fs;
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+
+        if entry.file_type()?.is_dir() {
+            tracing::trace!("Deleting directory `{}`…", entry.path().display());
+            fs::remove_dir_all(entry.path())?;
+        } else {
+            tracing::trace!("Deleting file `{}`…", entry.path().display());
+            fs::remove_file(entry.path())?;
+        }
+    }
+
+    Ok(())
+}
+
 // MARK: - Random generators
 
 pub use rand::*;
@@ -153,7 +214,7 @@ impl Context<crate::responders::Error> for prosody_http::Error {
             Self::Unauthorized { reason } => errors::unauthorized(reason),
             Self::Forbidden { reason } => errors::forbidden(reason),
             Self::Internal(err) => {
-                errors::internal_server_error(err, internal_error_code, public_description)
+                errors::internal_server_error(&err, internal_error_code, public_description)
             }
         }
     }
@@ -165,9 +226,21 @@ impl Context<crate::responders::Error> for anyhow::Error {
         internal_error_code: &'static str,
         public_description: impl Into<String>,
     ) -> crate::responders::Error {
-        use crate::errors;
+        crate::errors::internal_server_error(&self, internal_error_code, public_description)
+    }
+}
 
-        errors::internal_server_error(self, internal_error_code, public_description)
+impl Context<crate::responders::Error> for std::io::Error {
+    fn context(
+        self,
+        internal_error_code: &'static str,
+        public_description: impl Into<String>,
+    ) -> crate::responders::Error {
+        crate::errors::internal_server_error(
+            &anyhow::Error::new(self),
+            internal_error_code,
+            public_description,
+        )
     }
 }
 
@@ -189,9 +262,9 @@ where
     }
 }
 
-impl<T, E2> NoContext<Result<T, E2>> for Result<T, anyhow::Error>
+impl<T, E1, E2> NoContext<Result<T, E2>> for Result<T, E1>
 where
-    anyhow::Error: Context<E2>,
+    E1: Context<E2>,
 {
     fn no_context(self) -> Result<T, E2> {
         match self {
@@ -202,5 +275,20 @@ where
                 "Internal error",
             )),
         }
+    }
+}
+
+pub trait ResultPanic {
+    fn debug_panic_or_log_error(self) -> Self;
+}
+
+impl<T> ResultPanic for Result<T, anyhow::Error> {
+    fn debug_panic_or_log_error(self) -> Self {
+        if cfg!(debug_assertions) {
+            if let Err(err) = self.as_ref() {
+                debug_panic_or_log_error(err.to_string());
+            }
+        }
+        self
     }
 }

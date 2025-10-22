@@ -13,6 +13,17 @@ pub mod prelude {
 
 use prelude::*;
 
+// NOTE: I(@RemiBardon) don’t like that we have functions named as HTTP status
+//   code. It’d be better if it was domain-specific or even better if errors
+//   were created inline. However I don’t like having to import the `StatusCode`
+//   type everywhere just for this, hence the helpers. Once
+//   [Make `StatusCode::from_u16` const by coolreader18 · Pull Request #761 · hyperium/http](https://github.com/hyperium/http/pull/761)
+//   gets merged, we will have the opportunity to pass an integer directly,
+//   without having to construct a non-`const` `StatusCode` at runtime.
+//   We could also use macros to pass the identifier directly, but they
+//   would be accessible via `crate::` and not `crate::errors::` which
+//   I’m not a fan of either.
+
 // MARK: Internal errors
 
 /// NOTE: Not public to “force” the usage of [`internal_server_error`].
@@ -23,35 +34,20 @@ pub const ERROR_CODE_INTERNAL: &'static str = "INTERNAL_ERROR";
 /// `public_description` is a short user-facing description.
 /// It MUST NOT leak any internal information.
 ///
-/// WARN: This description will be sent as
-///   “{public_description} logged as {error_id}.”
-///   therefore it MUST NOT end with a period (`.`).
+/// It will be sent as “{public_description} (logged as error_id={error_id})”.
 #[must_use]
 #[inline]
 pub fn internal_server_error(
-    error: impl std::fmt::Debug,
+    error: &anyhow::Error,
     code: &'static str,
     public_description: impl Into<String>,
 ) -> Error {
-    let public_description: String = public_description.into();
-    assert!(
-        !public_description.ends_with("."),
-        "Error description will be put in a sentence; \
-            it MUST NOT end with a period (`.`)."
-    );
-
-    // Log error debug information with a unique ID,
-    // and reference this ID in the user-facing description.
-    let error_id = crate::util::random_id(8);
-    tracing::error!(error_id, "Internal error: {public_description}: {error:?}");
-    let description = format!("{public_description} logged as {error_id}.");
-
     Error::new(
         ERROR_KIND_INTERNAL,
         code,
         StatusCode::INTERNAL_SERVER_ERROR,
         "Internal server error",
-        description,
+        auto_log(error, public_description),
     )
 }
 
@@ -86,6 +82,59 @@ pub fn forbidden(description: impl Into<String>) -> Error {
 // MARK: Lifecycle errors (initialization done, restarting…)
 
 const ERROR_KIND_LIFECYCLE: &'static str = "LIFECYCLE_ERROR";
+
+#[must_use]
+#[inline]
+pub fn too_early(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_LIFECYCLE,
+        code,
+        StatusCode::TOO_EARLY,
+        message,
+        description,
+    )
+}
+
+#[must_use]
+#[inline]
+pub fn service_unavailable(
+    code: &'static str,
+    message: impl Into<String>,
+    description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_LIFECYCLE,
+        code,
+        StatusCode::SERVICE_UNAVAILABLE,
+        message,
+        description,
+    )
+}
+
+/// `public_description` is a short user-facing description.
+/// It MUST NOT leak any internal information.
+///
+/// It will be sent as “{public_description} (logged as error_id={error_id})”.
+#[must_use]
+#[inline]
+pub fn service_unavailable_err(
+    error: &anyhow::Error,
+    code: &'static str,
+    message: impl Into<String>,
+    public_description: impl Into<String>,
+) -> Error {
+    Error::new(
+        ERROR_KIND_LIFECYCLE,
+        code,
+        StatusCode::SERVICE_UNAVAILABLE,
+        message,
+        auto_log(error, public_description),
+    )
+}
 
 #[must_use]
 #[inline]
@@ -139,6 +188,35 @@ pub fn validation_error(
 
 // MARK: - Conversions
 
+#[must_use]
+#[inline]
 pub fn invalid_avatar(err: impl ToString) -> Error {
     self::validation_error("INVALID_AVATAR", "Invalid avatar", err.to_string())
+}
+
+#[must_use]
+#[inline]
+pub fn bad_configuration(err: &anyhow::Error) -> Error {
+    self::service_unavailable_err(
+        err,
+        "BAD_CONFIGURATION",
+        "Bad configuration",
+        "Your Prose Server configuration is incorrect. \
+        Contact an administrator to fix this.",
+    )
+}
+
+// MARK: - Helpers
+
+#[must_use]
+#[inline]
+fn auto_log(error: &anyhow::Error, public_description: impl Into<String>) -> String {
+    let public_description: String = public_description.into();
+
+    // Log error debug information with a unique ID,
+    // and reference this ID in the user-facing description.
+    let error_id = crate::util::random_id(8);
+    tracing::error!(%error_id, "{error:?}");
+
+    format!("{public_description} (logged as error_id={error_id})")
 }

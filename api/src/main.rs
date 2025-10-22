@@ -15,74 +15,79 @@ mod startup;
 mod state;
 mod util;
 
-use anyhow::anyhow;
+use anyhow::Context as _;
 use axum::Router;
 use tokio::net::TcpListener;
 
+use crate::router::base_router;
+use crate::state::{AppStatus, Layer0AppState};
+
 pub(crate) use self::app_config::AppConfig;
-use self::router::{router, startup_router};
+use self::router::startup_router;
 use self::startup::startup;
-pub(crate) use self::state::AppState;
+pub(crate) use self::state::Layer2AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let todo = "Migrate to Prosody 13";
+    let todo = "Listen to SIGHUP";
 
     init_tracing();
 
     let app_config = AppConfig::from_default_figment()?;
 
-    main_inner(app_config)
-        .await
-        .inspect_err(|err| tracing::error!("{err:#}"))
-}
-
-async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
-    // Bind to the API address to exit early if not available.
-    let address = app_config.server_api.address();
-    let mut listener = TcpListener::bind(address).await?;
-
-    // Run startup tasks.
-    let startup_res = tokio::select! {
-        startup_res = startup(app_config) => match startup_res {
-            Ok(res) => Ok(Some(res)),
-            Err(err) => Err(err),
-        },
-
-        // Serve a subset of routes during startup.
-        res = {
-            tracing::info!("Serving startup routes on {address}…");
-            serve(listener, startup_router())
-        } => match res {
-            Ok(()) => Err(anyhow!("Startup router ended too soon.")),
-            Err(err) => Err(err),
-        },
-
-        // Listen for graceful shutdown signals.
-        () = listen_for_graceful_shutdown() => Ok(None),
-    }?;
-
-    // Stop now if we should shutdown gracefully.
-    let Some(app_state) = startup_res else {
-        return Ok(());
-    };
-
-    // Then serve all routes once Prosody has started.
-    listener = TcpListener::bind(address).await?;
     tokio::select! {
-        res = {
-            tracing::info!("Now serving all routes on {address}…");
-            serve(listener, router(app_state))
-        } => res,
+        res = main_inner(app_config) => res.inspect_err(|err| tracing::error!("{err:?}")),
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
     }
 }
 
-async fn serve(listener: TcpListener, router: Router) -> anyhow::Result<()> {
-    axum::serve(listener, router).await?;
-    Ok(())
+async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
+    // Bind to the API address to exit early if not available.
+    let address = app_config.server_api.address();
+    let listener = TcpListener::bind(address).await?;
+
+    let layer0_app_state = Layer0AppState::new(AppStatus::Starting, startup_router());
+
+    // Serve a minimal HTTP API while the startup actions run.
+    let mut main_tasks = tokio::task::JoinSet::<anyhow::Result<()>>::new();
+    main_tasks.spawn({
+        let layer0_app_state = layer0_app_state.clone();
+        async move {
+            let app: Router = base_router()
+                .fallback_service(layer0_app_state.router())
+                .layer(axum::middleware::from_fn(router::util::log_request))
+                .with_state(layer0_app_state);
+
+            tracing::info!("Serving the Prose Pod Server API on {address}…");
+            axum::serve(listener, app).await.context("Serve error")
+        }
+    });
+    main_tasks.spawn(async move {
+        startup(app_config, layer0_app_state)
+            .await
+            .context("Startup error")
+    });
+
+    // Wait for both tasks to finish, or abort if one fails.
+    let mut main_res: anyhow::Result<()> = Err(anyhow::Error::msg("No task ran."));
+    while let Some(join_res) = main_tasks.join_next().await {
+        match join_res {
+            Ok(ok @ Ok(())) => main_res = ok,
+            Ok(Err(task_err)) => {
+                main_tasks.abort_all();
+                main_res = Err(task_err)
+            }
+            Err(join_err) => {
+                main_tasks.abort_all();
+                main_res = Err(anyhow::Error::new(join_err).context("Join error"))
+            }
+        }
+    }
+
+    main_res
 }
 
 async fn listen_for_graceful_shutdown() {
@@ -122,5 +127,8 @@ fn init_tracing() {
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    tracing_subscriber::fmt()
+        .with_ansi(true)
+        .with_env_filter(env_filter)
+        .init();
 }

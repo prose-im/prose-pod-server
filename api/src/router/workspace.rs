@@ -14,13 +14,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{invalid_avatar, prelude::*};
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
-use crate::state::AppState;
+use crate::state::Layer2AppState;
 use crate::util::{NoContext, jid_0_12_to_jid_0_11};
 use crate::{AppConfig, responders};
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
-pub fn router() -> Router<AppState> {
+pub fn router() -> Router<Layer2AppState> {
     Router::new()
         .route("/workspace-init", put(init_workspace))
         .route(
@@ -63,7 +63,7 @@ struct WorkspaceProfile {
 /// and works only until the first admin account is created. After that, it’ll
 /// return 410 Gone.
 async fn init_workspace(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     Json(req): Json<InitWorkspaceRequest>,
 ) -> Result<(), Error> {
@@ -107,7 +107,7 @@ struct InitWorkspaceRequest {
 }
 
 async fn get_workspace(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<WorkspaceProfile>, Error> {
     let ref jid = app_config.workspace_jid();
@@ -128,7 +128,7 @@ async fn get_workspace(
 }
 
 async fn patch_workspace(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     caller_info: CallerInfo,
     Json(req): Json<PatchWorkspaceRequest>,
@@ -159,7 +159,7 @@ pub struct PatchWorkspaceRequest {
 }
 
 async fn get_workspace_name(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<String>, Error> {
     let ref jid = app_config.workspace_jid();
@@ -171,7 +171,7 @@ async fn get_workspace_name(
 }
 
 async fn set_workspace_name(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     caller_info: CallerInfo,
     Json(name): Json<String>,
@@ -199,7 +199,7 @@ async fn set_workspace_name(
 }
 
 async fn get_workspace_accent_color(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<Option<Color>>, Error> {
     let ref jid = app_config.workspace_jid();
@@ -211,7 +211,7 @@ async fn get_workspace_accent_color(
 }
 
 async fn set_workspace_accent_color(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     caller_info: CallerInfo,
     Json(color_opt): Json<Option<Color>>,
@@ -239,7 +239,7 @@ async fn set_workspace_accent_color(
 }
 
 async fn get_workspace_icon(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<Option<Avatar>>, Error> {
     let ref jid = app_config.workspace_jid();
@@ -258,7 +258,7 @@ async fn get_workspace_icon(
 }
 
 async fn set_workspace_icon(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     caller_info: CallerInfo,
     icon: Avatar,
@@ -289,7 +289,7 @@ async fn set_workspace_icon(
 #[must_use]
 #[inline]
 async fn service_account_credentials(
-    app_state: &AppState,
+    app_state: &Layer2AppState,
     jid: &BareJid,
 ) -> Result<prosody_rest::CallerCredentials, Error> {
     let token = app_state
@@ -306,7 +306,7 @@ async fn service_account_credentials(
 #[must_use]
 #[inline]
 async fn service_account_vcard(
-    app_state: &AppState,
+    app_state: &Layer2AppState,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<Option<VCard4>, Error> {
     app_state
@@ -321,7 +321,7 @@ async fn service_account_vcard(
 #[must_use]
 #[inline]
 async fn service_account_avatar(
-    app_state: &AppState,
+    app_state: &Layer2AppState,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<Option<Avatar>, Error> {
     match app_state
@@ -340,7 +340,7 @@ async fn service_account_avatar(
 #[must_use]
 #[inline]
 async fn get_workspace_profile_minimal(
-    app_state: &AppState,
+    app_state: &Layer2AppState,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<WorkspaceProfile, Error> {
     match service_account_vcard(app_state, creds).await? {
@@ -352,7 +352,7 @@ async fn get_workspace_profile_minimal(
 #[must_use]
 #[inline]
 async fn patch_workspace_vcard_unchecked(
-    app_state: &AppState,
+    app_state: &Layer2AppState,
     creds: &prosody_rest::CallerCredentials,
     req: PatchWorkspaceRequest,
 ) -> Result<(), Error> {
@@ -399,11 +399,11 @@ async fn patch_workspace_vcard_unchecked(
 
 #[must_use]
 #[inline]
-pub fn workspace_not_initialized_error(error: impl std::fmt::Debug) -> Error {
+pub fn workspace_not_initialized_error(error: impl std::fmt::Display) -> Error {
     crate::errors::internal_server_error(
-        error,
+        &anyhow::anyhow!("{error}"),
         "WORKSPACE_NOT_INITIALIZED",
-        "Workspace account not initialized",
+        "Workspace account not initialized.",
     )
 }
 

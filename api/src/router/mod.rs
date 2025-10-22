@@ -3,112 +3,53 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod lifecycle;
 mod workspace;
 
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::Response;
-use axum::routing::{get, post, put};
+use axum::routing::{get, put};
 use axum::{Json, Router};
 use prosodyctl::UserCreateError;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{BareJid, CallerInfo, JidNode, Password};
 use crate::responders::Error;
-use crate::state::AppState;
-use crate::util::{NoContext, PROSODY_JIDS_ARE_VALID, debug_panic_or_log_error};
+use crate::state::{Layer0AppState, Layer2AppState};
+use crate::util::{NoContext as _, PROSODY_JIDS_ARE_VALID};
 use crate::{AppConfig, errors};
+
+/// Base router that’s always active. Routes defined here will always be available.
+pub fn base_router() -> Router<Layer0AppState> {
+    Router::new().route("/health", get(health))
+    // TODO: /version
+}
+
+/// Note that this should report the health of the Server API itself, not
+/// the underlying XMPP server. The reason for it is that the Server API
+/// can be in a fail state because it’s misconfigured, but keeping the
+/// correctly-configured Prosody running in the background to keep a high
+/// XMPP server availability (i.e. reduce XMPP downtime).
+async fn health(State(app_state): State<Layer0AppState>) -> Response {
+    use axum::response::IntoResponse;
+    app_state.status().into_response()
+}
 
 pub fn startup_router() -> Router {
     Router::new()
-        .route("/health", get(starting_up))
-        .layer(axum::middleware::from_fn(log_request))
 }
 
-pub fn router(app_state: AppState) -> Router {
+pub fn main_router() -> Router<Layer2AppState> {
     Router::new()
-        .route("/health", get(health))
-        .route("/lifecycle/reload", post(reload))
-        .route("/lifecycle/restart", post(restart))
         .route("/init/first-account", put(init_first_account))
         .route("/users-util/stats", get(users_stats))
         .route("/users-util/admin-jids", get(list_admin_jids))
         .route("/users-util/self", get(self_user_info))
         .route("/invitations-util/stats", get(invitations_stats))
+        .merge(lifecycle::router())
         .merge(workspace::router())
-        .layer(axum::middleware::from_fn(log_request))
-        .with_state(app_state)
-}
-
-async fn starting_up() -> Response {
-    Response::builder()
-        .status(StatusCode::SERVICE_UNAVAILABLE)
-        // FIXME: Check if 1 second is enough.
-        .header("Retry-After", 1)
-        .body("Starting and initializing the Server…".into())
-        .unwrap()
-}
-
-async fn health() -> &'static str {
-    "OK"
-}
-
-async fn reload(
-    State(ref app_state): State<AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-) -> StatusCode {
-    let mut prosody = app_state.prosody.write().await;
-
-    let reload_res = prosody.reload().await;
-
-    // Release lock ASAP.
-    drop(prosody);
-
-    if let Err(err) = reload_res {
-        // Log debug info.
-        debug_panic_or_log_error(format!("Could not reload Prosody: {err}"));
-
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-
-    let mut prosodyctl = app_state.prosodyctl.write().await;
-
-    let main_host = app_config.server.domain.as_str();
-    // TODO: Impact of runnning every time?
-    let modules_load_res = prosodyctl.module_load_modules_for_host(main_host).await;
-
-    // Release lock ASAP.
-    drop(prosodyctl);
-
-    if let Err(err) = modules_load_res {
-        // Log debug info.
-        debug_panic_or_log_error(format!(
-            "Could not load Prosody modules for `{main_host}`: {err}"
-        ));
-
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-
-    StatusCode::OK
-}
-
-async fn restart(State(ref app_state): State<AppState>) -> StatusCode {
-    let mut prosody = app_state.prosody.write().await;
-
-    match prosody.restart().await {
-        Ok(()) => StatusCode::OK,
-        Err(err) => {
-            // Release lock ASAP.
-            drop(prosody);
-
-            // Log debug info.
-            debug_panic_or_log_error(format!("Could not restart Prosody: {err}"));
-
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,7 +65,7 @@ pub struct CreateAccountResponse {
 }
 
 async fn init_first_account(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
     Json(dto): Json<CreateAccountRequest>,
 ) -> Result<Json<CreateAccountResponse>, Error> {
@@ -187,7 +128,7 @@ async fn init_first_account(
 }
 
 async fn users_stats(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<GetUsersStatsResponse>, Error> {
     let domain = &app_config.server.domain;
@@ -214,7 +155,7 @@ struct GetUsersStatsResponse {
 }
 
 async fn list_admin_jids(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<Vec<BareJid>>, Error> {
     use std::str::FromStr as _;
@@ -244,7 +185,7 @@ async fn self_user_info(caller_info: CallerInfo) -> Json<CallerInfo> {
 }
 
 async fn invitations_stats(
-    State(ref app_state): State<AppState>,
+    State(ref app_state): State<Layer2AppState>,
     State(ref app_config): State<Arc<AppConfig>>,
 ) -> Result<Json<GetInvitationsStatsResponse>, Error> {
     let domain = &app_config.server.domain;
@@ -268,23 +209,27 @@ struct GetInvitationsStatsResponse {
 
 // MARK: - Utilities
 
-async fn log_request(
-    req: axum::http::Request<axum::body::Body>,
-    next: axum::middleware::Next,
-) -> impl axum::response::IntoResponse {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
+pub(crate) mod util {
+    pub async fn log_request(
+        req: axum::http::Request<axum::body::Body>,
+        next: axum::middleware::Next,
+    ) -> impl axum::response::IntoResponse {
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
 
-    let matched_path = req
-        .extensions()
-        .get::<axum::extract::MatchedPath>()
-        .map(|mp| mp.as_str())
-        .unwrap_or(&path);
+        let matched_path = req
+            .extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|mp| mp.as_str())
+            .unwrap_or(&path);
 
-    match matched_path {
-        "/health" => tracing::trace!(method = %method, route = %matched_path, "Incoming request"),
-        _ => tracing::debug!(method = %method, route = %matched_path, "Incoming request"),
+        match matched_path {
+            "/health" => {
+                tracing::trace!(method = %method, route = %matched_path, "Incoming request")
+            }
+            _ => tracing::debug!(method = %method, route = %matched_path, "Incoming request"),
+        }
+
+        next.run(req).await
     }
-
-    next.run(req).await
 }

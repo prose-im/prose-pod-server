@@ -14,7 +14,7 @@ use serde::Deserialize;
 pub const API_CONFIG_DIR: &'static str = "/etc/prose";
 pub const CONFIG_FILE_NAME: &'static str = "prose.toml";
 
-static CONFIG_FILE_PATH: LazyLock<PathBuf> =
+pub(crate) static CONFIG_FILE_PATH: LazyLock<PathBuf> =
     LazyLock::new(|| (Path::new(API_CONFIG_DIR).join(CONFIG_FILE_NAME)).to_path_buf());
 
 pub mod defaults {
@@ -28,6 +28,11 @@ pub mod defaults {
 
     pub(super) const DEFAULT_MAIN_TEAM_NAME: &'static str = "Team";
 }
+
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("Invalid '{CONFIG_FILE_NAME}' configuration file: {0}")]
+#[repr(transparent)]
+pub struct InvalidConfiguration(figment::Error);
 
 // TODO: Remove default server values from here and use the ones defined in
 //   `prose-pod-server` to avoid discrepancies.
@@ -68,7 +73,7 @@ fn default_config_static() -> Figment {
     Figment::from(Toml::string(&static_defaults))
 }
 
-fn with_dynamic_defaults(figment: Figment) -> anyhow::Result<Figment> {
+fn with_dynamic_defaults(figment: Figment) -> Result<Figment, InvalidConfiguration> {
     // NOTE: At the moment, the Server API doesn’t add dynamic defaults.
 
     Ok(figment)
@@ -88,20 +93,18 @@ impl AppConfig {
             .merge(Env::prefixed("PROSE_").split("__"))
     }
 
-    pub fn from_figment(figment: Figment) -> anyhow::Result<Self> {
-        use anyhow::Context as _;
-
+    pub fn from_figment(figment: Figment) -> Result<Self, InvalidConfiguration> {
         with_dynamic_defaults(figment)?
             .extract()
-            .context(format!("Invalid '{CONFIG_FILE_NAME}' configuration file"))
+            .map_err(InvalidConfiguration)
     }
 
     #[allow(unused)]
-    pub fn from_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self, InvalidConfiguration> {
         Self::from_figment(Self::figment_at_path(path))
     }
 
-    pub fn from_default_figment() -> anyhow::Result<Self> {
+    pub fn from_default_figment() -> Result<Self, InvalidConfiguration> {
         Self::from_figment(Self::figment())
     }
 }

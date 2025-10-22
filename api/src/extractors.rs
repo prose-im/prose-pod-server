@@ -16,7 +16,7 @@ mod prelude {
     };
 
     pub(crate) use crate::util::{Context as _, NoContext as _};
-    pub(crate) use crate::{AppState, responders};
+    pub(crate) use crate::{Layer2AppState, responders};
 }
 
 use crate::{extractors::prelude::*, util::PROSODY_JIDS_ARE_VALID};
@@ -54,13 +54,13 @@ impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     }
 }
 
-impl FromRequestParts<AppState> for crate::models::CallerInfo {
+impl FromRequestParts<Layer2AppState> for crate::models::CallerInfo {
     type Rejection = responders::Error;
 
     #[tracing::instrument(name = "req::auth::caller_info", level = "trace", skip_all)]
     async fn from_request_parts(
         parts: &mut request::Parts,
-        state: &AppState,
+        state: &Layer2AppState,
     ) -> Result<Self, Self::Rejection> {
         use crate::models::{AuthToken, BareJid};
         use std::str::FromStr as _;
@@ -141,10 +141,10 @@ pub enum AvatarFromRequestError {
     UnsupportedMediaType,
 }
 
-impl FromRequest<AppState> for crate::models::Avatar {
+impl FromRequest<Layer2AppState> for crate::models::Avatar {
     type Rejection = AvatarFromRequestError;
 
-    async fn from_request(req: Request, _state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, _state: &Layer2AppState) -> Result<Self, Self::Rejection> {
         use crate::models::Avatar;
         use axum::Json;
 
