@@ -206,6 +206,17 @@ pub fn bad_configuration(err: &anyhow::Error) -> Error {
     )
 }
 
+#[must_use]
+#[inline]
+pub fn restart_failed(error: &anyhow::Error) -> Error {
+    self::internal_server_error(
+        error,
+        "RESTART_FAILED",
+        "Something went wrong while restarting your Prose Server. \
+        Contact an administrator to fix this.",
+    )
+}
+
 // MARK: - Helpers
 
 #[must_use]

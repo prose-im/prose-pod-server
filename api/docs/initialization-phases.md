@@ -3,8 +3,9 @@
 “Prosody initialization” refers to the process of initializing the Prosody
 configuration so it has the necessary modules required for administrating via
 the Prose Pod Server API (a.k.a. the “Server API”).
-During this phase, no `VirtualHost` is configured, as the Server API hasn’t
-loaded the Prose configuraticon or it is invalid (e.g. after a factory reset).
+During this phase, only a `"localhost"` `VirtualHost` is configured, as the
+Server API hasn’t loaded the Prose configuration or it is invalid (e.g. after
+a factory reset) but Prosody needs at least one to function properly.
 
 “Bootstrapping” happens after initialization, when the Server API knows the
 desired XMPP server domain (via the Prose configuration). It is then able to

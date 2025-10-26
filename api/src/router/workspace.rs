@@ -3,8 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use axum::extract::State;
 use axum::routing::{MethodRouter, put};
@@ -14,39 +12,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{invalid_avatar, prelude::*};
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
-use crate::state::Layer2AppState;
+use crate::responders;
+use crate::state::prelude::*;
 use crate::util::{NoContext, jid_0_12_to_jid_0_11};
-use crate::{AppConfig, responders};
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
-pub fn router() -> Router<Layer2AppState> {
-    Router::new()
-        .route("/workspace-init", put(init_workspace))
-        .route(
-            "/workspace",
-            MethodRouter::new()
-                .get(get_workspace)
-                .patch(patch_workspace),
-        )
-        .route(
-            "/workspace/name",
-            MethodRouter::new()
-                .get(get_workspace_name)
-                .put(set_workspace_name),
-        )
-        .route(
-            "/workspace/accent-color",
-            MethodRouter::new()
-                .get(get_workspace_accent_color)
-                .put(set_workspace_accent_color),
-        )
-        .route(
-            "/workspace/icon",
-            MethodRouter::new()
-                .get(get_workspace_icon)
-                .put(set_workspace_icon),
-        )
+impl AppState<f::Running, b::Running> {
+    pub(crate) fn workspace_routes() -> axum::Router<Self> {
+        Router::<Self>::new()
+            .route("/workspace-init", put(self::init_workspace))
+            .route(
+                "/workspace",
+                MethodRouter::new()
+                    .get(self::get_workspace)
+                    .patch(self::patch_workspace),
+            )
+            .route(
+                "/workspace/name",
+                MethodRouter::new()
+                    .get(self::get_workspace_name)
+                    .put(self::set_workspace_name),
+            )
+            .route(
+                "/workspace/accent-color",
+                MethodRouter::new()
+                    .get(self::get_workspace_accent_color)
+                    .put(self::set_workspace_accent_color),
+            )
+            .route(
+                "/workspace/icon",
+                MethodRouter::new()
+                    .get(self::get_workspace_icon)
+                    .put(self::set_workspace_icon),
+            )
+    }
 }
 
 #[derive(Debug)]
@@ -62,13 +62,16 @@ struct WorkspaceProfile {
 /// unauthenticated route to set the Workspace profile. This route enables it,
 /// and works only until the first admin account is created. After that, it’ll
 /// return 410 Gone.
-async fn init_workspace(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn init_workspace(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
     Json(req): Json<InitWorkspaceRequest>,
 ) -> Result<(), Error> {
-    let server_domain = app_config.server.domain.as_str();
-    let mut prosodyctl = app_state.prosodyctl.write().await;
+    let server_domain = frontend.config.server.domain.as_str();
+    let mut prosodyctl = backend.state.prosodyctl.write().await;
     let user_count = prosodyctl
         .user_get_jids_with_role(server_domain, "prosody:member")
         .await
@@ -83,11 +86,11 @@ async fn init_workspace(
         ));
     }
 
-    let ref jid = app_config.workspace_jid();
-    let ref creds = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref creds = service_account_credentials(backend, jid).await?;
 
     patch_workspace_vcard_unchecked(
-        app_state,
+        backend,
         creds,
         PatchWorkspaceRequest {
             name: Some(req.name),
@@ -106,16 +109,19 @@ struct InitWorkspaceRequest {
     accent_color: Option<Color>,
 }
 
-async fn get_workspace(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn get_workspace(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
 ) -> Result<Json<WorkspaceProfile>, Error> {
-    let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref ctx = service_account_credentials(backend, jid).await?;
 
-    let mut workspace = get_workspace_profile_minimal(app_state, ctx).await?;
+    let mut workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
-    workspace.icon = match service_account_avatar(app_state, ctx).await {
+    workspace.icon = match service_account_avatar(backend, ctx).await {
         Ok(Some(avatar)) => Some(avatar),
         Ok(None) => None,
         Err(err) => {
@@ -127,9 +133,12 @@ async fn get_workspace(
     Ok(Json(workspace))
 }
 
-async fn patch_workspace(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn patch_workspace(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
     Json(req): Json<PatchWorkspaceRequest>,
 ) -> Result<(), Error> {
@@ -141,10 +150,10 @@ async fn patch_workspace(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let ref jid = app_config.workspace_jid();
-    let ref creds = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref creds = service_account_credentials(backend, jid).await?;
 
-    patch_workspace_vcard_unchecked(app_state, creds, req).await
+    patch_workspace_vcard_unchecked(backend, creds, req).await
 }
 
 #[derive(Debug, Default)]
@@ -158,21 +167,27 @@ pub struct PatchWorkspaceRequest {
     pub accent_color: Option<Option<Color>>,
 }
 
-async fn get_workspace_name(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn get_workspace_name(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
 ) -> Result<Json<String>, Error> {
-    let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref ctx = service_account_credentials(backend, jid).await?;
 
-    let workspace = get_workspace_profile_minimal(app_state, ctx).await?;
+    let workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
     Ok(Json(workspace.name))
 }
 
-async fn set_workspace_name(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn set_workspace_name(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
     Json(name): Json<String>,
 ) -> Result<(), Error> {
@@ -184,11 +199,11 @@ async fn set_workspace_name(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let ref jid = app_config.workspace_jid();
-    let ref creds = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref creds = service_account_credentials(backend, jid).await?;
 
     patch_workspace_vcard_unchecked(
-        app_state,
+        backend,
         creds,
         PatchWorkspaceRequest {
             name: Some(name),
@@ -198,21 +213,27 @@ async fn set_workspace_name(
     .await
 }
 
-async fn get_workspace_accent_color(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn get_workspace_accent_color(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
 ) -> Result<Json<Option<Color>>, Error> {
-    let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref ctx = service_account_credentials(backend, jid).await?;
 
-    let workspace = get_workspace_profile_minimal(app_state, ctx).await?;
+    let workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
     Ok(Json(workspace.accent_color))
 }
 
-async fn set_workspace_accent_color(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn set_workspace_accent_color(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
     Json(color_opt): Json<Option<Color>>,
 ) -> Result<(), Error> {
@@ -224,11 +245,11 @@ async fn set_workspace_accent_color(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let ref jid = app_config.workspace_jid();
-    let ref creds = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref creds = service_account_credentials(backend, jid).await?;
 
     patch_workspace_vcard_unchecked(
-        app_state,
+        backend,
         creds,
         PatchWorkspaceRequest {
             accent_color: Some(color_opt),
@@ -238,14 +259,17 @@ async fn set_workspace_accent_color(
     .await
 }
 
-async fn get_workspace_icon(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn get_workspace_icon(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
 ) -> Result<Json<Option<Avatar>>, Error> {
-    let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref ctx = service_account_credentials(backend, jid).await?;
 
-    let icon = match service_account_avatar(app_state, ctx).await {
+    let icon = match service_account_avatar(backend, ctx).await {
         Ok(Some(avatar)) => Some(avatar),
         Ok(None) => None,
         Err(err) => {
@@ -257,9 +281,12 @@ async fn get_workspace_icon(
     Ok(Json(icon))
 }
 
-async fn set_workspace_icon(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
+pub async fn set_workspace_icon(
+    State(AppState {
+        ref frontend,
+        ref backend,
+        ..
+    }): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
     icon: Avatar,
 ) -> Result<(), Error> {
@@ -271,10 +298,10 @@ async fn set_workspace_icon(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let ref jid = app_config.workspace_jid();
-    let ref ctx = service_account_credentials(app_state, jid).await?;
+    let ref jid = frontend.config.workspace_jid();
+    let ref ctx = service_account_credentials(backend, jid).await?;
 
-    app_state
+    backend
         .prosody_rest
         .set_own_avatar(icon.into_bytes(), ctx)
         .await
@@ -289,14 +316,10 @@ async fn set_workspace_icon(
 #[must_use]
 #[inline]
 async fn service_account_credentials(
-    app_state: &Layer2AppState,
+    backend: &backend::Running,
     jid: &BareJid,
 ) -> Result<prosody_rest::CallerCredentials, Error> {
-    let token = app_state
-        .secrets_service
-        .get_token(jid)
-        .await
-        .no_context()?;
+    let token = backend.secrets_service.get_token(jid).await.no_context()?;
     Ok(prosody_rest::CallerCredentials {
         bare_jid: jid_0_12_to_jid_0_11(jid),
         auth_token: token.inner().to_owned(),
@@ -306,10 +329,10 @@ async fn service_account_credentials(
 #[must_use]
 #[inline]
 async fn service_account_vcard(
-    app_state: &Layer2AppState,
+    backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<Option<VCard4>, Error> {
-    app_state
+    backend
         .prosody_rest
         .get_vcard(&creds.bare_jid, creds)
         .await
@@ -321,10 +344,10 @@ async fn service_account_vcard(
 #[must_use]
 #[inline]
 async fn service_account_avatar(
-    app_state: &Layer2AppState,
+    backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<Option<Avatar>, Error> {
-    match app_state
+    match backend
         .prosody_rest
         .get_avatar(&creds.bare_jid, creds)
         .await
@@ -340,10 +363,10 @@ async fn service_account_avatar(
 #[must_use]
 #[inline]
 async fn get_workspace_profile_minimal(
-    app_state: &Layer2AppState,
+    backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<WorkspaceProfile, Error> {
-    match service_account_vcard(app_state, creds).await? {
+    match service_account_vcard(backend, creds).await? {
         Some(vcard) => WorkspaceProfile::try_from(vcard),
         None => Err(workspace_not_initialized_error("No vCard.")),
     }
@@ -352,7 +375,7 @@ async fn get_workspace_profile_minimal(
 #[must_use]
 #[inline]
 async fn patch_workspace_vcard_unchecked(
-    app_state: &Layer2AppState,
+    backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
     req: PatchWorkspaceRequest,
 ) -> Result<(), Error> {
@@ -360,7 +383,7 @@ async fn patch_workspace_vcard_unchecked(
     use prosody_rest::prose_xmpp::ns;
     use prosody_rest::prose_xmpp::stanza::vcard4;
 
-    let mut vcard = service_account_vcard(app_state, creds)
+    let mut vcard = service_account_vcard(backend, creds)
         .await?
         .unwrap_or_default();
 
@@ -385,7 +408,7 @@ async fn patch_workspace_vcard_unchecked(
         };
     }
 
-    app_state
+    backend
         .prosody_rest
         .set_own_vcard(vcard, creds)
         .await

@@ -3,213 +3,81 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod backend;
+mod health;
+mod init;
+mod invitations_util;
 mod lifecycle;
+mod users_util;
 mod workspace;
 
-use std::sync::Arc;
+use axum::Router;
+use axum::routing::{MethodRouter, get, post, put};
 
-use axum::extract::State;
-use axum::response::Response;
-use axum::routing::{get, put};
-use axum::{Json, Router};
-use prosodyctl::UserCreateError;
-use serde::{Deserialize, Serialize};
+use crate::state::prelude::*;
 
-use crate::models::{BareJid, CallerInfo, JidNode, Password};
-use crate::responders::Error;
-use crate::state::{Layer0AppState, Layer2AppState};
-use crate::util::{NoContext as _, PROSODY_JIDS_ARE_VALID};
-use crate::{AppConfig, errors};
+pub(crate) use self::health::HealthTrait;
 
 /// Base router that’s always active. Routes defined here will always be available.
-pub fn base_router() -> Router<Layer0AppState> {
-    Router::new().route("/health", get(health))
+pub fn with_base_routes(
+    frontend: impl HealthTrait + Send + Sync + 'static + Clone,
+    backend: impl HealthTrait + Send + Sync + 'static + Clone,
+    router: Router,
+) -> Router {
+    let backend_health_route = async move || backend.health();
+    let frontend_health_route = async move || frontend.health();
+
+    let todo = "Fix /health comment";
     // TODO: /version
+    router
+        // Health routes.
+        .route("/frontend/health", get(frontend_health_route.clone()))
+        .route("/backend/health", get(backend_health_route.clone()))
+        // Convenient health route aliases.
+        .route("/config-health", get(frontend_health_route))
+        // Note that `/health` should report the health of the Server API itself, not
+        // the underlying XMPP server. The reason for it is that the Server API
+        // can be in a fail state because it’s misconfigured, but keeping the
+        // correctly-configured Prosody running in the background to keep a high
+        // XMPP server availability (i.e. reduce XMPP downtime).
+        .route("/health", get(backend_health_route))
 }
 
-/// Note that this should report the health of the Server API itself, not
-/// the underlying XMPP server. The reason for it is that the Server API
-/// can be in a fail state because it’s misconfigured, but keeping the
-/// correctly-configured Prosody running in the background to keep a high
-/// XMPP server availability (i.e. reduce XMPP downtime).
-async fn health(State(app_state): State<Layer0AppState>) -> Response {
-    use axum::response::IntoResponse;
-    app_state.status().into_response()
+impl AppStateTrait for AppState<f::Running, b::Running> {
+    fn state_name() -> &'static str {
+        "Operational"
+    }
+
+    fn into_router(self) -> axum::Router {
+        Router::new()
+            .route("/init/first-account", put(init::init_first_account))
+            .route("/users-util/stats", get(users_util::users_stats))
+            .route("/users-util/admin-jids", get(users_util::list_admin_jids))
+            .route("/users-util/self", get(users_util::self_user_info))
+            .route(
+                "/invitations-util/stats",
+                get(invitations_util::invitations_stats),
+            )
+            .route("/lifecycle/reload", post(Self::frontend_reload_route))
+            .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
+            .route("/backend/reload", post(backend::backend_reload))
+            .merge(Self::backend_restart_routes())
+            .merge(Self::workspace_routes())
+            .with_state(self)
+    }
 }
 
 pub fn startup_router() -> Router {
     Router::new()
 }
 
-pub fn main_router() -> Router<Layer2AppState> {
-    Router::new()
-        .route("/init/first-account", put(init_first_account))
-        .route("/users-util/stats", get(users_stats))
-        .route("/users-util/admin-jids", get(list_admin_jids))
-        .route("/users-util/self", get(self_user_info))
-        .route("/invitations-util/stats", get(invitations_stats))
-        .merge(lifecycle::router())
-        .merge(workspace::router())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateAccountRequest {
-    pub username: JidNode,
-    pub password: Password,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateAccountResponse {
-    pub username: JidNode,
-    pub role: String,
-}
-
-async fn init_first_account(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-    Json(dto): Json<CreateAccountRequest>,
-) -> Result<Json<CreateAccountResponse>, Error> {
-    let mut prosodyctl = app_state.prosodyctl.write().await;
-
-    let first_account_role = "prosody:admin";
-
-    // Ensure no user already exists.
-    // FIX: While it shouldn’t be possible to delete the last admin
-    //   (see [prose-im/prose-pod-api#344](https://github.com/prose-im/prose-pod-api/issues/344)),
-    //   we can re-enable this route whenever no admin exists,
-    //   for convenience. I (@RemiBardon) feel like it’s going to
-    //   save us from a bad situation one day and that day I’ll
-    //   thank myself for taking this decision.
-    let user_count = prosodyctl
-        .user_get_jids_with_role(&app_config.server.domain, first_account_role)
-        .await
-        .no_context()?
-        .len();
-    if user_count > 0 {
-        return Err(crate::errors::conflict_error(
-            "FIRST_ACCOUNT_ALREADY_CREATED",
-            "First account already created",
-            "You now need an invitation to join.",
-        ));
-    }
-
-    // Create first admin account.
-    let jid = BareJid::from_parts(Some(&dto.username), &app_config.server.domain);
-    let result = prosodyctl
-        .user_create(jid.as_str(), &dto.password, Some(first_account_role))
-        .await;
-
-    // Release lock ASAP.
-    drop(prosodyctl);
-
-    match result {
-        Ok(summary) => {
-            tracing::info!("{summary}");
-            let response = CreateAccountResponse {
-                username: dto.username,
-                role: first_account_role.to_owned(),
-            };
-            Ok(Json(response))
-        }
-        Err(UserCreateError::Conflict) => {
-            // // NOTE: Even more so since we lock the prosodyctl shell between
-            // //   listing users and creating the first admin account.
-            // unreachable!("There shouldn’t be any user")
-            // NOTE: Because we now check for admins only,
-            //   there might still be a conflict.
-            Err(errors::conflict_error(
-                "USERNAME_ALREADY_TAKEN",
-                "Username already taken",
-                "Choose another username.",
-            ))
-        }
-        Err(UserCreateError::Internal(error)) => Err(error.no_context()),
-    }
-}
-
-async fn users_stats(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-) -> Result<Json<GetUsersStatsResponse>, Error> {
-    let domain = &app_config.server.domain;
-
-    let mut prosodyctl = app_state.prosodyctl.write().await;
-
-    // NOTE: We need to filter out service accounts,
-    //   which don’t have the `prosody:member` role.
-    let user_count = prosodyctl
-        .user_get_jids_with_role(domain, "prosody:member")
-        .await
-        .no_context()?
-        .len();
-
-    // Release lock ASAP.
-    drop(prosodyctl);
-
-    Ok(Json(GetUsersStatsResponse { count: user_count }))
-}
-
-#[derive(Serialize)]
-struct GetUsersStatsResponse {
-    pub count: usize,
-}
-
-async fn list_admin_jids(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-) -> Result<Json<Vec<BareJid>>, Error> {
-    use std::str::FromStr as _;
-
-    let domain = &app_config.server.domain;
-
-    let mut prosodyctl = app_state.prosodyctl.write().await;
-
-    let jids: Vec<String> = prosodyctl
-        .user_get_jids_with_role(domain, "prosody:admin")
-        .await
-        .no_context()?;
-
-    // Release lock ASAP.
-    drop(prosodyctl);
-
-    let jids: Vec<BareJid> = jids
-        .iter()
-        .map(|str| BareJid::from_str(str).expect(PROSODY_JIDS_ARE_VALID))
-        .collect();
-
-    Ok(Json(jids))
-}
-
-async fn self_user_info(caller_info: CallerInfo) -> Json<CallerInfo> {
-    Json(caller_info)
-}
-
-async fn invitations_stats(
-    State(ref app_state): State<Layer2AppState>,
-    State(ref app_config): State<Arc<AppConfig>>,
-) -> Result<Json<GetInvitationsStatsResponse>, Error> {
-    let domain = &app_config.server.domain;
-
-    let mut prosodyctl = app_state.prosodyctl.write().await;
-
-    let invites = prosodyctl.invite_list(domain).await.no_context()?;
-
-    // Release lock ASAP.
-    drop(prosodyctl);
-
-    Ok(Json(GetInvitationsStatsResponse {
-        count: invites.len(),
-    }))
-}
-
-#[derive(Serialize)]
-struct GetInvitationsStatsResponse {
-    pub count: usize,
-}
-
 // MARK: - Utilities
 
 pub(crate) mod util {
+    use axum::extract::State;
+
+    use crate::state::AppState;
+
     pub async fn log_request(
         req: axum::http::Request<axum::body::Body>,
         next: axum::middleware::Next,
@@ -231,5 +99,17 @@ pub(crate) mod util {
         }
 
         next.run(req).await
+    }
+
+    pub async fn frontend_health<F: super::HealthTrait, B>(
+        State(AppState { frontend, .. }): State<AppState<F, B>>,
+    ) -> axum::response::Response {
+        frontend.health()
+    }
+
+    pub async fn backend_health<F, B: super::HealthTrait>(
+        State(AppState { backend, .. }): State<AppState<F, B>>,
+    ) -> axum::response::Response {
+        backend.health()
     }
 }

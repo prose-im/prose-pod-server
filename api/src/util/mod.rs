@@ -50,7 +50,7 @@ pub fn jid_0_12_to_jid_0_11(jid_0_12: &jid::BareJid) -> prosody_rest::BareJid {
 }
 
 pub trait ResponseExt {
-    fn retry_after(self, duration: u8) -> Self;
+    fn retry_after(self, seconds: u8) -> Self;
 }
 
 impl ResponseExt for axum::response::Response {
@@ -64,31 +64,6 @@ impl ResponseExt for axum::response::Response {
 
         self
     }
-}
-
-#[macro_export]
-macro_rules! app_status_if_matching {
-    ($pattern:pat) => {
-        async move |State(ref app_state): State<Layer0AppState>| {
-            use axum::response::IntoResponse;
-
-            match app_state.status().as_ref() {
-                status @ $pattern => status.into_response(),
-                status => {
-                    if cfg!(debug_assertions) {
-                        unreachable!()
-                    } else {
-                        errors::internal_server_error(
-                            &anyhow::anyhow!("Unexpected app status: {status}"),
-                            ERROR_CODE_INTERNAL,
-                            "Internal error",
-                        )
-                        .into_response()
-                    }
-                }
-            }
-        }
-    };
 }
 
 #[inline]

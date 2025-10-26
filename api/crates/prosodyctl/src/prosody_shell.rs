@@ -18,7 +18,7 @@ pub mod errors {
     pub use super::UserCreateError;
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ProsodyShell {
     handle: Option<ProsodyShellHandle>,
 }
@@ -41,7 +41,7 @@ impl ProsodyShell {
     ///   when you make the first request.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self { handle: None }
     }
 
     /// Get shell handle, starting the shell if needed.

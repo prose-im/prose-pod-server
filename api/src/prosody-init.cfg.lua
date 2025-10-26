@@ -16,8 +16,6 @@ log = {
 
 -- Network interfaces/ports
 local_interfaces = { "*", "::" }
-c2s_ports = { 5222 }
-s2s_ports = { 5269 }
 http_ports = { 5280 }
 https_ports = {}
 
@@ -35,6 +33,7 @@ modules_enabled = {
   "reload_modules";
 }
 modules_disabled = {
+  "c2s";
   "s2s";
 }
 

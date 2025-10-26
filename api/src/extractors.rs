@@ -15,8 +15,9 @@ mod prelude {
         http::request,
     };
 
+    pub(crate) use crate::responders;
+    pub(crate) use crate::state::prelude::*;
     pub(crate) use crate::util::{Context as _, NoContext as _};
-    pub(crate) use crate::{Layer2AppState, responders};
 }
 
 use crate::{extractors::prelude::*, util::PROSODY_JIDS_ARE_VALID};
@@ -54,13 +55,17 @@ impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     }
 }
 
-impl FromRequestParts<Layer2AppState> for crate::models::CallerInfo {
+impl<FrontendState> FromRequestParts<AppState<FrontendState, backend::Running<b::Operational>>>
+    for crate::models::CallerInfo
+where
+    FrontendState: Send + Sync,
+{
     type Rejection = responders::Error;
 
     #[tracing::instrument(name = "req::auth::caller_info", level = "trace", skip_all)]
     async fn from_request_parts(
         parts: &mut request::Parts,
-        state: &Layer2AppState,
+        state: &AppState<FrontendState, backend::Running>,
     ) -> Result<Self, Self::Rejection> {
         use crate::models::{AuthToken, BareJid};
         use std::str::FromStr as _;
@@ -96,6 +101,7 @@ impl FromRequestParts<Layer2AppState> for crate::models::CallerInfo {
         // Get user info from auth token.
         let token = AuthToken::from_request_parts(parts, state).await?;
 
+        let ref state = state.backend.state;
         let res: CachedValue = match state.oauth2_client.userinfo(&token).await {
             Ok(res) => {
                 let jid = (BareJid::from_str(res.jid())).expect(PROSODY_JIDS_ARE_VALID);
@@ -141,10 +147,10 @@ pub enum AvatarFromRequestError {
     UnsupportedMediaType,
 }
 
-impl FromRequest<Layer2AppState> for crate::models::Avatar {
+impl<State: Send + Sync> FromRequest<State> for crate::models::Avatar {
     type Rejection = AvatarFromRequestError;
 
-    async fn from_request(req: Request, _state: &Layer2AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, _state: &State) -> Result<Self, Self::Rejection> {
         use crate::models::Avatar;
         use axum::Json;
 

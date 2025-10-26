@@ -17,6 +17,9 @@ pub struct Prosodyctl {
 }
 
 impl Prosodyctl {
+    /// NOTE: This constructor is lazy. Prosody will start when you call
+    ///   [`Prosodyctl::start`] and the shell when you call it for the
+    ///   first time.
     pub fn new() -> Self {
         Self {
             shell: ProsodyShell::new(),

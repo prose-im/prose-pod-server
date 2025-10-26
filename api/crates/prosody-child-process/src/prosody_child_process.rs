@@ -34,6 +34,8 @@ struct ProsodyHandle {
 }
 
 impl ProsodyChildProcess {
+    /// NOTE: This constructor is lazy. Prosody will start when you call
+    ///   [`ProsodyChildProcess::start`].
     #[inline]
     pub fn new() -> Self {
         Self {

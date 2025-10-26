@@ -15,17 +15,16 @@ mod startup;
 mod state;
 mod util;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use axum::Router;
 use tokio::net::TcpListener;
 
-use crate::router::base_router;
-use crate::state::{AppStatus, Layer0AppState};
+use crate::state::prelude::*;
 
 pub(crate) use self::app_config::AppConfig;
-use self::router::startup_router;
 use self::startup::startup;
-pub(crate) use self::state::Layer2AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -49,27 +48,31 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     let address = app_config.server_api.address();
     let listener = TcpListener::bind(address).await?;
 
-    let layer0_app_state = Layer0AppState::new(AppStatus::Starting, startup_router());
+    let app_state = AppState::<f::Running, b::Starting<b::NotInitialized>>::new(
+        frontend::Running {
+            state: Arc::new(f::Operational {}),
+            config: Arc::new(app_config),
+        },
+        backend::Starting {
+            state: Arc::new(b::NotInitialized {}),
+        },
+    );
 
     // Serve a minimal HTTP API while the startup actions run.
     let mut main_tasks = tokio::task::JoinSet::<anyhow::Result<()>>::new();
     main_tasks.spawn({
-        let layer0_app_state = layer0_app_state.clone();
+        let app_context = app_state.context().clone();
         async move {
-            let app: Router = base_router()
-                .fallback_service(layer0_app_state.router())
+            let app: Router = Router::new()
+                .fallback_service(app_context.router())
                 .layer(axum::middleware::from_fn(router::util::log_request))
-                .with_state(layer0_app_state);
+                .with_state(app_context);
 
             tracing::info!("Serving the Prose Pod Server API on {address}…");
             axum::serve(listener, app).await.context("Serve error")
         }
     });
-    main_tasks.spawn(async move {
-        startup(app_config, layer0_app_state)
-            .await
-            .context("Startup error")
-    });
+    main_tasks.spawn(async move { startup(app_state).await.context("Startup error") });
 
     // Wait for both tasks to finish, or abort if one fails.
     let mut main_res: anyhow::Result<()> = Err(anyhow::Error::msg("No task ran."));

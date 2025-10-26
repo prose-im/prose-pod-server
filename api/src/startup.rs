@@ -4,10 +4,11 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::collections::HashMap;
+use std::fs;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Context as _;
 use prosody_child_process::ProsodyChildProcess;
@@ -18,76 +19,66 @@ use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::AppConfig;
 use crate::models::{BareJid, JidDomain, JidNode, Password};
-use crate::router::main_router;
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
-use crate::state::{AppStatus, Layer0AppState, Layer1AppState};
+use crate::state::prelude::*;
 use crate::util::jid_0_12_to_jid_0_11;
-use crate::{AppConfig, Layer2AppState};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
-
-/// See [docs/initialization-phases.md](../docs/initialization-phases.md).
-///
-/// WARN: This function doesn’t start Prosody.
-pub async fn init(layer0_app_state: Layer0AppState) -> anyhow::Result<Layer1AppState> {
-    tracing::info!("Initializing Prosody…");
-    let start = Instant::now();
-
-    let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
-    backup_prosody_conf_if_needed(prosody_config_file_path)?;
-    apply_init_config(prosody_config_file_path)?;
-
-    // Launch Prosody.
-    let prosody = ProsodyChildProcess::new();
-
-    let prosodyctl = Prosodyctl::new();
-
-    let layer1_app_state = Layer1AppState {
-        layer0: layer0_app_state,
-        restart_bound_cancellation_token: CancellationToken::new(),
-        prosody: Arc::new(RwLock::new(prosody)),
-        prosodyctl: Arc::new(RwLock::new(prosodyctl)),
-        is_server_bootstrapping_done: Arc::new(AtomicBool::new(false)),
-    };
-
-    tracing::info!("Prosody initialization took {:.0?}.", start.elapsed());
-    Ok(layer1_app_state)
-}
+const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
 /// See [docs/initialization-phases.md](../docs/initialization-phases.md).
 pub async fn bootstrap(
-    app_config: AppConfig,
-    layer1_app_state: Layer1AppState,
-) -> anyhow::Result<Layer2AppState> {
+    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
+) -> Result<AppState<f::Running, b::Running>, anyhow::Error> {
     tracing::info!("Bootstrapping…");
     let start = Instant::now();
 
-    let reload_bound_cancellation_token = CancellationToken::new();
-
+    let app_config = Arc::deref(&app_state.frontend.config);
+    let ref server_domain = app_config.server.domain;
     let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
-    apply_bootstrap_config(prosody_config_file_path, &app_config.server.domain)?;
 
-    let todo = "Delete `localhost` data.";
+    create_required_dirs()?;
+
+    backup_prosody_conf_if_needed(prosody_config_file_path)?;
+    // apply_init_config(prosody_config_file_path)?;
+
+    apply_bootstrap_config(prosody_config_file_path, server_domain)?;
+
+    // NOTE: While it’s here that we could delete the `localhost` data
+    //   generated during a factory reset, it’s better to not do it to
+    //   avoid data loss. If someone starts a Prose Pod on existing
+    //   Prosody data while they had important things stored in `localhost`,
+    //   they’d be horrified if we deleted their data without consent.
+    //   We’ll keep destructive actions during factory resets only.
+    //   It will make the Prose Pod Server more predictable, safer to use
+    //   and faster to audit (only one place where `fs::remove_dir_all`
+    //   happens).
 
     // Launch Prosody.
-    start_prosody(&app_config, &layer1_app_state).await?;
+    let mut prosody = ProsodyChildProcess::new();
+    start_prosody(&app_state, &mut prosody).await?;
 
-    let mut prosodyctl = layer1_app_state.prosodyctl.write().await;
+    let mut prosodyctl = Prosodyctl::new();
+
+    let todo = "Store somewhere";
+    let reload_bound_cancellation_token = CancellationToken::new();
+
     let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
     let oauth2 = Arc::new(register_oauth2_client().await?);
 
     let secrets = SecretsService {
-        store: SecretsStore::new(&app_config),
+        store: SecretsStore::new(app_config),
         oauth2: oauth2.clone(),
     };
     // Run cache purge tasks in the background.
     tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
 
     let service_accounts = create_service_accounts(
-        &app_config,
+        app_config,
         &mut prosodyctl,
         &prosody_rest,
         &oauth2,
@@ -96,7 +87,7 @@ pub async fn bootstrap(
     .await?;
 
     let groups = Groups::new(app_config.as_ref());
-    create_groups(&mut prosodyctl, &groups, &app_config.server.domain).await?;
+    create_groups(&mut prosodyctl, &groups, server_domain).await?;
 
     add_service_accounts_to_groups(
         &mut prosodyctl,
@@ -104,61 +95,46 @@ pub async fn bootstrap(
             .iter()
             .flat_map(|jid| jid.node().map(JidNode::from)),
         groups.keys().into_iter(),
-        &app_config.server.domain,
+        server_domain,
     )
     .await?;
 
-    synchronize_rosters(
-        &mut prosodyctl,
-        groups.keys().into_iter(),
-        &app_config.server.domain,
-    )
-    .await?;
+    synchronize_rosters(&mut prosodyctl, groups.keys().into_iter(), server_domain).await?;
 
-    drop(prosodyctl);
-
-    layer1_app_state
-        .is_server_bootstrapping_done
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-
-    let layer2_app_state = Layer2AppState {
-        layer1: layer1_app_state,
-        config: Arc::new(app_config),
-        reload_bound_cancellation_token,
-        prosody_rest,
-        oauth2_client: oauth2,
-        secrets_service: secrets,
-    };
+    let new_state = app_state.with_transition(|state| {
+        state.with_backend(b::Running {
+            state: Arc::new(b::Operational {
+                prosody: Arc::new(RwLock::new(prosody)),
+                prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+                prosody_rest,
+                oauth2_client: oauth2,
+                secrets_service: secrets,
+            }),
+        })
+    });
 
     tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
-    Ok(layer2_app_state)
+    Ok(new_state)
 }
 
 pub async fn startup(
-    app_config: AppConfig,
-    layer0_app_state: Layer0AppState,
-) -> anyhow::Result<()> {
+    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
+) -> Result<(), anyhow::Error> {
     tracing::info!("Running startup actions…");
-
     let start = Instant::now();
 
-    let layer1_app_state = init(layer0_app_state.clone()).await?;
-    let layer2_app_state = bootstrap(app_config, layer1_app_state).await?;
+    _ = bootstrap(app_state).await?;
 
-    layer0_app_state.set_state(
-        AppStatus::Running,
-        main_router().with_state(layer2_app_state),
-    );
     tracing::info!("Now serving all routes.");
 
     tracing::info!("Startup took {:.0?}.", start.elapsed());
-
     Ok(())
 }
 
 // MARK: Steps
 
-fn apply_init_config(prosody_config_file_path: &Path) -> anyhow::Result<()> {
+fn apply_init_config(prosody_config_file_path: &Path) -> Result<(), anyhow::Error> {
+    let todo = "Remove?";
     use std::fs::File;
     use std::io::Write as _;
 
@@ -178,7 +154,15 @@ fn apply_init_config(prosody_config_file_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> anyhow::Result<()> {
+fn create_required_dirs() -> Result<(), anyhow::Error> {
+    fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
+        "Could not create Prosody certs dir at <{PROSODY_CERTS_DIR}>"
+    ))?;
+
+    Ok(())
+}
+
+fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> Result<(), anyhow::Error> {
     use std::fs::File;
     use std::io::{self, Read as _};
 
@@ -225,7 +209,7 @@ fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> anyhow::Res
 fn apply_bootstrap_config(
     prosody_config_file_path: &Path,
     server_domain: &JidDomain,
-) -> anyhow::Result<()> {
+) -> Result<(), anyhow::Error> {
     use std::fs::File;
     use std::io::Write as _;
 
@@ -248,26 +232,23 @@ fn apply_bootstrap_config(
 }
 
 async fn start_prosody(
-    app_config: &AppConfig,
-    layer1_app_state: &Layer1AppState,
-) -> anyhow::Result<()> {
+    app_state: &AppState<f::Running, b::Starting<b::NotInitialized>>,
+    prosody: &mut ProsodyChildProcess,
+) -> Result<(), anyhow::Error> {
     use secrecy::ExposeSecret as _;
 
-    let mut prosody = layer1_app_state.prosody.write().await;
+    let app_config = Arc::deref(&app_state.frontend.config);
+
     prosody.set_env(
         "OAUTH2_REGISTRATION_KEY",
         app_config.auth.oauth2_registration_key.expose_secret(),
     );
     prosody.start().await.context("Failed starting Prosody")?;
 
-    // Wait for Prosody to start.
-    // TODO: Get rid of constant sleep.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
     Ok(())
 }
 
-async fn register_oauth2_client() -> anyhow::Result<ProsodyOAuth2Client> {
+async fn register_oauth2_client() -> Result<ProsodyOAuth2Client, anyhow::Error> {
     let prosody_http_config = Arc::new(ProsodyHttpConfig {
         url: "http://prose-pod-server:5280".to_owned(),
     });
@@ -291,7 +272,7 @@ async fn create_service_accounts(
     prosody_rest: &ProsodyRest,
     oauth2: &ProsodyOAuth2Client,
     secrets: &SecretsService,
-) -> anyhow::Result<Vec<BareJid>> {
+) -> Result<Vec<BareJid>, anyhow::Error> {
     use prosody_rest::prose_xmpp::stanza::{VCard4, vcard4};
 
     // NOTE: [Prosody’s built-in roles](https://prosody.im/doc/roles#built-in-roles)
@@ -407,7 +388,7 @@ async fn create_groups(
     prosodyctl: &mut Prosodyctl,
     groups: &Groups,
     server_domain: &JidDomain,
-) -> anyhow::Result<()> {
+) -> Result<(), anyhow::Error> {
     let host: &str = server_domain.as_str();
 
     for (group_id, group_info) in groups.iter() {
@@ -433,7 +414,7 @@ async fn add_service_accounts_to_groups<'a, A, G>(
     service_accounts: A,
     groups: G,
     server_domain: &JidDomain,
-) -> anyhow::Result<()>
+) -> Result<(), anyhow::Error>
 where
     A: Iterator<Item = JidNode>,
     G: Iterator<Item = &'a String> + Clone,
@@ -464,7 +445,7 @@ async fn synchronize_rosters<'a, G>(
     prosodyctl: &mut Prosodyctl,
     groups: G,
     server_domain: &JidDomain,
-) -> anyhow::Result<()>
+) -> Result<(), anyhow::Error>
 where
     G: Iterator<Item = &'a String>,
 {
