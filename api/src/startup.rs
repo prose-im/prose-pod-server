@@ -133,27 +133,6 @@ pub async fn startup(
 
 // MARK: Steps
 
-fn apply_init_config(prosody_config_file_path: &Path) -> Result<(), anyhow::Error> {
-    let todo = "Remove?";
-    use std::fs::File;
-    use std::io::Write as _;
-
-    let mut prosody_config_file = File::options()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(prosody_config_file_path)
-        .context("Error opening Prosody config file")?;
-
-    let bootstrap_config = include_str!("prosody-init.cfg.lua");
-
-    prosody_config_file
-        .write_all(bootstrap_config.as_bytes())
-        .context("Error writing Prosody config file")?;
-
-    Ok(())
-}
-
 fn create_required_dirs() -> Result<(), anyhow::Error> {
     fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
         "Could not create Prosody certs dir at <{PROSODY_CERTS_DIR}>"

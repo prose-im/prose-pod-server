@@ -17,12 +17,12 @@ use crate::router::util::backend_health;
 use crate::state::prelude::*;
 
 impl AppState<f::Running, b::Running> {
-    pub(crate) fn backend_restart_routes() -> axum::Router<Self> {
+    pub(in crate::router) fn backend_restart_routes() -> axum::Router<Self> {
         Router::<Self>::new().route("/backend/restart", post(Self::backend_restart_route))
     }
 }
 
-/// During a startup.
+/// **Starting** (during a startup and after a factory reset).
 impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
     fn state_name() -> &'static str {
         "Starting"
@@ -36,7 +36,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
     }
 }
 
-/// During a restart.
+/// **Restarting** (during a restart).
 impl AppStateTrait for AppState<f::Running, b::Starting> {
     fn state_name() -> &'static str {
         "Restarting"
@@ -52,7 +52,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
     }
 }
 
-/// During a failed restart.
+/// **Start failed** (during a failed restart).
 impl AppStateTrait for AppState<f::Running, b::StartFailed> {
     fn state_name() -> &'static str {
         "Start failed"
@@ -65,15 +65,6 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed> {
             .with_state(self)
     }
 }
-
-// impl AppStateTrait for AppState<f::Running, b::Stopped> {
-//     fn into_router(self) -> axum::Router {
-//         Router::<Self>::new()
-//             .route("/backend/restart", post(Self::backend_start_route))
-//             .fallback(backend_health)
-//             .with_state(self)
-//     }
-// }
 
 impl AppState<f::Running, b::Running> {
     #[inline]

@@ -5,5 +5,3 @@
 
 mod reload;
 mod restart;
-
-pub use self::reload::backend_reload;

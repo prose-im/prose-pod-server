@@ -10,11 +10,12 @@ use axum::extract::State;
 use axum::routing::post;
 
 use crate::responders::Error;
-use crate::router::backend::backend_reload;
 use crate::router::util::frontend_health;
 use crate::state::prelude::*;
 use crate::{AppConfig, errors};
 
+/// **Running with misconfiguration** (after a `SIGHUP`
+/// with a bad configuration).
 impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running> {
     fn state_name() -> &'static str {
         "Running with misconfiguration"
@@ -28,6 +29,7 @@ impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running>
     }
 }
 
+/// **Misconfigured** (after a reload).
 impl AppStateTrait for AppState<f::Misconfigured, b::Running> {
     fn state_name() -> &'static str {
         "Misconfigured"
@@ -41,6 +43,7 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Running> {
     }
 }
 
+/// **Configuration needed** (after a factory reset).
 impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
     fn state_name() -> &'static str {
         "Configuration needed"
@@ -144,11 +147,14 @@ impl<FrontendSubstate> AppState<f::Running<FrontendSubstate>, b::Running>
 where
     FrontendSubstate: FrontendRunningState,
 {
-    pub(crate) async fn frontend_reload_route(State(app_state): State<Self>) -> Result<(), Error> {
+    pub(in crate::router) async fn frontend_reload_route(
+        State(app_state): State<Self>,
+    ) -> Result<(), Error> {
         match app_state.try_reload_frontend() {
             Ok(app_state) => {
                 let fixme = "That shouldn’t be here";
-                backend_reload(State(app_state)).await
+                _ = app_state.do_reload_backend().await?;
+                Ok(())
             }
 
             Err((_, error)) => {
@@ -164,7 +170,8 @@ impl AppState<f::Misconfigured, b::Running> {
         match app_state.try_reload_frontend::<b::Running>() {
             Ok(app_state) => {
                 let fixme = "That shouldn’t be here";
-                backend_reload(State(app_state)).await
+                _ = app_state.do_reload_backend().await?;
+                Ok(())
             }
 
             // Transition state if the reload failed.
@@ -190,7 +197,8 @@ impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
             Ok(app_state) => match crate::startup::bootstrap(app_state).await {
                 Ok(app_state) => {
                     let fixme = "That shouldn’t be here";
-                    backend_reload(State(app_state)).await
+                    _ = app_state.do_reload_backend().await?;
+                    Ok(())
                 }
                 Err(err) => {
                     let todo = "Handle error";

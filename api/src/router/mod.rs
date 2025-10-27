@@ -12,7 +12,7 @@ mod users_util;
 mod workspace;
 
 use axum::Router;
-use axum::routing::{MethodRouter, get, post, put};
+use axum::routing::{get, post, put};
 
 use crate::state::prelude::*;
 
@@ -43,6 +43,7 @@ pub fn with_base_routes(
         .route("/health", get(backend_health_route))
 }
 
+/// **Operational** (under normal conditions).
 impl AppStateTrait for AppState<f::Running, b::Running> {
     fn state_name() -> &'static str {
         "Operational"
@@ -60,46 +61,42 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             )
             .route("/lifecycle/reload", post(Self::frontend_reload_route))
             .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
-            .route("/backend/reload", post(backend::backend_reload))
+            .route("/backend/reload", post(Self::backend_reload_route))
             .merge(Self::backend_restart_routes())
             .merge(Self::workspace_routes())
             .with_state(self)
     }
 }
 
-pub fn startup_router() -> Router {
-    Router::new()
-}
-
 // MARK: - Utilities
+
+pub async fn log_request(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> impl axum::response::IntoResponse {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    let matched_path = req
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|mp| mp.as_str())
+        .unwrap_or(&path);
+
+    match matched_path {
+        "/health" => {
+            tracing::trace!(method = %method, route = %matched_path, "Incoming request")
+        }
+        _ => tracing::debug!(method = %method, route = %matched_path, "Incoming request"),
+    }
+
+    next.run(req).await
+}
 
 pub(crate) mod util {
     use axum::extract::State;
 
     use crate::state::AppState;
-
-    pub async fn log_request(
-        req: axum::http::Request<axum::body::Body>,
-        next: axum::middleware::Next,
-    ) -> impl axum::response::IntoResponse {
-        let method = req.method().clone();
-        let path = req.uri().path().to_string();
-
-        let matched_path = req
-            .extensions()
-            .get::<axum::extract::MatchedPath>()
-            .map(|mp| mp.as_str())
-            .unwrap_or(&path);
-
-        match matched_path {
-            "/health" => {
-                tracing::trace!(method = %method, route = %matched_path, "Incoming request")
-            }
-            _ => tracing::debug!(method = %method, route = %matched_path, "Incoming request"),
-        }
-
-        next.run(req).await
-    }
 
     pub async fn frontend_health<F: super::HealthTrait, B>(
         State(AppState { frontend, .. }): State<AppState<F, B>>,

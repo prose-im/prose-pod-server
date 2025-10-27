@@ -4,25 +4,22 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub(crate) mod prelude {
-    pub use super::{
-        AppContext, AppState, AppStateTrait,
-        backend::{
-            BackendRunningState, BackendStartFailedState, BackendStartingState, BackendStoppedState,
-        },
-        backend::{prelude as backend, prelude as b},
-        frontend::FrontendRunningState,
-        frontend::{prelude as frontend, prelude as f},
+    #[allow(unused_imports)]
+    pub use super::backend::{
+        BackendRunningState, BackendStartFailedState, BackendStartingState, BackendStoppedState,
     };
+    pub use super::backend::{prelude as backend, prelude as b};
+    pub use super::frontend::FrontendRunningState;
+    pub use super::frontend::{prelude as frontend, prelude as f};
+    #[allow(unused_imports)]
+    pub use super::{AppContext, AppState, AppStateTrait};
 }
 
 use std::sync::Arc;
 
 use axum_hot_swappable_router::HotSwappableRouter;
-use prosody_http::mod_http_oauth2::ProsodyOAuth2Client;
-use prosody_rest::ProsodyRest;
-use tokio::sync::RwLock;
 
-use crate::{AppConfig, secrets_service::SecretsService};
+use crate::AppConfig;
 
 /// “App state“ of the global immutable `axum::Router`.
 ///
@@ -40,7 +37,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    #[inline]
+    #[inline(always)]
     fn new() -> Self {
         Self {
             router: HotSwappableRouter::default(),
@@ -81,7 +78,7 @@ impl AppContext {
 
     /// WARN: Do not call this to hot-swap the router.
     ///   Instead, use [`set_state`](Self::set_state).
-    #[inline]
+    #[inline(always)]
     pub fn router(&self) -> HotSwappableRouter {
         self.router.clone()
     }
@@ -170,96 +167,30 @@ impl<F1, B1> AppState<F1, B1> {
     }
 }
 
-// State transitions are enforced by `rustc`.
-//
-// Startup:
-//   ! (no state)
-// Bad config at startup:
-//   ! (crash)
-// Prosody crash at startup:
-//   ! (crash)
-// Startup (started):
-//   AppState<ApiOperational, BackendOperational>
-//
-// During POST /backend/reload:
-//   AppState<ApiOperational, BackendOperational>
-// Backend reload succeeded:
-//   AppState<ApiOperational, BackendOperational>
-//   (+ HTTP success)
-// Backend reload failed:
-//   AppState<ApiOperational, BackendOperational>
-//   (+ HTTP client error)
-//
-// During POST /backend/restart:
-//   AppState<ApiOperational, BackendStopped>
-// Backend restart succeeded:
-//   AppState<ApiOperational, BackendOperational>
-//   (+ HTTP success)
-// Backend restart failed:
-//   AppState<ApiOperational, RestartFailed>
-//   (+ HTTP client error)
-//
-// During POST /lifecycle/reload:
-//   AppState<ApiOperational, BackendOperational>
-// Self reload succeeded:
-//   AppState<ApiOperational, BackendOperational>
-//   (+ HTTP success)
-// Self reload failed:
-//   AppState<ApiMisconfigured, BackendOperational>
-//   (+ HTTP client error)
-//
-// During POST /lifecycle/factory-reset:
-//   AppState<ApiUndergoingFactoryReset, BackendStopped>
-// Factory reset succeeded:
-//   AppState<ApiMisconfigured, BackendInitialized>
-//     -> BackendInitialized necessary to have a handle on Prosody for future reloads
-//   / AppState<ApiMisconfigured, BackendInitialized> if config in env is invalid
-//   / AppState<ApiOperational, BackendOperational> if server domain in env
-//   (+ HTTP success)
-// Factory reset failed (unexpected error):
-//   AppState<ApiUndergoingFactoryReset, BackendStopped>
-//   (+ HTTP client error)
-//
-// SIGHUP:
-//   (Prosody keeps running as if nothing happened, but throws
-//   an error every time prosodyctl is invoked (status included).
-//   Running shells don’t stop though, and c2s seems to still work.)
-//   -> Report SERVICE_UNAVAILABLE, but keep Prosody running.
-
-// impl ToRouter for AppState<ApiOperational, BackendOperational> {
-//   // All routes
-// }
-// impl ToRouter for AppState<ApiOperational, BackendStopped> {
-//   // POST /backend/restart
-// }
-// impl ToRouter for AppState<ApiMisconfigured, BackendInitialized> {
-//   // POST /lifecycle/reload
-// }
-// impl ToRouter for AppState<ApiMisconfigured, BackendOperational> {
-//   // POST /lifecycle/reload
-// }
-// impl ToRouter for AppState<ApiUndergoingFactoryReset, BackendStopped> {
-//   // Nothing? -> Fix by hand
-//   // We could have POST /backend/restart, but that’d be a bit risky.
-// }
-
-// 1. Normal case
-// 2. &Backend restart
-//    1. Stop
-//    2. Start
-//    3. -> OAuth 2.0 client conserved, service account secrets conserved
-// 3. Normal case
-// 4. Backend restart (failing)
-//    1. Stop
-//    2. Cannot start
-//    3. -> OAuth 2.0 client conserved, service account secrets conserved
-//    4. *Backend restart
-// 5. Normal case
-
 pub trait AppStateTrait {
     fn state_name() -> &'static str;
 
     fn into_router(self) -> axum::Router;
+}
+
+macro_rules! state_boilerplate {
+    ($state:ident, $substate_trait:ident) => {
+        impl<S: $substate_trait> std::ops::Deref for $state<S> {
+            type Target = S;
+
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.state
+            }
+        }
+
+        impl<S: $substate_trait> AsRef<S> for $state<S> {
+            #[inline(always)]
+            fn as_ref(&self) -> &S {
+                &self.state
+            }
+        }
+    };
 }
 
 pub mod frontend {
@@ -272,8 +203,6 @@ pub mod frontend {
         };
     }
 
-    use std::ops::Deref;
-
     use super::*;
 
     use self::prelude::*;
@@ -284,16 +213,6 @@ pub mod frontend {
     pub struct FrontendRunning<State: FrontendRunningState = Operational> {
         pub state: Arc<State>,
         pub(crate) config: Arc<AppConfig>,
-    }
-
-    impl<State: FrontendRunningState> Clone for FrontendRunning<State> {
-        fn clone(&self) -> Self {
-            let todo = "Derive?";
-            Self {
-                state: self.state.clone(),
-                config: self.config.clone(),
-            }
-        }
     }
 
     pub trait FrontendRunningState: std::fmt::Debug {}
@@ -347,22 +266,17 @@ pub mod frontend {
 
     // MARK: Boilerplate
 
-    impl<S: RunningState> std::ops::Deref for Running<S> {
-        type Target = S;
+    state_boilerplate!(Running, RunningState);
 
+    impl<State: FrontendRunningState> Clone for FrontendRunning<State> {
         #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            &self.state
-        }
-    }
-
-    impl<S: RunningState, Substate> AsRef<Substate> for Running<S>
-    where
-        S: AsRef<Substate>,
-    {
-        #[inline(always)]
-        fn as_ref(&self) -> &Substate {
-            self.state.deref().as_ref()
+        fn clone(&self) -> Self {
+            // NOTE: `#[derive(Clone)]` doesn’t work here,
+            //   we have to do it manually :/
+            Self {
+                state: Arc::clone(&self.state),
+                config: Arc::clone(&self.config),
+            }
         }
     }
 }
@@ -381,12 +295,15 @@ pub mod backend {
         };
     }
 
-    use std::ops::Deref;
+    use std::sync::Arc;
 
     use prosody_child_process::ProsodyChildProcess;
+    use prosody_http::mod_http_oauth2::ProsodyOAuth2Client;
+    use prosody_rest::ProsodyRest;
     use prosodyctl::Prosodyctl;
+    use tokio::sync::RwLock;
 
-    use super::*;
+    use crate::secrets_service::SecretsService;
 
     use self::prelude::*;
 
@@ -397,31 +314,13 @@ pub mod backend {
         pub state: Arc<State>,
     }
 
-    impl<State: BackendStoppedState> Clone for BackendStarting<State> {
-        fn clone(&self) -> Self {
-            let todo = "Derive?";
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
-    pub use self::BackendStoppedState as BackendStartingState;
+    pub use BackendStoppedState as BackendStartingState;
 
     // MARK: Stopped
 
     #[derive(Debug)]
     pub struct BackendStopped<State: BackendStoppedState = Operational> {
         pub state: Arc<State>,
-    }
-
-    impl<State: BackendStoppedState> Clone for BackendStopped<State> {
-        fn clone(&self) -> Self {
-            let todo = "Derive?";
-            Self {
-                state: self.state.clone(),
-            }
-        }
     }
 
     pub trait BackendStoppedState: std::fmt::Debug {}
@@ -435,15 +334,6 @@ pub mod backend {
         pub state: Arc<State>,
     }
 
-    impl<State: BackendRunningState> Clone for BackendRunning<State> {
-        fn clone(&self) -> Self {
-            let todo = "Derive?";
-            Self {
-                state: self.state.clone(),
-            }
-        }
-    }
-
     pub trait BackendRunningState: std::fmt::Debug {}
     impl BackendRunningState for Operational {}
 
@@ -453,16 +343,6 @@ pub mod backend {
     pub struct BackendStartFailed<State: BackendStartFailedState = Operational> {
         pub state: Arc<State>,
         pub error: Arc<anyhow::Error>,
-    }
-
-    impl<State: BackendStartFailedState> Clone for BackendStartFailed<State> {
-        fn clone(&self) -> Self {
-            let todo = "Derive?";
-            Self {
-                state: self.state.clone(),
-                error: self.error.clone(),
-            }
-        }
     }
 
     pub use BackendStoppedState as BackendStartFailedState;
@@ -486,28 +366,9 @@ pub mod backend {
             pub oauth2_client: Arc<ProsodyOAuth2Client>,
             pub secrets_service: SecretsService,
         }
-
-        // MARK: Substate transitions
-
-        impl From<Operational> for BackendUndergoingFactoryReset {
-            #[inline(always)]
-            fn from(_: Operational) -> Self {
-                Self {}
-            }
-        }
     }
 
     // MARK: State transitions
-
-    impl<Substate> From<Running<Substate>> for Stopped<Substate>
-    where
-        Substate: RunningState + StoppedState,
-    {
-        #[inline(always)]
-        fn from(value: Running<Substate>) -> Self {
-            Self { state: value.state }
-        }
-    }
 
     impl<Substate> From<Running<Substate>> for Starting<Substate>
     where
@@ -525,16 +386,6 @@ pub mod backend {
     {
         #[inline(always)]
         fn from(value: Starting<Substate>) -> Self {
-            Self { state: value.state }
-        }
-    }
-
-    impl<Substate> From<Stopped<Substate>> for Running<Substate>
-    where
-        Substate: StoppedState + RunningState,
-    {
-        #[inline(always)]
-        fn from(value: Stopped<Substate>) -> Self {
             Self { state: value.state }
         }
     }
@@ -559,34 +410,6 @@ pub mod backend {
         }
     }
 
-    impl<Substate> From<Stopped<Substate>> for UndergoingFactoryReset
-    where
-        Substate: StoppedState,
-    {
-        #[inline(always)]
-        fn from(_: Stopped<Substate>) -> Self {
-            Self {}
-        }
-    }
-
-    impl From<UndergoingFactoryReset> for Stopped<NotInitialized> {
-        #[inline(always)]
-        fn from(_: UndergoingFactoryReset) -> Self {
-            Self {
-                state: Arc::new(NotInitialized {}),
-            }
-        }
-    }
-
-    impl From<UndergoingFactoryReset> for Starting<NotInitialized> {
-        #[inline(always)]
-        fn from(_: UndergoingFactoryReset) -> Self {
-            Self {
-                state: Arc::new(NotInitialized {}),
-            }
-        }
-    }
-
     impl From<Stopped<NotInitialized>> for Starting<NotInitialized> {
         #[inline(always)]
         fn from(Stopped { state, .. }: Stopped<NotInitialized>) -> Self {
@@ -601,13 +424,6 @@ pub mod backend {
         }
     }
 
-    impl From<Stopped<Operational>> for Arc<Operational> {
-        #[inline(always)]
-        fn from(value: Stopped<Operational>) -> Self {
-            value.state
-        }
-    }
-
     impl From<StartFailed<Operational>> for Arc<Operational> {
         #[inline(always)]
         fn from(value: StartFailed<Operational>) -> Self {
@@ -617,28 +433,51 @@ pub mod backend {
 
     // MARK: Boilerplate
 
-    impl<S: RunningState> Deref for Running<S> {
-        type Target = S;
+    state_boilerplate!(Running, RunningState);
+    state_boilerplate!(Stopped, StoppedState);
 
+    impl<State: BackendStoppedState> Clone for BackendStarting<State> {
         #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            &self.state
+        fn clone(&self) -> Self {
+            // NOTE: `#[derive(Clone)]` doesn’t work here,
+            //   we have to do it manually :/
+            Self {
+                state: Arc::clone(&self.state),
+            }
         }
     }
 
-    impl<S: RunningState> AsRef<S> for Running<S> {
+    impl<State: BackendRunningState> Clone for BackendRunning<State> {
         #[inline(always)]
-        fn as_ref(&self) -> &S {
-            &self.state
+        fn clone(&self) -> Self {
+            // NOTE: `#[derive(Clone)]` doesn’t work here,
+            //   we have to do it manually :/
+            Self {
+                state: Arc::clone(&self.state),
+            }
         }
     }
 
-    impl<S: StoppedState> Deref for Stopped<S> {
-        type Target = S;
-
+    impl<State: BackendStartFailedState> Clone for BackendStartFailed<State> {
         #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            &self.state
+        fn clone(&self) -> Self {
+            // NOTE: `#[derive(Clone)]` doesn’t work here,
+            //   we have to do it manually :/
+            Self {
+                state: Arc::clone(&self.state),
+                error: Arc::clone(&self.error),
+            }
+        }
+    }
+
+    impl<State: BackendStoppedState> Clone for BackendStopped<State> {
+        #[inline(always)]
+        fn clone(&self) -> Self {
+            // NOTE: `#[derive(Clone)]` doesn’t work here,
+            //   we have to do it manually :/
+            Self {
+                state: Arc::clone(&self.state),
+            }
         }
     }
 }
@@ -646,25 +485,6 @@ pub mod backend {
 // MARK: App state transitions
 
 impl<F1, B1> AppState<F1, B1> {
-    // #[must_use]
-    // #[inline]
-    // pub fn transition<F2, B2>(self)
-    // where
-    //     F2: From<F1>,
-    //     B2: From<B1>,
-    //     AppState<F2, B2>: AppStateTrait,
-    //     F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-    //     B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-    // {
-    //     let app_context = self.app_context.clone();
-    //     let new_state = AppState {
-    //         app_context: self.app_context,
-    //         frontend: self.frontend.into(),
-    //         backend: self.backend.into(),
-    //     };
-    //     app_context.set_state(new_state)
-    // }
-
     #[must_use]
     #[inline]
     pub fn with_auto_transition<F2, B2>(self) -> AppState<F2, B2>

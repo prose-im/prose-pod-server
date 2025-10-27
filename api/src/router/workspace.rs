@@ -19,7 +19,7 @@ use crate::util::{NoContext, jid_0_12_to_jid_0_11};
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
 impl AppState<f::Running, b::Running> {
-    pub(crate) fn workspace_routes() -> axum::Router<Self> {
+    pub(in crate::router) fn workspace_routes() -> axum::Router<Self> {
         Router::<Self>::new()
             .route("/workspace-init", put(self::init_workspace))
             .route(
@@ -62,7 +62,7 @@ struct WorkspaceProfile {
 /// unauthenticated route to set the Workspace profile. This route enables it,
 /// and works only until the first admin account is created. After that, it’ll
 /// return 410 Gone.
-pub async fn init_workspace(
+async fn init_workspace(
     State(AppState {
         ref frontend,
         ref backend,
@@ -109,7 +109,7 @@ struct InitWorkspaceRequest {
     accent_color: Option<Color>,
 }
 
-pub async fn get_workspace(
+async fn get_workspace(
     State(AppState {
         ref frontend,
         ref backend,

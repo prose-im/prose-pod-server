@@ -323,47 +323,47 @@ pub struct TokenResponse {
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct OAuth2ClientMetadata {
-    /// See [`PartialClientMetadata::client_name`].
+    /// See [`OAuth2ClientConfig::client_name`].
     pub client_name: String,
 
-    /// See [`PartialClientMetadata::client_uri`].
+    /// See [`OAuth2ClientConfig::client_uri`].
     pub client_uri: String,
 
-    /// See [`PartialClientMetadata::logo_uri`].
+    /// See [`OAuth2ClientConfig::logo_uri`].
     pub logo_uri: Option<String>,
 
-    /// See [`PartialClientMetadata::redirect_uris`].
+    /// See [`OAuth2ClientConfig::redirect_uris`].
     pub redirect_uris: Vec<String>,
 
-    /// See [`PartialClientMetadata::grant_types`].
+    /// See [`OAuth2ClientConfig::grant_types`].
     pub grant_types: Vec<String>,
 
-    /// See [`PartialClientMetadata::application_type`].
+    /// See [`OAuth2ClientConfig::application_type`].
     pub application_type: Option<String>,
 
-    /// See [`PartialClientMetadata::response_types`].
+    /// See [`OAuth2ClientConfig::response_types`].
     pub response_types: Vec<String>,
 
-    /// See [`PartialClientMetadata::token_endpoint_auth_method`].
+    /// See [`OAuth2ClientConfig::token_endpoint_auth_method`].
     pub token_endpoint_auth_method: Option<String>,
 
-    /// See [`PartialClientMetadata::scope`].
+    /// See [`OAuth2ClientConfig::scope`].
     pub scope: Option<String>,
 
-    /// See [`PartialClientMetadata::contacts`].
+    /// See [`OAuth2ClientConfig::contacts`].
     #[serde(default)]
     pub contacts: Vec<String>,
 
-    /// See [`PartialClientMetadata::tos_uri`].
+    /// See [`OAuth2ClientConfig::tos_uri`].
     pub tos_uri: Option<String>,
 
-    /// See [`PartialClientMetadata::policy_uri`].
+    /// See [`OAuth2ClientConfig::policy_uri`].
     pub policy_uri: Option<String>,
 
-    /// See [`PartialClientMetadata::software_id`].
+    /// See [`OAuth2ClientConfig::software_id`].
     pub software_id: Option<String>,
 
-    /// See [`PartialClientMetadata::software_version`].
+    /// See [`OAuth2ClientConfig::software_version`].
     pub software_version: Option<String>,
 
     pub client_id: String,

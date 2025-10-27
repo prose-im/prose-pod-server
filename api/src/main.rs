@@ -30,6 +30,11 @@ use self::startup::startup;
 async fn main() -> anyhow::Result<()> {
     let todo = "Migrate to Prosody 13";
     let todo = "Listen to SIGHUP";
+    // SIGHUP:
+    //   (Prosody keeps running as if nothing happened, but throws
+    //   an error every time prosodyctl is invoked (status included).
+    //   Running shells don’t stop though, and c2s seems to still work.)
+    //   -> Report SERVICE_UNAVAILABLE, but keep Prosody running.
 
     init_tracing();
 
@@ -65,7 +70,7 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
         async move {
             let app: Router = Router::new()
                 .fallback_service(app_context.router())
-                .layer(axum::middleware::from_fn(router::util::log_request))
+                .layer(axum::middleware::from_fn(router::log_request))
                 .with_state(app_context);
 
             tracing::info!("Serving the Prose Pod Server API on {address}…");

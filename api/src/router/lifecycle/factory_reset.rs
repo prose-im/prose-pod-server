@@ -15,7 +15,8 @@ use crate::state::prelude::*;
 use crate::util::{NoContext as _, empty_dir};
 use crate::{AppConfig, startup};
 
-impl<B> AppStateTrait for AppState<f::UndergoingFactoryReset, B> {
+/// **Undergoing factory reset** (during a factory reset).
+impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset> {
     fn state_name() -> &'static str {
         "Undergoing factory reset"
     }
@@ -97,7 +98,7 @@ where
                 anyhow::Error::new(error).context("Factory reset done, configuration needed"),
             );
 
-            let app_state = app_state.with_transition(|state| {
+            app_state.transition_with(|state| {
                 state
                     .with_frontend(f::Misconfigured {
                         error: Arc::clone(&error),
