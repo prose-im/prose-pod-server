@@ -26,7 +26,7 @@ impl ProsodyAdminApi {
 // MARK: Users
 
 impl ProsodyAdminApi {
-    pub async fn list_users(&self, auth: &Password) -> Result<Vec<UserInfo>, self::Error> {
+    pub async fn list_users(&self, auth: &Password) -> Result<Box<[UserInfo]>, self::Error> {
         let response = self.get("/users").bearer_auth(auth).call()?;
 
         receive(response)
@@ -154,7 +154,7 @@ impl ProsodyAdminApi {
 // MARK: Invites
 
 impl ProsodyAdminApi {
-    pub async fn list_invites(&self, auth: &Password) -> Result<Vec<InviteInfo>, self::Error> {
+    pub async fn list_invites(&self, auth: &Password) -> Result<Box<[InviteInfo]>, self::Error> {
         let response = self.get("/invites").bearer_auth(auth).call()?;
 
         receive(response)
