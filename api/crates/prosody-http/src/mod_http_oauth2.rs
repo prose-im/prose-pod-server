@@ -5,51 +5,39 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 #[cfg(feature = "secrecy")]
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::{
-    Password, ProsodyHttpConfig,
-    util::{RequestBuilderExt, unix_timestamp},
-};
+use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt};
 
-pub type Client = ProsodyOAuth2Client;
+pub use self::ProsodyOAuth2Client as Client;
 
 /// Rust interface to [`mod_http_oauth2`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_oauth2).
 #[derive(Debug)]
 pub struct ProsodyOAuth2Client {
     http_config: Arc<ProsodyHttpConfig>,
-    client_config: OAuth2ClientConfig,
-    credentials: Option<OAuth2ClientCredentials>,
 }
 
 impl ProsodyOAuth2Client {
-    pub fn new(http_config: Arc<ProsodyHttpConfig>, client_config: OAuth2ClientConfig) -> Self {
-        Self {
-            http_config,
-            client_config,
-            credentials: None,
-        }
+    pub fn new(http_config: Arc<ProsodyHttpConfig>) -> Self {
+        Self { http_config }
     }
 }
 
 impl ProsodyOAuth2Client {
-    /// WARN: This API will change in a future release. I (@RemiBardon) am
-    ///   aware this is not the right way to register OAuth 2.0 clients.
     #[inline]
-    pub async fn register(&mut self) -> Result<OAuth2ClientMetadata, self::Error> {
-        let data = json!(&self.client_config);
+    pub async fn register(
+        &self,
+        client_config: &ClientConfig,
+    ) -> Result<ClientMetadata, self::Error> {
+        let data = json!(client_config);
         let response = self.post("/register").send_json(data)?;
 
-        let metadata: OAuth2ClientMetadata = receive(response)?;
-
-        self.credentials = Some(metadata.credentials.clone());
-
-        Ok(metadata)
+        receive(response)
     }
 
     #[inline]
@@ -78,31 +66,28 @@ impl ProsodyOAuth2Client {
 impl ProsodyOAuth2Client {
     /// Utility function (i.e. non-OAuth 2.0) that
     /// logs a user in using their credentials.
-    ///
-    /// WARN: This API is non-standard and will likely change in the future.
     #[inline]
     pub async fn util_log_in(
         &self,
         username: &str,
         password: &Password,
+        ClientCredentials {
+            client_id,
+            client_secret,
+            ..
+        }: &ClientCredentials,
     ) -> Result<TokenResponse, self::Error> {
-        let Some(ref credentials) = self.credentials else {
-            return Err(self::Error::Internal(anyhow!(
-                "OAuth 2.0 client not registered, call `.register()` first."
-            )));
-        };
-        if credentials.is_expired() {
-            return Err(self::Error::Internal(anyhow!(
-                "OAuth 2.0 client secret expired, refresh with `.register()`."
-            )));
-        }
+        debug_assert!(
+            !username.contains('@'),
+            "Invalid username (has domainpart): {username}"
+        );
 
         #[cfg(feature = "secrecy")]
         let password = password.expose_secret();
 
         let response = self
             .post("/token")
-            .basic_auth(&credentials.client_id, &credentials.client_secret)
+            .basic_auth(client_id, client_secret)
             .send_form([
                 ("grant_type", "password"),
                 ("username", username),
@@ -119,6 +104,8 @@ impl ProsodyOAuth2Client {
         receive(response)
     }
 }
+
+pub use self::OAuth2ClientConfig as ClientConfig;
 
 /// Client metadata required to register a new client.
 #[derive(Debug)]
@@ -276,6 +263,8 @@ pub struct TokenResponse {
     // pub grant_jid: Box<str>,
 }
 
+pub use self::OAuth2ClientMetadata as ClientMetadata;
+
 /// Example value:
 ///
 /// ```json
@@ -347,30 +336,36 @@ pub struct OAuth2ClientMetadata {
     /// See [`OAuth2ClientConfig::software_version`].
     pub software_version: Option<Box<str>>,
 
-    #[serde(flatten)]
-    pub credentials: OAuth2ClientCredentials,
-}
-
-// TODO: Choose a better name.
-#[derive(Debug, Deserialize, Clone)]
-pub struct OAuth2ClientCredentials {
     pub client_id: Box<str>,
+
     pub client_id_issued_at: u32,
+
     pub client_secret: Password,
+
     /// WARN: DO NOT use `#[serde(default)]` here: `0` has a special meaning.
     pub client_secret_expires_at: u32,
+
     pub iat: u32,
+
     pub nonce: Box<str>,
+
     pub exp: u32,
 }
 
-impl OAuth2ClientCredentials {
-    pub fn is_expired(&self) -> bool {
-        match self.client_secret_expires_at {
-            // NOTE: The special case `0` means the client secret never expires.
-            0 => false,
-            exp if (exp as u64) > unix_timestamp() => false,
-            _ => true,
+pub use self::OAuth2ClientCredentials as ClientCredentials;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OAuth2ClientCredentials {
+    pub client_id: Box<str>,
+    pub client_secret: Password,
+}
+
+impl ClientMetadata {
+    #[inline]
+    pub fn into_credentials(self) -> ClientCredentials {
+        ClientCredentials {
+            client_id: self.client_id,
+            client_secret: self.client_secret,
         }
     }
 }
@@ -413,7 +408,7 @@ struct ProsodyHttpErrorOAuth2Info {
     description: Option<Box<str>>,
 }
 
-pub use ProsodyHttpOAuth2Error as Error;
+pub use self::ProsodyHttpOAuth2Error as Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProsodyHttpOAuth2Error {
@@ -537,15 +532,5 @@ fn receive<Response: DeserializeOwned>(
                 Err(self::Error::Internal(anyhow::Error::new(error)))
             }
         }
-    }
-}
-
-// MARK: - Boilerplate
-
-impl std::ops::Deref for OAuth2ClientMetadata {
-    type Target = OAuth2ClientCredentials;
-
-    fn deref(&self) -> &Self::Target {
-        &self.credentials
     }
 }

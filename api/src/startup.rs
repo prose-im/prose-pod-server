@@ -11,9 +11,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context as _;
+use arc_swap::ArcSwap;
 use prosody_child_process::ProsodyChildProcess;
-use prosody_http::mod_http_oauth2::{OAuth2ClientConfig, ProsodyOAuth2Client};
-use prosody_http::{ProsodyHttpConfig, mod_http_oauth2};
+use prosody_http::ProsodyHttpConfig;
+use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2Client};
 use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
@@ -68,11 +69,19 @@ pub async fn bootstrap(
 
     let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
-    let oauth2 = Arc::new(register_oauth2_client().await?);
+    let prosody_http_config = Arc::new(ProsodyHttpConfig {
+        url: "http://prose-pod-server:5280".to_owned(),
+    });
+    let oauth2_client = Arc::new(oauth2::Client::new(prosody_http_config));
+
+    // TODO: Allow avoiding registration by passing
+    //   client credentials via configuration.
+    let oauth2_client_credentials = register_oauth2_client(&oauth2_client).await?;
 
     let secrets = SecretsService {
         store: SecretsStore::new(app_config),
-        oauth2: oauth2.clone(),
+        oauth2: oauth2_client.clone(),
+        oauth2_client_credentials: ArcSwap::from_pointee(oauth2_client_credentials),
     };
     // Run cache purge tasks in the background.
     tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
@@ -81,7 +90,7 @@ pub async fn bootstrap(
         app_config,
         &mut prosodyctl,
         &prosody_rest,
-        &oauth2,
+        &oauth2_client,
         &secrets,
     )
     .await?;
@@ -107,7 +116,7 @@ pub async fn bootstrap(
                 prosody: Arc::new(RwLock::new(prosody)),
                 prosodyctl: Arc::new(RwLock::new(prosodyctl)),
                 prosody_rest,
-                oauth2_client: oauth2,
+                oauth2_client,
                 secrets_service: secrets,
             }),
         })
@@ -227,10 +236,9 @@ async fn start_prosody(
     Ok(())
 }
 
-async fn register_oauth2_client() -> Result<ProsodyOAuth2Client, anyhow::Error> {
-    let prosody_http_config = Arc::new(ProsodyHttpConfig {
-        url: "http://prose-pod-server:5280".to_owned(),
-    });
+async fn register_oauth2_client(
+    oauth2: &ProsodyOAuth2Client,
+) -> Result<oauth2::ClientCredentials, anyhow::Error> {
     let oauth2_client_config = OAuth2ClientConfig {
         client_name: "Prose Pod Server API".to_owned(),
         client_uri: "https://prose-pod-server:8080".to_owned(),
@@ -243,11 +251,13 @@ async fn register_oauth2_client() -> Result<ProsodyOAuth2Client, anyhow::Error> 
         ..Default::default()
     };
 
-    let mut oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
-    let fixme = "Client credentials expire. We need to refresh them once in a while.";
-    oauth2.register().await?;
+    let client_metadata = oauth2.register(&oauth2_client_config).await?;
 
-    Ok(oauth2)
+    // Make sure the client credentials never expire. Otherwise we’d need
+    // a token refresh process which doesn’t exist yet.
+    debug_assert_eq!(client_metadata.client_secret_expires_at, 0);
+
+    Ok(client_metadata.into_credentials())
 }
 
 /// Creates the “prose-workspace” user for now, maybe more later.
@@ -315,9 +325,12 @@ async fn create_service_accounts(
 
         // Create an authentication token to speed up future API calls
         // and avoid having thousands of tokens per service account.
-        let todo = "Remove unwrap";
         let token = oauth2
-            .util_log_in(jid.node().unwrap().as_str(), &password)
+            .util_log_in(
+                username,
+                &password,
+                &secrets.oauth2_client_credentials.load(),
+            )
             .await?
             .access_token;
         #[cfg_attr(not(debug_assertions), allow(unused))]

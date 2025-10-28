@@ -36,12 +36,3 @@ impl<T> RequestBuilderExt for ureq::RequestBuilder<T> {
         self.header(AUTHORIZATION, format!("Bearer {token}"))
     }
 }
-
-pub fn unix_timestamp() -> u64 {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
-}

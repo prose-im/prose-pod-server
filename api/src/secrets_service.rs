@@ -6,7 +6,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context as _, anyhow};
-use prosody_http::mod_http_oauth2::ProsodyOAuth2Client;
+use arc_swap::ArcSwap;
+use prosody_http::{mod_http_oauth2::ProsodyOAuth2Client, oauth2};
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 use tokio_util::sync::CancellationToken;
 
@@ -19,10 +20,11 @@ use crate::{
 /// The things that manages service account secrets, and ensures that
 /// at any time one can use service account tokens without having to
 /// worry about account creation, password rotation or token expiry.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SecretsService {
     pub store: SecretsStore,
     pub oauth2: Arc<ProsodyOAuth2Client>,
+    pub oauth2_client_credentials: ArcSwap<oauth2::ClientCredentials>,
 }
 
 impl SecretsService {
@@ -106,11 +108,12 @@ impl SecretsService {
         let ref cache = self.store.tokens_cache;
 
         if !cache.read().await.contains_key(jid) {
+            let username = jid.node().context("JID must contain a localpart")?;
             let password = self.get_password(jid).await?;
 
             let token = self
                 .oauth2
-                .util_log_in(jid.as_str(), &password)
+                .util_log_in(username, &password, &self.oauth2_client_credentials.load())
                 .await?
                 .access_token;
 
@@ -148,10 +151,13 @@ impl SecretsService {
         async move {
             tokio::select! {
                 () = Cache::purge_task(cache) => {
-                    tracing::error!("Cache purge task ended.")
+                    tracing::error!("Cache purge task ended.");
+                    if cfg!(debug_assertions) {
+                        panic!("Cache purge task ended.")
+                    }
                 }
                 () = cancellation_token.cancelled_owned() => {
-                    tracing::debug!("Cache purge task cancelled.")
+                    tracing::debug!("Cache purge task cancelled.");
                 }
             }
         }
