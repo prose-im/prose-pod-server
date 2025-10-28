@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::{ProsodyHttpConfig, Secret, Timestamp, util::RequestBuilderExt as _};
+use crate::{
+    BareJid, JidNode, JidNodeMut, JidNodeView, ProsodyHttpConfig, SecretView, Timestamp,
+    util::RequestBuilderExt as _,
+};
 
 /// Rust interface to [`mod_http_admin_api`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_admin_api).
 #[derive(Debug)]
@@ -28,7 +31,7 @@ impl ProsodyAdminApi {
 // MARK: Users
 
 impl ProsodyAdminApi {
-    pub async fn list_users(&self, auth: &Secret) -> Result<Box<[UserInfo]>, self::Error> {
+    pub async fn list_users(&self, auth: &SecretView) -> Result<Box<[UserInfo]>, self::Error> {
         let response = self.get("/users").bearer_auth(auth).call()?;
 
         receive(response)
@@ -36,8 +39,8 @@ impl ProsodyAdminApi {
 
     pub async fn get_user_by_name(
         &self,
-        username: &str,
-        auth: &Secret,
+        username: &JidNodeView,
+        auth: &SecretView,
     ) -> Result<Option<UserInfo>, self::Error> {
         let response = self
             .get(&format!("/users/{username}"))
@@ -49,9 +52,9 @@ impl ProsodyAdminApi {
 
     pub async fn update_user(
         &self,
-        username: &str,
+        username: &JidNodeView,
         req: &UpdateUserInfoRequest,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<(), self::Error> {
         // TODO: It’s `PUT`, but it really behaves as a `PATCH`.
         //   We will fix this but until then we have to use `PUT`.
@@ -63,7 +66,11 @@ impl ProsodyAdminApi {
         receive(response)
     }
 
-    pub async fn delete_user(&self, username: &str, auth: &Secret) -> Result<(), self::Error> {
+    pub async fn delete_user(
+        &self,
+        username: &JidNodeView,
+        auth: &SecretView,
+    ) -> Result<(), self::Error> {
         let response = self
             .delete(&format!("/users/{username}"))
             .bearer_auth(auth)
@@ -77,9 +84,9 @@ impl ProsodyAdminApi {
 
 #[derive(Deserialize)]
 pub struct UserInfo {
-    pub jid: Box<str>,
+    pub jid: BareJid,
 
-    pub username: Box<str>,
+    pub username: JidNode,
 
     pub display_name: Box<str>,
 
@@ -114,7 +121,7 @@ impl ProsodyAdminApi {
         &self,
         group_id: &str,
         group_name: &str,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<(), self::Error> {
         let response = self
             .put("/groups")
@@ -127,8 +134,8 @@ impl ProsodyAdminApi {
     pub async fn add_group_member(
         &self,
         group_id: &str,
-        username: &str,
-        auth: &Secret,
+        username: &JidNodeView,
+        auth: &SecretView,
     ) -> Result<(), self::Error> {
         let response = self
             .put(&format!("/groups/{group_id}/members/{username}"))
@@ -141,8 +148,8 @@ impl ProsodyAdminApi {
     pub async fn remove_group_member(
         &self,
         group_id: &str,
-        username: &str,
-        auth: &Secret,
+        username: &JidNodeView,
+        auth: &SecretView,
     ) -> Result<(), self::Error> {
         let response = self
             .delete(&format!("/groups/{group_id}/members/{username}"))
@@ -156,7 +163,7 @@ impl ProsodyAdminApi {
 // MARK: Invites
 
 impl ProsodyAdminApi {
-    pub async fn list_invites(&self, auth: &Secret) -> Result<Box<[InviteInfo]>, self::Error> {
+    pub async fn list_invites(&self, auth: &SecretView) -> Result<Box<[InviteInfo]>, self::Error> {
         let response = self.get("/invites").bearer_auth(auth).call()?;
 
         receive(response)
@@ -165,7 +172,7 @@ impl ProsodyAdminApi {
     pub async fn create_invite_for_account(
         &self,
         req: &CreateAccountInvitationRequest,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<InviteInfo, self::Error> {
         let response = self
             .post("/invites/account")
@@ -178,7 +185,7 @@ impl ProsodyAdminApi {
     pub async fn create_invite_for_account_reset(
         &self,
         req: &CreateAccountResetInvitationRequest,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<InviteInfo, self::Error> {
         let response = self
             .post("/invites/reset")
@@ -191,7 +198,7 @@ impl ProsodyAdminApi {
     pub async fn get_invite_by_id(
         &self,
         invite_id: &InviteId,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<Option<InviteInfo>, self::Error> {
         #[cfg(feature = "secrecy")]
         let invite_id = invite_id.expose_secret();
@@ -207,7 +214,7 @@ impl ProsodyAdminApi {
     pub async fn delete_invite(
         &self,
         invite_id: &InviteId,
-        auth: &Secret,
+        auth: &SecretView,
     ) -> Result<(), self::Error> {
         #[cfg(feature = "secrecy")]
         let invite_id = invite_id.expose_secret();
@@ -223,11 +230,12 @@ impl ProsodyAdminApi {
 
 // NOTE: What `mod_http_admin_api` calls “Invite IDs” really are invite tokens.
 pub type InviteId = crate::Secret;
+pub type InviteIdView = crate::SecretView;
 
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 pub struct CreateAccountInvitationRequest<AdditionalData = serde_json::Value> {
-    pub username: Option<String>,
+    pub username: Option<JidNodeMut>,
 
     #[cfg(not(feature = "time"))]
     #[serde(rename = "ttl")]
@@ -249,7 +257,7 @@ pub struct CreateAccountInvitationRequest<AdditionalData = serde_json::Value> {
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
 pub struct CreateAccountResetInvitationRequest<AdditionalData = serde_json::Value> {
-    pub username: Option<String>,
+    pub username: Option<JidNodeMut>,
 
     #[cfg(not(feature = "time"))]
     #[serde(rename = "ttl")]
@@ -264,16 +272,16 @@ pub struct CreateAccountResetInvitationRequest<AdditionalData = serde_json::Valu
 
 #[derive(Deserialize)]
 pub struct InviteInfo<AdditionalData = serde_json::Value> {
-    pub id: Box<str>,
+    pub id: InviteId,
 
     pub r#type: Box<str>,
 
     pub reusable: bool,
 
     #[serde(default)]
-    pub inviter: Option<Box<str>>,
+    pub inviter: Option<BareJid>,
 
-    pub jid: Box<str>,
+    pub jid: BareJid,
 
     pub uri: Box<str>,
 

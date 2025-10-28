@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::Timestamp;
+use crate::{BareJid, JidNodeView, SecretView, Timestamp};
 use crate::{ProsodyHttpConfig, Secret, util::RequestBuilderExt as _};
 
 /// Rust interface to [`mod_http_oauth2`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_oauth2).
@@ -39,14 +39,14 @@ impl ProsodyOAuth2 {
     }
 
     #[inline]
-    pub async fn userinfo(&self, auth: &Secret) -> Result<UserInfoResponse, self::Error> {
+    pub async fn userinfo(&self, auth: &SecretView) -> Result<UserInfoResponse, self::Error> {
         let response = self.get("/userinfo").bearer_auth(auth).call()?;
 
         receive(response)
     }
 
     #[inline]
-    pub async fn revoke(&self, auth: &Secret) -> Result<(), self::Error> {
+    pub async fn revoke(&self, auth: &SecretView) -> Result<(), self::Error> {
         let token = auth;
 
         #[cfg(feature = "secrecy")]
@@ -67,8 +67,8 @@ impl ProsodyOAuth2 {
     #[inline]
     pub async fn util_log_in(
         &self,
-        username: &str,
-        password: &Secret,
+        username: &JidNodeView,
+        password: &SecretView,
         ClientCredentials {
             client_id,
             client_secret,
@@ -398,8 +398,18 @@ pub struct UserInfoResponse {
 }
 
 impl UserInfoResponse {
+    #[cfg(not(feature = "jid"))]
     pub fn jid(&self) -> &str {
-        self.sub.strip_prefix("xmpp:").unwrap()
+        use crate::util::PROSODY_VALID_JIDS;
+
+        self.sub.strip_prefix("xmpp:").expect(PROSODY_VALID_JIDS)
+    }
+
+    #[cfg(feature = "jid")]
+    pub fn jid(&self) -> BareJid {
+        use crate::util::PROSODY_VALID_JIDS;
+
+        BareJid::new(&self.sub).expect(PROSODY_VALID_JIDS)
     }
 }
 

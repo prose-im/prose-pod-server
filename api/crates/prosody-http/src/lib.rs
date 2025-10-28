@@ -9,6 +9,8 @@ pub mod mod_http_admin_api;
 pub mod mod_http_oauth2;
 mod util;
 
+#[cfg(feature = "jid")]
+pub use jid;
 #[cfg(feature = "secrecy")]
 pub use secrecy;
 #[cfg(feature = "time")]
@@ -25,10 +27,40 @@ pub struct ProsodyHttpConfig {
     pub url: String,
 }
 
+#[cfg(not(feature = "jid"))]
+pub type BareJid = Box<str>;
+#[cfg(feature = "jid")]
+pub type BareJid = jid::BareJid;
+
+#[cfg(not(feature = "jid"))]
+pub type BareJidMut = String;
+#[cfg(feature = "jid")]
+pub type BareJidMut = jid::BareJid;
+
+#[cfg(not(feature = "jid"))]
+pub type JidNode = Box<str>;
+#[cfg(feature = "jid")]
+pub type JidNode = jid::NodePart;
+
+#[cfg(not(feature = "jid"))]
+pub type JidNodeMut = String;
+#[cfg(feature = "jid")]
+pub type JidNodeMut = jid::NodePart;
+
+#[cfg(not(feature = "jid"))]
+pub type JidNodeView = str;
+#[cfg(feature = "jid")]
+pub type JidNodeView = jid::NodeRef;
+
 #[cfg(not(feature = "secrecy"))]
-pub type Secret = str;
+pub type Secret = Box<str>;
 #[cfg(feature = "secrecy")]
 pub type Secret = secrecy::SecretString;
+
+#[cfg(not(feature = "secrecy"))]
+pub type SecretView = str;
+#[cfg(feature = "secrecy")]
+pub type SecretView = secrecy::SecretString;
 
 #[cfg(not(feature = "time"))]
 pub type Timestamp = u32;
