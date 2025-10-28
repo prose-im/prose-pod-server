@@ -5,14 +5,14 @@
 
 use std::sync::Arc;
 
-use anyhow::Context as _;
 #[cfg(feature = "secrecy")]
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt};
+use crate::Timestamp;
+use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt as _};
 
 pub use self::ProsodyOAuth2Client as Client;
 
@@ -41,15 +41,15 @@ impl ProsodyOAuth2Client {
     }
 
     #[inline]
-    pub async fn userinfo(&self, token: &Password) -> Result<UserInfoResponse, self::Error> {
-        let response = self.get("/userinfo").bearer_auth(token).call()?;
+    pub async fn userinfo(&self, auth: &Password) -> Result<UserInfoResponse, self::Error> {
+        let response = self.get("/userinfo").bearer_auth(auth).call()?;
 
         receive(response)
     }
 
     #[inline]
-    pub async fn revoke(&self, token: Password) -> Result<(), self::Error> {
-        let ref auth = token;
+    pub async fn revoke(&self, auth: &Password) -> Result<(), self::Error> {
+        let token = auth;
 
         #[cfg(feature = "secrecy")]
         let token = token.expose_secret();
@@ -255,12 +255,21 @@ pub struct OAuth2ClientConfig {
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
     pub scope: Box<str>,
-    pub expires_in: u32,
+
+    #[cfg(not(feature = "time"))]
+    #[serde(rename = "expires_in")]
+    pub expires_in_secs: u32,
+
+    #[cfg(feature = "time")]
+    #[serde(with = "crate::util::serde::time::duration")]
+    pub expires_in: time::Duration,
+
     pub token_type: Box<str>,
+
     #[serde(default)]
     pub refresh_token: Option<Password>,
+
     pub access_token: Password,
-    // pub grant_jid: Box<str>,
 }
 
 pub use self::OAuth2ClientMetadata as ClientMetadata;
@@ -338,18 +347,22 @@ pub struct OAuth2ClientMetadata {
 
     pub client_id: Box<str>,
 
-    pub client_id_issued_at: u32,
+    #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
+    pub client_id_issued_at: Timestamp,
 
     pub client_secret: Password,
 
     /// WARN: DO NOT use `#[serde(default)]` here: `0` has a special meaning.
-    pub client_secret_expires_at: u32,
+    #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
+    pub client_secret_expires_at: Timestamp,
 
-    pub iat: u32,
+    #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
+    pub iat: Timestamp,
 
     pub nonce: Box<str>,
 
-    pub exp: u32,
+    #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
+    pub exp: Timestamp,
 }
 
 pub use self::OAuth2ClientCredentials as ClientCredentials;
@@ -357,6 +370,7 @@ pub use self::OAuth2ClientCredentials as ClientCredentials;
 #[derive(Debug, Deserialize, Clone)]
 pub struct OAuth2ClientCredentials {
     pub client_id: Box<str>,
+
     pub client_secret: Password,
 }
 
@@ -381,6 +395,7 @@ impl ClientMetadata {
 #[derive(Debug, Deserialize)]
 pub struct UserInfoResponse {
     pub iss: Box<str>,
+
     pub sub: Box<str>,
 }
 
@@ -442,6 +457,7 @@ impl From<ureq::Error> for ProsodyHttpOAuth2Error {
 
 impl ProsodyOAuth2Client {
     fn url(&self, path: &str) -> String {
+        assert!(path.starts_with('/'));
         format!("{base}/oauth2{path}", base = self.http_config.url)
     }
 
@@ -468,9 +484,17 @@ impl ProsodyOAuth2Client {
     }
 }
 
+/// NOTE: This is separated from [`Client::get`] and similar for two reasons:
+///
+///   1. Separate concerns.
+///   2. Allow routes to do something with the response before it’s parsed.
+///      It’s not something we do at the moment of writing this, but at least
+///      we won’t have to rewrite everything if we need to do this.
 fn receive<Response: DeserializeOwned>(
     mut response: ureq::http::Response<ureq::Body>,
 ) -> Result<Response, self::Error> {
+    use anyhow::Context as _;
+
     if response.status().is_success() {
         let response = response
             .body_mut()
@@ -489,7 +513,7 @@ fn receive<Response: DeserializeOwned>(
 
         match error.name.as_ref() {
             // Unauthorized.
-            "expired_token" | "invalid_grant" | "login_required" => {
+            "not-authorized" | "expired_token" | "invalid_grant" | "login_required" => {
                 tracing::debug!("{error}");
                 Err(self::Error::Unauthorized(anyhow::Error::new(error)))
             }
@@ -499,13 +523,15 @@ fn receive<Response: DeserializeOwned>(
             }
 
             // Forbidden.
-            "access_denied" => {
-                tracing::debug!("{error}");
+            "forbidden" | "access_denied" => {
+                tracing::warn!("{error}");
                 Err(self::Error::Forbidden(anyhow::Error::new(error)))
             }
 
             // Internal errors.
-            "invalid_client"
+            "internal-server-error"
+            | "feature-not-implemented"
+            | "invalid_client"
             | "invalid_client_metadata"
             | "invalid_redirect_uri"
             | "invalid_request"

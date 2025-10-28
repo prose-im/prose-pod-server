@@ -91,7 +91,7 @@ impl SecretsService {
         // Revoke previous token to avoid stranding.
         if let Some(previous_token) = previous_token {
             self.oauth2
-                .revoke(previous_token.0)
+                .revoke(&previous_token)
                 .await
                 .context("Could not revoke auth token after password update")?;
         }

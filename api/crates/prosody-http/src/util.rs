@@ -36,3 +36,41 @@ impl<T> RequestBuilderExt for ureq::RequestBuilder<T> {
         self.header(AUTHORIZATION, format!("Bearer {token}"))
     }
 }
+
+#[cfg(any(feature = "time"))]
+pub mod serde {
+    use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer};
+
+    #[cfg(feature = "time")]
+    pub mod time {
+        use super::*;
+
+        /// `time::Duration` as whole seconds.
+        pub mod duration {
+            use ::time::Duration;
+
+            use super::*;
+
+            #[inline]
+            pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                i64::deserialize(deserializer).map(Duration::seconds)
+            }
+
+            /// `Option<time::Duration>` as whole seconds.
+            pub mod option {
+                use super::*;
+
+                #[inline]
+                pub fn serialize<S: Serializer>(
+                    option: &Option<Duration>,
+                    serializer: S,
+                ) -> Result<S::Ok, S::Error> {
+                    option.map(Duration::whole_seconds).serialize(serializer)
+                }
+            }
+        }
+    }
+}

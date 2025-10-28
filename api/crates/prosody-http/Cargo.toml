@@ -8,7 +8,6 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 [dependencies]
 anyhow = { version = "1", default-features = false }
 base64 = { version = "0.22", default-features = false }
-secrecy = { version = "0.10", optional = true, default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1", default-features = false }
 serde_with = { version = "3", default-features = false, features = ["macros"] }
@@ -16,7 +15,13 @@ thiserror = { version = "2", default-features = false }
 tracing = { version = "0.1", default-features = false }
 ureq = { version = "3", default-features = false, features = ["json"] }
 
+# Optional dependencies.
+secrecy = { version = "0.10", optional = true, default-features = false, features = ["serde"] }
+time = { version = "0.3", optional = true, default-features = false, features = ["serde"] }
+
 [features]
 default = []
 secrecy = ["dep:secrecy"]
+time = ["dep:time"]
+mod_http_admin_api = []
 mod_http_oauth2 = []
