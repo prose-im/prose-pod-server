@@ -24,6 +24,7 @@ You can then set some options to configure your desired policy:
   block_registrations_users      *See source code*   A list of reserved usernames
   block_registrations_matching   `{ }`               A list of [Lua patterns](http://www.lua.org/manual/5.1/manual.html#5.4.1) matching reserved usernames (slower than block_registrations_users)
   block_registrations_require    `nil`               A pattern that registered user accounts MUST match to be allowed
+  block_registrations_confusable `true`              Block usernames that look similar to the reserved usernames (requires Prosody be built with ICU)
 
 Some examples:
 
@@ -37,6 +38,6 @@ Compatibility
 =============
 
   ------ -------
+  13.0    Should work (please test)
   0.12    Works
-  0.11    Work
   ------ -------

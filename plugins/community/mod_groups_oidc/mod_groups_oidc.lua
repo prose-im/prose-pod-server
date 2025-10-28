@@ -1,6 +1,7 @@
 local array = require "util.array";
 
-module:add_item("openid-claim", "groups");
+module:add_item("openid-claim", { claim = "groups"; title = "User Groups";
+	description = "List of group memberships"; });
 
 local group_memberships = module:open_store("groups", "map");
 local function user_groups(username)

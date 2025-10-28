@@ -136,7 +136,7 @@ async fn reset_config_file() -> Result<(), Error> {
         .open(config_file_path)
         .context(
             ERROR_CODE_INTERNAL,
-            format!(
+            &format!(
                 "Could not reset API config file at <{path}>: Cannot open",
                 path = config_file_path.display(),
             ),
@@ -147,7 +147,7 @@ async fn reset_config_file() -> Result<(), Error> {
 "#;
     file.write_all(bootstrap_config.as_bytes()).context(
         ERROR_CODE_INTERNAL,
-        format!(
+        &format!(
             "Could not reset API config file at <{path}>: Cannot write",
             path = config_file_path.display(),
         ),

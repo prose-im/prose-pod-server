@@ -28,7 +28,6 @@ use self::startup::startup;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let todo = "Migrate to Prosody 13";
     let todo = "Listen to SIGHUP";
     // SIGHUP:
     //   (Prosody keeps running as if nothing happened, but throws
@@ -41,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let app_config = AppConfig::from_default_figment()?;
 
     tokio::select! {
-        res = main_inner(app_config) => res.inspect_err(|err| tracing::error!("{err:?}")),
+        res = main_inner(app_config) => res,
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
@@ -80,22 +79,26 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     main_tasks.spawn(async move { startup(app_state).await.context("Startup error") });
 
     // Wait for both tasks to finish, or abort if one fails.
-    let mut main_res: anyhow::Result<()> = Err(anyhow::Error::msg("No task ran."));
+    let mut main_res: Option<anyhow::Result<()>> = None;
     while let Some(join_res) = main_tasks.join_next().await {
         match join_res {
-            Ok(ok @ Ok(())) => main_res = ok,
+            Ok(ok @ Ok(())) => main_res = Some(ok),
             Ok(Err(task_err)) => {
                 main_tasks.abort_all();
-                main_res = Err(task_err)
+                if main_res.is_none() {
+                    main_res = Some(Err(task_err));
+                }
             }
             Err(join_err) => {
                 main_tasks.abort_all();
-                main_res = Err(anyhow::Error::new(join_err).context("Join error"))
+                if main_res.is_none() {
+                    main_res = Some(Err(anyhow::Error::new(join_err).context("Join error")));
+                }
             }
         }
     }
 
-    main_res
+    main_res.unwrap_or(Err(anyhow::Error::msg("No task ran.")))
 }
 
 async fn listen_for_graceful_shutdown() {

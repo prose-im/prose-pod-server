@@ -190,6 +190,6 @@ impl<State: Send + Sync> FromRequest<State> for crate::models::Avatar {
 
 impl axum::response::IntoResponse for AvatarFromRequestError {
     fn into_response(self) -> axum::response::Response {
-        crate::errors::invalid_avatar(self).into_response()
+        crate::errors::invalid_avatar(&self.to_string()).into_response()
     }
 }

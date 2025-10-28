@@ -33,7 +33,7 @@ tokio = { version = "=1.47.1", default-features = false, features = ["macros", "
 tokio-util = { version = "=0.7.16", default-features = false, features = ["time"] }
 toml = { version = "=0.9.8", default-features = false, features = ["display", "serde"] }
 tracing = { version = "=0.1.41", default-features = false }
-tracing-subscriber = { version = "=0.3.20", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+tracing-subscriber = { version = "=0.3.20", default-features = false, features = ["fmt", "env-filter", "ansi", "tracing-log"] }
 
 [dev-dependencies]
 axum = { version = "*", features = ["macros"] }

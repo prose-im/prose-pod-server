@@ -19,7 +19,6 @@ Implementations
 * [PHP implementation](https://hg.prosody.im/prosody-modules/raw-file/tip/mod_http_upload_external/share.php)
 * [Python3+Flask implementation](https://github.com/horazont/xmpp-http-upload)
 * [Go implementation, Prosody Filer](https://github.com/ThomasLeister/prosody-filer)
-* [Go implementation, HMAC File Server](https://github.com/PlusOne/hmac-file-server)
 * [Perl implementation for nginx](https://github.com/weiss/ngx_http_upload)
 * [Rust implementation](https://gitlab.com/nyovaya/xmpp-http-upload)
 
@@ -88,8 +87,9 @@ Compatibility
 =============
 
   Prosody-Version   Status
-  ----------------  --------------------
-  trunk             Works as of 24-12-12
+  ----------------- ----------------------
+  trunk             Works as of 25-06-13
+  13.0              Works
   0.12              Works
 
 Implementation

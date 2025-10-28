@@ -354,7 +354,9 @@ async fn service_account_avatar(
         .context("Could not get service account avatar")
         .no_context()?
     {
-        Some(avatar_data) => Ok(Some(Avatar::try_from(avatar_data).map_err(invalid_avatar)?)),
+        Some(avatar_data) => Ok(Some(
+            Avatar::try_from(avatar_data).map_err(|e| invalid_avatar(&e.to_string()))?,
+        )),
         None => Ok(None),
     }
 }

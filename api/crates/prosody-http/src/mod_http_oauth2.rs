@@ -5,14 +5,17 @@
 
 use std::sync::Arc;
 
-use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
+use anyhow::{Context as _, anyhow};
+#[cfg(feature = "secrecy")]
+use secrecy::ExposeSecret as _;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
-use ureq::http::StatusCode;
+use ureq::http::header::ACCEPT;
 
-use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt};
-
-const BAD_RESPONSE_CONTEXT: &'static str = "Could not decode Prosody OAuth 2.0 API response";
+use crate::{
+    Password, ProsodyHttpConfig,
+    util::{RequestBuilderExt, unix_timestamp},
+};
 
 pub type Client = ProsodyOAuth2Client;
 
@@ -21,6 +24,7 @@ pub type Client = ProsodyOAuth2Client;
 pub struct ProsodyOAuth2Client {
     http_config: Arc<ProsodyHttpConfig>,
     client_config: OAuth2ClientConfig,
+    credentials: Option<OAuth2ClientCredentials>,
 }
 
 impl ProsodyOAuth2Client {
@@ -28,80 +32,80 @@ impl ProsodyOAuth2Client {
         Self {
             http_config,
             client_config,
+            credentials: None,
         }
     }
 }
 
 impl ProsodyOAuth2Client {
-    fn url(&self, path: &str) -> String {
-        format!("{base}/oauth2/{path}", base = self.http_config.url)
-    }
-
-    pub async fn register(&self) -> crate::Result<OAuth2ClientMetadata> {
+    /// WARN: This API will change in a future release. I (@RemiBardon) am
+    ///   aware this is not the right way to register OAuth 2.0 clients.
+    #[inline]
+    pub async fn register(&mut self) -> Result<OAuth2ClientMetadata, self::Error> {
         let data = json!(&self.client_config);
-        let mut response = ureq::post(self.url("register")).send_json(data)?;
+        let response = self.post("/register").send_json(data)?;
 
-        let body: OAuth2ClientMetadata = response
-            .body_mut()
-            .read_json()
-            .context(BAD_RESPONSE_CONTEXT)?;
+        let metadata: OAuth2ClientMetadata = receive(response)?;
 
-        Ok(body)
+        self.credentials = Some(metadata.credentials.clone());
+
+        Ok(metadata)
     }
 
-    pub async fn userinfo(&self, token: &Password) -> crate::Result<UserInfoResponse> {
-        // NOTE: `403 Forbidden` doesn’t map to `500 Internal Server Error`
-        //   thanks to `From<ureq::Error> for ProsodyHttpError`.
-        let mut response = ureq::get(self.url("userinfo")).bearer_auth(token).call()?;
+    #[inline]
+    pub async fn userinfo(&self, token: &Password) -> Result<UserInfoResponse, self::Error> {
+        let response = self.get("/userinfo").bearer_auth(token).call()?;
 
-        let body: UserInfoResponse = response
-            .body_mut()
-            .read_json()
-            .context(BAD_RESPONSE_CONTEXT)?;
-
-        Ok(body)
+        receive(response)
     }
 
-    pub async fn revoke(&self, token: Password) -> crate::Result<()> {
-        use secrecy::ExposeSecret as _;
+    #[inline]
+    pub async fn revoke(&self, token: Password) -> Result<(), self::Error> {
+        let ref auth = token;
+
+        #[cfg(feature = "secrecy")]
+        let token = token.expose_secret();
 
         let data = json!({
-            "token": token.expose_secret(),
+            "token": token,
         });
-        // NOTE: `403 Forbidden` doesn’t map to `500 Internal Server Error`
-        //   thanks to `From<ureq::Error> for ProsodyHttpError`.
-        ureq::post(self.url("revoke"))
-            .bearer_auth(&token)
-            .send_json(data)?;
+        let response = self.post("/revoke").bearer_auth(auth).send_json(data)?;
 
-        Ok(())
+        receive(response)
     }
 }
 
 impl ProsodyOAuth2Client {
     /// Utility function (i.e. non-OAuth 2.0) that
     /// logs a user in using their credentials.
+    ///
+    /// WARN: This API is non-standard and will likely change in the future.
+    #[inline]
     pub async fn util_log_in(
         &self,
-        jid: &str,
+        username: &str,
         password: &Password,
-    ) -> crate::Result<TokenResponse> {
-        let config = ureq::Agent::config_builder()
-            // Do not let `ureq` handle client errors
-            // so we can do debugging here.
-            .http_status_as_error(false)
-            .build();
+    ) -> Result<TokenResponse, self::Error> {
+        let Some(ref credentials) = self.credentials else {
+            return Err(self::Error::Internal(anyhow!(
+                "OAuth 2.0 client not registered, call `.register()` first."
+            )));
+        };
+        if credentials.is_expired() {
+            return Err(self::Error::Internal(anyhow!(
+                "OAuth 2.0 client secret expired, refresh with `.register()`."
+            )));
+        }
 
-        let mut response = ureq::Agent::new_with_config(config)
-            .post(self.url("token"))
-            .basic_auth(jid, password)
-            .header("Content-Type", "application/x-www-form-urlencoded")
+        #[cfg(feature = "secrecy")]
+        let password = password.expose_secret();
+
+        let response = self
+            .post("/token")
+            .basic_auth(&credentials.client_id, &credentials.client_secret)
             .send_form([
                 ("grant_type", "password"),
-                ("username", jid),
-                #[cfg(feature = "secrecy")]
-                ("password", secrecy::ExposeSecret::expose_secret(password)),
-                #[cfg(not(feature = "secrecy"))]
+                ("username", username),
                 ("password", password),
                 // DOC: Space-separated list of scopes the client promises to restrict itself to.
                 //   Supported scopes: [
@@ -112,31 +116,7 @@ impl ProsodyOAuth2Client {
                 ("scope", "xmpp openid"),
             ])?;
 
-        let status = response.status();
-        if status.is_success() {
-            let body: TokenResponse = response
-                .body_mut()
-                .read_json()
-                .context(BAD_RESPONSE_CONTEXT)?;
-
-            Ok(body)
-        } else if status == StatusCode::BAD_REQUEST {
-            // Read the reponse body, as `mod_http_oauth2` isn’t very
-            // expressive with HTTP status codes.
-            let body = response.body_mut().read_to_string()?;
-            tracing::debug!("Prosody OAuth 2.0 API returned status {status}: {body}");
-
-            // NOTE: `mod_http_oauth2` error codes aren’t granular enough
-            //   so we have to check individual error descriptions.
-            //   It’s not ideal but we don’t have much choice.
-            if body.contains("incorrect credentials") || body.contains("invalid JID") {
-                Err(crate::Error::unauthorized("Invalid credentials."))
-            } else {
-                Err(crate::Error::from(response))
-            }
-        } else {
-            Err(crate::Error::from(response))
-        }
+        receive(response)
     }
 }
 
@@ -278,7 +258,7 @@ pub struct OAuth2ClientConfig {
 ///
 /// ```json
 /// {
-///   "scope": "",
+///   "scope": "openid xmpp",
 ///   "expires_in": 3600,
 ///   "token_type": "bearer",
 ///   "refresh_token": "secret-token:MjswYm5NamVYb3RfcjA7oz+tTt2tLVp1KnY3yBaGWP+MO3JvYmluX3JvYmVydHM5N0B0b3VnaC1vdmVyc2lnaHQub3Jn",
@@ -287,12 +267,13 @@ pub struct OAuth2ClientConfig {
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
-    pub scope: String,
+    pub scope: Box<str>,
     pub expires_in: u32,
-    pub token_type: String,
-    pub refresh_token: Password,
+    pub token_type: Box<str>,
+    #[serde(default)]
+    pub refresh_token: Option<Password>,
     pub access_token: Password,
-    // pub grant_jid: String,
+    // pub grant_jid: Box<str>,
 }
 
 /// Example value:
@@ -324,55 +305,74 @@ pub struct TokenResponse {
 #[derive(Debug, Deserialize)]
 pub struct OAuth2ClientMetadata {
     /// See [`OAuth2ClientConfig::client_name`].
-    pub client_name: String,
+    pub client_name: Box<str>,
 
     /// See [`OAuth2ClientConfig::client_uri`].
-    pub client_uri: String,
+    pub client_uri: Box<str>,
 
     /// See [`OAuth2ClientConfig::logo_uri`].
-    pub logo_uri: Option<String>,
+    pub logo_uri: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::redirect_uris`].
-    pub redirect_uris: Vec<String>,
+    pub redirect_uris: Box<[Box<str>]>,
 
     /// See [`OAuth2ClientConfig::grant_types`].
-    pub grant_types: Vec<String>,
+    pub grant_types: Box<[Box<str>]>,
 
     /// See [`OAuth2ClientConfig::application_type`].
-    pub application_type: Option<String>,
+    pub application_type: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::response_types`].
-    pub response_types: Vec<String>,
+    pub response_types: Box<[Box<str>]>,
 
     /// See [`OAuth2ClientConfig::token_endpoint_auth_method`].
-    pub token_endpoint_auth_method: Option<String>,
+    pub token_endpoint_auth_method: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::scope`].
-    pub scope: Option<String>,
+    pub scope: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::contacts`].
     #[serde(default)]
-    pub contacts: Vec<String>,
+    pub contacts: Box<[Box<str>]>,
 
     /// See [`OAuth2ClientConfig::tos_uri`].
-    pub tos_uri: Option<String>,
+    pub tos_uri: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::policy_uri`].
-    pub policy_uri: Option<String>,
+    pub policy_uri: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::software_id`].
-    pub software_id: Option<String>,
+    pub software_id: Option<Box<str>>,
 
     /// See [`OAuth2ClientConfig::software_version`].
-    pub software_version: Option<String>,
+    pub software_version: Option<Box<str>>,
 
-    pub client_id: String,
+    #[serde(flatten)]
+    pub credentials: OAuth2ClientCredentials,
+}
+
+// TODO: Choose a better name.
+#[derive(Debug, Deserialize, Clone)]
+pub struct OAuth2ClientCredentials {
+    pub client_id: Box<str>,
     pub client_id_issued_at: u32,
     pub client_secret: Password,
+    /// WARN: DO NOT use `#[serde(default)]` here: `0` has a special meaning.
     pub client_secret_expires_at: u32,
     pub iat: u32,
-    pub nonce: String,
+    pub nonce: Box<str>,
     pub exp: u32,
+}
+
+impl OAuth2ClientCredentials {
+    pub fn is_expired(&self) -> bool {
+        match self.client_secret_expires_at {
+            // NOTE: The special case `0` means the client secret never expires.
+            0 => false,
+            exp if (exp as u64) > unix_timestamp() => false,
+            _ => true,
+        }
+    }
 }
 
 /// Example value:
@@ -385,12 +385,167 @@ pub struct OAuth2ClientMetadata {
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct UserInfoResponse {
-    pub iss: String,
-    pub sub: String,
+    pub iss: Box<str>,
+    pub sub: Box<str>,
 }
 
 impl UserInfoResponse {
     pub fn jid(&self) -> &str {
         self.sub.strip_prefix("xmpp:").unwrap()
+    }
+}
+
+// MARK: - Errors
+
+use ProsodyHttpErrorOAuth2Info as ApiError;
+
+/// This is what `mod_http_oauth2` sends as `extra` in errors.
+/// For user-facing (and API-stable) errors, see [`ProsodyHttpOAuth2Error`].
+#[derive(Debug, Deserialize, thiserror::Error)]
+#[error("{name}: {desc}", desc = description.as_deref().unwrap_or("<no_description>"))]
+struct ProsodyHttpErrorOAuth2Info {
+    #[serde(rename = "error")]
+    #[doc(alias = "error")]
+    name: Box<str>,
+
+    #[serde(rename = "error_description", default)]
+    #[doc(alias = "error_description")]
+    description: Option<Box<str>>,
+}
+
+pub use ProsodyHttpOAuth2Error as Error;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProsodyHttpOAuth2Error {
+    /// Your credentials are incorrect.
+    #[error("Unauthorized: {0:?}")]
+    Unauthorized(anyhow::Error),
+
+    /// You’re not allowed to do what you asked for.
+    #[error("Forbidden: {0:?}")]
+    Forbidden(anyhow::Error),
+
+    /// One of us made a mistake somewhere.
+    #[error("{0:?}")]
+    Internal(anyhow::Error),
+
+    /// An unknown error happened.
+    ///
+    /// The request has failed at the networking layer, there was a breaking
+    /// change in Prosody or we didn’t write enough tests.
+    #[error("{0:?}")]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<ureq::Error> for ProsodyHttpOAuth2Error {
+    fn from(err: ureq::Error) -> Self {
+        Self::Other(anyhow::Error::new(err).context("Network error"))
+    }
+}
+
+// MARK: - Helpers
+
+impl ProsodyOAuth2Client {
+    fn url(&self, path: &str) -> String {
+        format!("{base}/oauth2{path}", base = self.http_config.url)
+    }
+
+    fn http_client(&self) -> ureq::Agent {
+        let config = ureq::Agent::config_builder()
+            // Do not let `ureq` handle client errors
+            // so we can do debugging here.
+            .http_status_as_error(false)
+            .build();
+
+        ureq::Agent::new_with_config(config)
+    }
+
+    fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.http_client()
+            .get(self.url(path))
+            .header(ACCEPT, "application/json")
+    }
+
+    fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.http_client()
+            .post(self.url(path))
+            .header(ACCEPT, "application/json")
+    }
+}
+
+fn receive<Response: DeserializeOwned>(
+    mut response: ureq::http::Response<ureq::Body>,
+) -> Result<Response, self::Error> {
+    if response.status().is_success() {
+        let response = response
+            .body_mut()
+            .read_json::<Response>()
+            .context("Could not decode Prosody OAuth 2.0 API response")?;
+
+        Ok(response)
+    } else {
+        // Read the reponse body, as `mod_http_oauth2` isn’t very
+        // expressive with HTTP status codes.
+        let error = response
+            .body_mut()
+            .read_json::<crate::Error<self::ApiError>>()
+            .context("Could not decode Prosody OAuth 2.0 API error")?
+            .into_inner();
+
+        match error.name.as_ref() {
+            // Unauthorized.
+            "expired_token" | "invalid_grant" | "login_required" => {
+                tracing::debug!("{error}");
+                Err(self::Error::Unauthorized(anyhow::Error::new(error)))
+            }
+            "invalid_request" if error.description.as_deref() == Some("invalid JID") => {
+                tracing::debug!("{error}");
+                Err(self::Error::Unauthorized(anyhow::Error::new(error)))
+            }
+
+            // Forbidden.
+            "access_denied" => {
+                tracing::debug!("{error}");
+                Err(self::Error::Forbidden(anyhow::Error::new(error)))
+            }
+
+            // Internal errors.
+            "invalid_client"
+            | "invalid_client_metadata"
+            | "invalid_redirect_uri"
+            | "invalid_request"
+            | "invalid_scope"
+            | "temporarily_unavailable"
+            | "unsupported_response_type" => {
+                tracing::error!("{error}");
+                Err(self::Error::Internal(anyhow::Error::new(error)))
+            }
+            "unauthorized_client" => {
+                tracing::warn!(
+                    "OAuth 2.0 client unauthorized ({error}). \
+                    Make sure to register one before making calls."
+                );
+                Err(self::Error::Internal(anyhow::Error::new(error)))
+            }
+
+            // Catch-all.
+            _ => {
+                tracing::error!("{error}");
+                if cfg!(debug_assertions) {
+                    panic!("Unknown error")
+                }
+                Err(self::Error::Internal(anyhow::Error::new(error)))
+            }
+        }
+    }
+}
+
+// MARK: - Boilerplate
+
+impl std::ops::Deref for OAuth2ClientMetadata {
+    type Target = OAuth2ClientCredentials;
+
+    fn deref(&self) -> &Self::Target {
+        &self.credentials
     }
 }

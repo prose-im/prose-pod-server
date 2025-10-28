@@ -60,6 +60,8 @@ local function add_landing_url(invite)
 	-- so the user will only receive a URI. The client should be able to handle this
 	-- by automatically falling back to a client-specific landing page, per XEP-0401.
 	if not invite.allow_registration then return; end
+	-- password reset invites are not currently supported
+	if invite.additional_data and invite.additional_data.allow_reset then return end
 	invite.landing_page = render_url(invite_url_template, { host = module.host, invite = invite });
 end
 

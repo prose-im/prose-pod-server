@@ -235,10 +235,16 @@ async fn register_oauth2_client() -> Result<ProsodyOAuth2Client, anyhow::Error> 
         client_name: "Prose Pod Server API".to_owned(),
         client_uri: "https://prose-pod-server:8080".to_owned(),
         redirect_uris: vec!["https://prose-pod-server:8080/redirect".to_owned()],
+        grant_types: vec![
+            "authorization_code".to_owned(),
+            "refresh_token".to_owned(),
+            "password".to_owned(),
+        ],
         ..Default::default()
     };
 
-    let oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
+    let mut oauth2 = mod_http_oauth2::Client::new(prosody_http_config, oauth2_client_config);
+    let fixme = "Client credentials expire. We need to refresh them once in a while.";
     oauth2.register().await?;
 
     Ok(oauth2)
@@ -309,8 +315,9 @@ async fn create_service_accounts(
 
         // Create an authentication token to speed up future API calls
         // and avoid having thousands of tokens per service account.
+        let todo = "Remove unwrap";
         let token = oauth2
-            .util_log_in(jid.as_str(), &password)
+            .util_log_in(jid.node().unwrap().as_str(), &password)
             .await?
             .access_token;
         #[cfg_attr(not(debug_assertions), allow(unused))]

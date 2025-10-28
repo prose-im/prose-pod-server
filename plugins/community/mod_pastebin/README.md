@@ -23,6 +23,9 @@ to a URL pointing to a built-in pastebin server. The URLs are randomly
 generated, so they can be considered for most purposes to be private,
 and cannot be discovered by people who are not in the room.
 
+**Note:** mod_pastebin cannot read, and therefore does not act on, end-to-end
+encrypted messages (e.g. messages using OMEMO).
+
 # Usage
 
 To set up mod_pastebin for MUC rooms it **must** be explicitly loaded,
@@ -37,12 +40,14 @@ For example:
 Pastes will be available by default at
 `http://<your-prosody>:5280/pastebin/` by default.
 
-In Prosody 0.9 and later this can be changed with [HTTP
-settings](https://prosody.im/doc/http).
+Ports and path can be changed with [HTTP
+settings](https://prosody.im/doc/http), for example like:
 
-In 0.8 and older this can be changed with `pastebin_ports` (see below),
-or you can forward another external URL from your web server to Prosody,
-use `pastebin_url` to set that URL.
+``` {.lua}
+  http_paths = {
+    pastebin = "/$host-paste";
+  }
+```
 
 # Discovery
 
@@ -81,28 +86,19 @@ The line and character tresholds are advertised in
   pastebin_threshold        Maximum length (in characters) of a message that is allowed to skip the pastebin. (default 500 characters)
   pastebin_line_threshold   The maximum number of lines a message may have before it is sent to the pastebin. (default 4 lines)
   pastebin_trigger          A string of characters (e.g. "!paste ") which if detected at the start of a message, always sends the message to the pastebin, regardless of length. (default: not set)
+  pastebin_ignore           A string of characters (e.g. "!nopaste") which if detected **anywhere** within a message, won't send the message to the pastebin
   pastebin_expire_after     Number of hours after which to expire (remove) a paste, defaults to 24. Set to 0 to store pastes permanently on disk.
-  pastebin_ports            List of ports to run the HTTP server on, same format as mod_httpserver's http_ports[^1]
-  pastebin_url              Base URL to display for pastebin links, must end with / and redirect to Prosody's built-in HTTP server[^2]
+  pastebin_html_preview     Whether to include a formatted preview in pastes (default: true)
 
 # Compatibility
 
-  ------ -------
-  trunk  Works
-  0.12   Works
-  0.11   Works
-  0.10   Works
-  0.9    Works
-  0.8    Works
-  ------ -------
+  ------- ----------------------
+  trunk   Works as of 25-06-13
+  13.0    Works
+  0.12    Works
+  ------- ----------------------
 
 # Todo
 
 -   Maximum paste length
 -   Web interface to submit pastes?
-
-[^1]: As of Prosody 0.9, `pastebin_ports` is replaced by `http_ports`,
-    see [Prosody HTTP server documentation](https://prosody.im/doc/http)
-
-[^2]: See also
-    [http_external_url](https://prosody.im/doc/http#external_url)

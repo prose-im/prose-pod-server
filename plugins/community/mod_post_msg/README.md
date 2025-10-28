@@ -32,9 +32,9 @@ The base URL defaults to `/msg`. This can be configured via Prosodys
 Authentication
 --------------
 
-Authentication is done by HTTP Basic.
+Authentication is done by [HTTP Basic](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Authentication).
 
-    Authentication: Basic BASE64( "username@virtualhost:password" )
+    Authorization: Basic BASE64( "username@virtualhost:password" )
 
 Payload formats
 ---------------

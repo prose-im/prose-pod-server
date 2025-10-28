@@ -14,7 +14,7 @@ if not have_crypto then
 	-- FIXME: luaossl does not expose the EVP_CTRL_GCM_GET_TAG API, so we append 16 NUL bytes
 	-- Siskin does not validate the tag anyway.
 	function crypto.aes_128_gcm_encrypt(key, iv, message)
-		return ciphers.new("AES-128-GCM"):encrypt(key, iv):final(message)..string.rep("\0", 16);
+		return ossl_ciphers.new("AES-128-GCM"):encrypt(key, iv):final(message)..string.rep("\0", 16);
 	end
 end
 

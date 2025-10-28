@@ -33,6 +33,7 @@ plugins/community/mod_checkcerts
 plugins/community/mod_csi
 plugins/community/mod_http_upload
 plugins/community/mod_limits
+plugins/community/mod_limits_exception
 plugins/community/mod_listusers
 plugins/community/mod_mam
 plugins/community/mod_mam_muc
@@ -51,6 +52,7 @@ plugins/community/mod_sslv3_warn
 plugins/community/mod_statistics
 plugins/community/mod_telnet_tlsinfo
 plugins/community/mod_turncredentials
+plugins/community/mod_twitter
 
 # Editor
 .nova

@@ -86,6 +86,15 @@ If you know what features your templates use use you can adjust the
 oauth2_security_policy = "default-src 'self'" -- this is the default
 ```
 
+For the Resource Owner Password Grant the `username` is expected to be the only
+localpart by default.  If the OAuth client includes the domainpart in the
+`username` it submits (e.g. user@example.org instead of just user), set this to
+`true`. Note that this requires all clients to follow this format.
+
+```lua
+oauth2_expect_username_jid = false
+```
+
 ### Token parameters
 
 The following options configure the lifetime of tokens issued by the module.
@@ -266,9 +275,9 @@ work on additional interfaces in the future.
 
 OAuth supports "scopes" as a way to grant clients limited access.
 
-There are currently no standard scopes defined for XMPP. This is
-something that we intend to change, e.g. by definitions provided in a
-future XEP. This means that clients you authorize currently have to
+[XEP-0493: OAuth Client Login] describes using OAuth 2.0 / OpenID Connect with XMPP.
+This module does not yet support [the scopes defined](https://xmpp.org/extensions/xep-0493.html#oauth-scopes).
+This means that clients you authorize currently have to
 choose between unrestricted access to your account (including the
 ability to change your password and lock you out!) and zero access. So,
 for now, while using OAuth clients can prevent leaking your password to
@@ -283,7 +292,9 @@ Further, known Prosody roles can be used as scopes.
 OpenID scopes such as `openid` and `profile` can be used for "Login
 with XMPP" without granting access to more than limited profile details.
 
+The `offline_access` scope must be requested to receive refresh tokens.
+
 ## Compatibility
 
-Requires Prosody trunk (April 2023), **not** compatible with Prosody 0.12 or
-earlier.
+Requires Prosody trunk (April 2023 or later) or Prosody 13.0,
+**not** compatible with Prosody 0.12 or earlier.

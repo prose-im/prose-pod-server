@@ -18,6 +18,7 @@ function usage() {
 # Settings
 HOST=""
 DOMAIN=""
+PRINT="b"
 
 SESSION="session-read-only"
 
@@ -26,7 +27,7 @@ if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/restrc" ]; then
 	source "${XDG_CONFIG_HOME:-$HOME/.config}/restrc"
 
 	if [ -z "${SCOPE:-}" ]; then
-		SCOPE="openid xmpp"
+		SCOPE="openid offline_access xmpp"
 	fi
 fi
 
@@ -35,8 +36,21 @@ if [[ $# == 0 ]]; then
 	exit 1
 fi
 
-while getopts 'r:h:' flag; do
+while getopts 'vr:h:' flag; do
 	case "$flag" in
+		v)
+			case "$PRINT" in
+				b)
+					PRINT="Bb"
+					;;
+				Bb)
+					PRINT="HBhb"
+					;;
+				HBhb)
+					PRINT="HBhbm"
+					;;
+			esac
+			;;
 		r)
 			case "$OPTARG" in
 				o)
@@ -88,4 +102,4 @@ if [[ "$1" == /* ]]; then
 	shift 1
 fi
 
-https --check-status -p b --"$SESSION" rest -A oauth2 -a "$HOST" --oauth2-scope "$SCOPE" "$HOST/rest$GET_PATH" "$@"
+https --check-status -p "$PRINT" --"$SESSION" rest -A oauth2 -a "$HOST" --oauth2-scope "$SCOPE" "$HOST/rest$GET_PATH" "$@"

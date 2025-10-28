@@ -9,7 +9,7 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 anyhow = { version = "1", default-features = false }
 base64 = { version = "0.22", default-features = false }
 secrecy = { version = "0.10", optional = true, default-features = false, features = ["serde"] }
-serde = { version = "1", default-features = false, features = ["derive"] }
+serde = { version = "1", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1", default-features = false }
 serde_with = { version = "3", default-features = false, features = ["macros"] }
 thiserror = { version = "2", default-features = false }

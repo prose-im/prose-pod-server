@@ -20,6 +20,7 @@ local hibernate_past_first_push = module:get_option_boolean("hibernate_past_firs
 
 local host_sessions = prosody.hosts[module.host].sessions
 local push2_registrations = module:open_store("push2_registrations", "keyval")
+local push2_registrations_cache = require "prosody.util.cache".new(10);
 
 if _VERSION:match("5%.1") or _VERSION:match("5%.2") then
 	module:log("warn", "This module may behave incorrectly on Lua before 5.3. It is recommended to upgrade to a newer Lua version.")
@@ -114,6 +115,7 @@ local function push_enable(event)
 	if not push2_registrations:set(origin.username, registrations) then
 		origin.send(st.error_reply(stanza, "wait", "internal-server-error"));
 	else
+		push2_registrations_cache:set(origin.username, registrations);
 		origin.push_registration_id = registration_id
 		origin.push_registration = push_registration
 		origin.first_hibernated_push = nil
@@ -136,6 +138,7 @@ local function push_disable(event)
 	if not push2_registrations:set(origin.username, registrations) then
 		origin.send(st.error_reply(stanza, "wait", "internal-server-error"));
 	else
+		push2_registrations_cache:set(origin.username, nil);
 		origin.push_registration_id = nil
 		origin.push_registration = nil
 		origin.first_hibernated_push = nil
@@ -151,6 +154,10 @@ local function is_voip(stanza)
 	if stanza.name == "message" then
 		if stanza:get_child("propose", "urn:xmpp:jingle-message:0") then
 			return true, "jingle call"
+		end
+
+		if stanza:get_child("retract", "urn:xmpp:jingle-message:0") then
+			return true, "jingle call retract"
 		end
 	end
 end
@@ -355,6 +362,7 @@ local function handle_notify_request(stanza, node, user_push_services, session, 
 		end
 
 		if send_push then
+			local any_match = false;
 			local push_notification_payload = st.stanza("notification", { xmlns = xmlns_push })
 			push_notification_payload:text_tag("client", push_info.client)
 			push_notification_payload:text_tag("priority", is_voip(stanza) and "high" or (is_important(stanza, session) and "normal" or "low"))
@@ -380,7 +388,7 @@ local function handle_notify_request(stanza, node, user_push_services, session, 
 				to_host = to_host or module.host
 
 				-- If another session has recent activity within configured grace period, don't send push
-				if does_match and match.grace and to_host == module.host and host_sessions[to_user] then
+				if does_match and match.grace and not is_voip(stanza) and to_host == module.host and host_sessions[to_user] then
 					local now = os_time()
 					for _, session in pairs(host_sessions[to_user].sessions) do
 						if session.last_activity and session.push_registration_id ~= push_registration_id and (now - session.last_activity) < match.grace then
@@ -411,6 +419,7 @@ local function handle_notify_request(stanza, node, user_push_services, session, 
 
 				if does_match and not sends_added[match.send] then
 					sends_added[match.send] = true
+					any_match = true
 					if match.send == "urn:xmpp:push2:send:notify-only" then
 						-- Nothing more to add
 					elseif match.send == "urn:xmpp:push2:send:sce+rfc8291+rfc8292:0" then
@@ -422,12 +431,14 @@ local function handle_notify_request(stanza, node, user_push_services, session, 
 				end
 			end
 
-			local push_publish = st.message({ to = push_info.service, from = module.host, id = uuid.generate() })
-				:add_child(push_notification_payload):up()
+			if any_match then
+				local push_publish = st.message({ to = push_info.service, from = module.host, id = uuid.generate() })
+					:add_child(push_notification_payload):up()
 
-			-- TODO: watch for message error replies and count or something
-			module:send(push_publish)
-			pushes = pushes + 1
+				-- TODO: watch for message error replies and count or something
+				module:send(push_publish)
+				pushes = pushes + 1
+			end
 		end
 	end
 
@@ -438,7 +449,11 @@ end
 local function get_push_settings(stanza, session)
 	local to = stanza.attr.to
 	local node = to and jid.split(to) or session.username
-	local user_push_services = push2_registrations:get(node)
+	local user_push_services = push2_registrations_cache:get(node);
+	if not user_push_services then
+		user_push_services = push2_registrations:get(node);
+		push2_registrations_cache:set(node, user_push_services);
+	end
 	return node, (user_push_services or {})
 end
 

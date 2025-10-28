@@ -74,6 +74,7 @@ end
 local function get_converse_options()
 	local user_options = module:get_option("conversejs_options");
 
+	local authentication = module:get_option_string("authentication");
 	local allow_registration = module:get_option_boolean("allow_registration", false);
 	local converse_options = {
 		-- Auto-detected connection endpoints
@@ -82,9 +83,9 @@ local function get_converse_options()
 		-- Since we provide those, XEP-0156 based auto-discovery should not be used
 		discover_connection_methods = false;
 		-- Authentication mode to use (normal or guest login)
-		authentication = module:get_option_string("authentication") == "anonymous" and "anonymous" or "login";
+		authentication = authentication == "anonymous" and "anonymous" or "login";
 		-- Host to connect to for anonymous access
-		jid = module.host;
+		jid = authentication == "anonymous" and module.host or nil;
 		-- Let users login with only username
 		default_domain = module.host;
 		domain_placeholder = module.host;
@@ -110,10 +111,10 @@ end
 
 local add_tags = module:get_option_array("conversejs_tags", {});
 
-local service_name = module:get_option_string("name", "Prosody IM and Converse.js");
-local service_short_name = module:get_option_string("short_name", "Converse");
-local service_description = module:get_option_string("description", "Messaging Freedom")
-local pwa_color = module:get_option_string("pwa_color", "#397491")
+local service_name = module:get_option_string("conversejs_name", module:get_option_string("name", "Prosody IM and Converse.js"));
+local service_short_name = module:get_option_string("conversejs_short_name", "Converse");
+local service_description = module:get_option_string("conversejs_description", "Messaging Freedom")
+local pwa_color = module:get_option_string("conversejs_pwa_color", "#397491")
 
 module:provides("http", {
 	title = "Converse.js";

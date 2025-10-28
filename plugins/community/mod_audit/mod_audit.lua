@@ -168,8 +168,8 @@ end
 function module.command(arg_)
 	local jid = require "util.jid";
 	local arg = require "util.argparse".parse(arg_, {
-		value_params = { "limit" };
-	 });
+		value_params = { limit = true };
+	});
 
 	module:log("debug", "arg = %q", arg);
 	local query_jid = jid.prep(arg[1]);

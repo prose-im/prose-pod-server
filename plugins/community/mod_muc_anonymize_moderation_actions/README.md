@@ -1,8 +1,10 @@
-<!--
-SPDX-FileCopyrightText: 2024 John Livingston <https://www.john-livingston.fr/>
-SPDX-License-Identifier: AGPL-3.0-only
--->
-# mod_muc_anonymize_moderation_actions
+---
+labels:
+- 'Stage-Alpha'
+summary: Anonymize moderator actions for participants
+---
+
+## Introduction
 
 This modules allows to anonymize affiliation and role changes in MUC rooms.
 
@@ -11,13 +13,10 @@ When the feature is enabled, when a moderator changes the role or affiliation of
 
 This is particularly usefull to prevent some revenge when a moderator bans someone.
 
-This module is under AGPL-3.0 license.
-
-It was tested on Prosody 0.12.x.
 
 ## Configuration
 
-Just enable the module on your MUC VirtualHost.
+Just enable the module on your MUC Component.
 The feature will be accessible throught the room configuration form.
 
 You can tweak the position of the settings in the MUC configuration form using `anonymize_moderation_actions_form_position`.
@@ -26,7 +25,20 @@ This value will be passed as priority for the "muc-config-form" hook, so you can
 By default, the field will be between muc#roomconfig_changesubject and muc#roomconfig_moderatedroom (default value is `78`).
 
 ``` lua
-VirtualHost "muc.example.com"
+Component "muc.example.com" "muc"
   modules_enabled = { "muc_anonymize_moderation_actions" }
   anonymize_moderation_actions_form_position = 96
 ```
+
+## Compatibility
+
+  ------ ----------------------
+  trunk  Works as of 25-05-12
+  13     Works
+  0.12   Works
+  ------ ----------------------
+
+### License
+
+SPDX-FileCopyrightText: 2024 John Livingston <https://www.john-livingston.fr/>
+SPDX-License-Identifier: AGPL-3.0-only

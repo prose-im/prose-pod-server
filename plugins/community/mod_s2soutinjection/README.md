@@ -28,4 +28,8 @@ s2s_connect_overrides = {
 
 # Compatibility
 
-Requires 0.9.x or later. Tested on 0.12.0
+  Prosody version   Status
+  ----------------- ---------------
+  13.0.x            Should work
+  0.12.4 and later  Works
+  0.12.3 and older  Does not work

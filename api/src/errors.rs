@@ -40,7 +40,7 @@ pub const ERROR_CODE_INTERNAL: &'static str = "INTERNAL_ERROR";
 pub fn internal_server_error(
     error: &anyhow::Error,
     code: &'static str,
-    public_description: impl Into<String>,
+    public_description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         ERROR_KIND_INTERNAL,
@@ -57,7 +57,7 @@ const ERROR_KIND_AUTH: &'static str = "AUTH_ERROR";
 
 #[must_use]
 #[inline]
-pub fn unauthorized(description: impl Into<String>) -> Error {
+pub fn unauthorized(description: impl AsRef<str>) -> Error {
     Error::new(
         ERROR_KIND_AUTH,
         "UNAUTHORIZED",
@@ -69,7 +69,7 @@ pub fn unauthorized(description: impl Into<String>) -> Error {
 
 #[must_use]
 #[inline]
-pub fn forbidden(description: impl Into<String>) -> Error {
+pub fn forbidden(description: impl AsRef<str>) -> Error {
     Error::new(
         ERROR_KIND_AUTH,
         "FORBIDDEN",
@@ -87,8 +87,8 @@ const ERROR_KIND_LIFECYCLE: &'static str = "LIFECYCLE_ERROR";
 #[inline]
 pub fn too_early(
     code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         ERROR_KIND_LIFECYCLE,
@@ -103,8 +103,8 @@ pub fn too_early(
 #[inline]
 pub fn service_unavailable(
     code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         ERROR_KIND_LIFECYCLE,
@@ -124,8 +124,8 @@ pub fn service_unavailable(
 pub fn service_unavailable_err(
     error: &anyhow::Error,
     code: &'static str,
-    message: impl Into<String>,
-    public_description: impl Into<String>,
+    message: impl AsRef<str>,
+    public_description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         ERROR_KIND_LIFECYCLE,
@@ -140,8 +140,8 @@ pub fn service_unavailable_err(
 #[inline]
 pub fn too_late(
     code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         ERROR_KIND_LIFECYCLE,
@@ -158,8 +158,8 @@ pub fn too_late(
 #[inline]
 pub fn conflict_error(
     code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         "CONFLICT_ERROR",
@@ -174,8 +174,8 @@ pub fn conflict_error(
 #[inline]
 pub fn validation_error(
     code: &'static str,
-    message: impl Into<String>,
-    description: impl Into<String>,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
 ) -> Error {
     Error::new(
         "VALIDATION_ERROR",
@@ -190,8 +190,8 @@ pub fn validation_error(
 
 #[must_use]
 #[inline]
-pub fn invalid_avatar(err: impl ToString) -> Error {
-    self::validation_error("INVALID_AVATAR", "Invalid avatar", err.to_string())
+pub fn invalid_avatar(description: impl AsRef<str>) -> Error {
+    self::validation_error("INVALID_AVATAR", "Invalid avatar", description)
 }
 
 #[must_use]
@@ -221,8 +221,8 @@ pub fn restart_failed(error: &anyhow::Error) -> Error {
 
 #[must_use]
 #[inline]
-fn auto_log(error: &anyhow::Error, public_description: impl Into<String>) -> String {
-    let public_description: String = public_description.into();
+fn auto_log(error: &anyhow::Error, public_description: impl AsRef<str>) -> String {
+    let public_description: &str = public_description.as_ref();
 
     // Log error debug information with a unique ID,
     // and reference this ID in the user-facing description.

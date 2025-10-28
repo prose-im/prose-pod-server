@@ -6,7 +6,7 @@ labels:
 Introduction
 ============
 
-This is an experimental authentication module that does an asynchronous
+This is an authentication module that does an asynchronous
 HTTP call to verify username and password.
 
 Details
@@ -19,6 +19,11 @@ authentication][rfc7617] to the configured `http_auth_url`.
 Configuration
 =============
 
+After installing, enable the module by setting `authentication` to `"http_async"`.
+
+The only setting is `http_auth_url` which should contain the URL endpoint where the authentication query is sent to. It can contain `$host` and
+`$user` which are substituted for the current VirtualHost and the authenticating username, respectively.
+
 ``` lua
 VirtualHost "example.com"
 authentication = "http_async"
@@ -28,4 +33,4 @@ http_auth_url = "http://example.com/auth"
 Compatibility
 =============
 
-Requires Prosody trunk
+Should work with Prosody 0.10.x and later.

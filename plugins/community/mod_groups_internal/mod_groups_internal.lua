@@ -215,10 +215,12 @@ function delete(group_id)
 					room:destroy()
 				end
 			end
-			for _, muc_jid in ipairs(group_info.mucs) do
-				local room = muc_host.get_room_from_jid(muc_jid)
-				if room then
-					room:destroy()
+			if group_info.mucs then
+				for _, muc_jid in ipairs(group_info.mucs) do
+					local room = muc_host.get_room_from_jid(muc_jid)
+					if room then
+						room:destroy()
+					end
 				end
 			end
 		end

@@ -16,9 +16,8 @@ pocket is not the best use of radio time.
 Works with [mod_csi_simple][doc:modules:mod_csi_simple] which is
 included with Prosody.
 
-  ------- --------------
-  trunk*   Works
-  0.12     Works
-  ------- --------------
-
-*as of 2024-10-22
+  ------- ------------------------
+  trunk   Works as of 2025-06-13
+  13      Works
+  0.12    Works
+  ------- ------------------------

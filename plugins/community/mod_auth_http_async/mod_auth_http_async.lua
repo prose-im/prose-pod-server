@@ -9,7 +9,7 @@
 
 local new_sasl = require "util.sasl".new;
 local base64 = require "util.encodings".base64.encode;
-local have_async, async = pcall(require, "util.async");
+local async = require "util.async";
 
 local log = module._log;
 local host = module.host;
@@ -18,22 +18,6 @@ local api_base = module:get_option_string("http_auth_url",  ""):gsub("$host", ho
 if api_base == "" then error("http_auth_url required") end
 
 local provider = {};
-
--- globals required by socket.http
-if rawget(_G, "PROXY") == nil then
-	rawset(_G, "PROXY", false)
-end
-if rawget(_G, "base_parsed") == nil then
-	rawset(_G, "base_parsed", false)
-end
-if not have_async then -- FINE! Set your globals then
-	prosody.unlock_globals()
-	require "ltn12"
-	require "socket"
-	require "socket.http"
-	require "ssl.https"
-	prosody.lock_globals()
-end
 
 local function async_http_auth(url, username, password)
 	module:log("debug", "async_http_auth()");
@@ -58,38 +42,10 @@ local function async_http_auth(url, username, password)
 	return nil, "Auth failed. Invalid username or password.";
 end
 
-local function sync_http_auth(url,username, password)
-	module:log("debug", "sync_http_auth()");
-	require "ltn12";
-	local http = require "socket.http";
-	local https = require "ssl.https";
-	local request;
-	if string.sub(url, 1, string.len('https')) == 'https' then
-		request = https.request;
-	else
-		request = http.request;
-	end
-	local _, code, headers, status = request{
-		url = url,
-		headers = { Authorization = "Basic "..base64(username..":"..password);  }
-	};
-	if type(code) == "number" and code >= 200 and code <= 299 then
-		module:log("debug", "HTTP auth provider confirmed valid password");
-		return true;
-	else
-		module:log("debug", "HTTP auth provider returned status code: "..code);
-	end
-	return nil, "Auth failed. Invalid username or password.";
-end
-
 function provider.test_password(username, password)
 	local url = api_base:gsub("$user", username):gsub("$password", password);
 	log("debug", "Testing password for user %s at host %s with URL %s", username, host, url);
-	if (have_async) then
-		return async_http_auth(url, username, password);
-	else
-		return sync_http_auth(url, username, password);
-	end
+	return async_http_auth(url, username, password);
 end
 
 function provider.users()

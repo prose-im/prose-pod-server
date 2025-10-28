@@ -35,8 +35,12 @@
 		<dd><a href="{client.policy_uri}">View policy</a></dd>}
 
 		<dt>Requested permissions</dt>
-		<dd>{scopes#
-			<input class="scope" type="checkbox" id="scope_{idx}" name="scope" value="{item}" checked="" /><label class="scope" for="scope_{idx}">{item}</label>}
+		<dd>
+			<dl>{scopes#
+				<dt><input class="scope" type="checkbox" id="scope_{idx}" name="scope" value="{item.claim}" checked="" />
+			<label class="scope" for="scope_{idx}">{item.title?{item.claim}}</label></dt>
+				{item.description&<dd>{item.description}</dd>}}
+			</ul>
 		</dd>
 	</dl>
 

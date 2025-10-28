@@ -157,19 +157,11 @@ pub const PROSODY_JIDS_ARE_VALID: &'static str = "JIDs coming from Prosody shoul
 
 /// NOTE: Inspired by [`anyhow::Context`].
 pub trait Context<Res> {
-    fn context(
-        self,
-        internal_error_code: &'static str,
-        public_description: impl Into<String>,
-    ) -> Res;
+    fn context(self, internal_error_code: &'static str, public_description: &str) -> Res;
 }
 
 impl<T, E1: Context<E2>, E2> Context<Result<T, E2>> for Result<T, E1> {
-    fn context(
-        self,
-        internal_error_code: &'static str,
-        public_description: impl Into<String>,
-    ) -> Result<T, E2> {
+    fn context(self, internal_error_code: &'static str, public_description: &str) -> Result<T, E2> {
         match self {
             Ok(val) => Ok(val),
             Err(err) => Err(err.context(internal_error_code, public_description)),
@@ -177,18 +169,23 @@ impl<T, E1: Context<E2>, E2> Context<Result<T, E2>> for Result<T, E1> {
     }
 }
 
-impl Context<crate::responders::Error> for prosody_http::Error {
+impl Context<crate::responders::Error> for prosody_http::oauth2::Error {
     fn context(
         self,
         internal_error_code: &'static str,
-        public_description: impl Into<String>,
+        public_description: &str,
     ) -> crate::responders::Error {
         use crate::errors;
 
         match self {
-            Self::Unauthorized { reason } => errors::unauthorized(reason),
-            Self::Forbidden { reason } => errors::forbidden(reason),
+            Self::Unauthorized(_) => errors::unauthorized(
+                "Try logging in again, then ask an administrator if it persists.",
+            ),
+            Self::Forbidden(_) => errors::forbidden("You cannot do that."),
             Self::Internal(err) => {
+                errors::internal_server_error(&err, internal_error_code, public_description)
+            }
+            Self::Other(err) => {
                 errors::internal_server_error(&err, internal_error_code, public_description)
             }
         }
@@ -199,7 +196,7 @@ impl Context<crate::responders::Error> for anyhow::Error {
     fn context(
         self,
         internal_error_code: &'static str,
-        public_description: impl Into<String>,
+        public_description: &str,
     ) -> crate::responders::Error {
         crate::errors::internal_server_error(&self, internal_error_code, public_description)
     }
@@ -209,7 +206,7 @@ impl Context<crate::responders::Error> for std::io::Error {
     fn context(
         self,
         internal_error_code: &'static str,
-        public_description: impl Into<String>,
+        public_description: &str,
     ) -> crate::responders::Error {
         crate::errors::internal_server_error(
             &anyhow::Error::new(self),

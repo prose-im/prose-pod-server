@@ -50,6 +50,8 @@ local expire_after = math.floor(module:get_option_number("pastebin_expire_after"
 local trigger_string = module:get_option_string("pastebin_trigger");
 trigger_string = (trigger_string and trigger_string .. " ");
 
+local ignore_string = module:get_option_string("pastebin_ignore");
+
 local pastes = {};
 
 local xmlns_xhtmlim = "http://jabber.org/protocol/xhtml-im";
@@ -118,9 +120,10 @@ function check_message(data)
 
 	--module:log("debug", "Body(%s) length: %d", type(body), #(body or ""));
 
-	if ( #body > length_threshold and utf8_length(body) > length_threshold ) or
+	if (( #body > length_threshold and utf8_length(body) > length_threshold ) or
 		(trigger_string and body:find(trigger_string, 1, true) == 1) or
-		(select(2, body:gsub("\n", "%0")) >= line_threshold)
+		(select(2, body:gsub("\n", "%0")) >= line_threshold)) and
+		(not ignore_string or body:find(ignore_string, 1, true) == nil)
 	then
 		if trigger_string and body:sub(1, #trigger_string) == trigger_string then
 			body = body:sub(#trigger_string+1);

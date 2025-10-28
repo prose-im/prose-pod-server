@@ -1,6 +1,7 @@
 module:set_global();
 
 local config = require "core.configmanager";
+local modulemanager = require "core.modulemanager";
 local argparse = require "util.argparse";
 local dns = require"net.adns".resolver();
 local async = require "util.async";
@@ -8,8 +9,7 @@ local set = require "util.set";
 local nameprep = require"util.encodings".stringprep.nameprep;
 local idna_to_ascii = require"util.encodings".idna.to_ascii;
 
-local virtualhost_services = { "xmpp-client"; "xmpps-client"; "xmpp-server"; "xmpps-server" }
-local component_services = { "xmpp-server"; "xmpps-server" }
+local services = { "xmpp-client"; "xmpps-client"; "xmpp-server"; "xmpps-server" }
 
 local function validate_dnsname_option(options, option_name, default)
 	local host = options[option_name];
@@ -56,14 +56,10 @@ function module.command(arg)
 		module:log("error", "Host %q fails IDNA", vhost);
 		return 1;
 	end
-	local is_component = config.get(vhost, "component_module");
-	if not is_component and not config.get(vhost, "defined") then
+	if not config.get(vhost, "component_module") and not config.get(vhost, "defined") then
 		module:log("error", "Host %q is not defined in the config", vhost);
 		return 1;
 	end
-
-	local services = virtualhost_services;
-	if is_component then services = component_services; end
 
 	local domain = validate_dnsname_option(opts, "domain");
 	if not domain then
@@ -86,7 +82,17 @@ function module.command(arg)
 		["xmpps-server"] = module:get_option_array("s2s_direct_tls_ports", {});
 	};
 
-	if opts.multiplex then
+	local modules_enabled = modulemanager.get_modules_for_host(vhost);
+	if not modules_enabled:contains("c2s") then
+		configured_ports["xmpp-client"] = {};
+		configured_ports["xmpps-client"] = {};
+	end
+	if not modules_enabled:contains("s2s") then
+		configured_ports["xmpp-server"] = {};
+		configured_ports["xmpps-server"] = {};
+	end
+
+	if modules_enabled:contains("net_multiplex") then
 		for opt, ports in pairs(configured_ports) do
 			ports:append(module:get_option_array(opt:sub(1, 5) == "xmpps" and "ssl_ports" or "ports", {}));
 		end
@@ -102,26 +108,31 @@ function module.command(arg)
 	print("ttl " .. tostring(opts.ttl or 60 * 60));
 
 	for _, service in ipairs(services) do
-		local ports = set.new(configured_ports[service]);
-		local records = (async.wait_for(existing_srv[service]));
-		if opts.remove or opts.reset then
+		local config_ports = set.new(configured_ports[service]);
+		local dns_ports = set.new();
+
+		if (opts.reset or opts.remove) and not opts.each then
 			print(("del _%s._tcp.%s IN SRV"):format(service, ihost));
 		else
+			local records = (async.wait_for(existing_srv[service]));
 			for _, rr in ipairs(records) do
-				if ports:contains(rr.srv.port) and target == nameprep(rr.srv.target):gsub("%.$", "") then
-					ports:remove(rr.srv.port)
-				elseif not opts.each then
-					print(("del _%s._tcp.%s IN SRV"):format(service, ihost));
-					break
-				else
+				if target == nameprep(rr.srv.target):gsub("%.$", "") then
+					dns_ports:add(rr.srv.port)
+				elseif opts.each then
 					print(("del _%s._tcp.%s IN SRV %s"):format(service, ihost, rr));
 				end
 			end
 		end
+
 		if not opts.remove then
-			for port in ports do print(("add _%s._tcp.%s IN SRV 1 1 %d %s"):format(service, ihost, port, target)); end
+			if config_ports:empty() then
+				print(("add _%s._tcp.%s IN SRV 0 0 0 ."):format(service, ihost));
+			else
+				for port in (config_ports - dns_ports) do
+					print(("add _%s._tcp.%s IN SRV 1 1 %d %s"):format(service, ihost, port, target));
+				end
+			end
 		end
-		if ports:empty() then print(("add _%s._tcp.%s IN SRV 0 0 0 ."):format(service, ihost)); end
 	end
 
 	print("show");

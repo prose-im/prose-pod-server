@@ -16,5 +16,6 @@ This module depends on [mod_sasl2]. It exposes no configuration options.
 
   Prosody-Version Status
   --------------- ----------------------
-  trunk           Works as of 2024-12-21
+  trunk           Works as of 2025-05-25
+  13              Works
   0.12            Does not work

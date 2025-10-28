@@ -79,7 +79,7 @@ local function open_room(room) -- : boolean
 		return nil;
 	end
 
-	if (room.get_members_only or room.is_members_only)(room) then
+	if room:get_members_only() then
 		return false;
 	end
 

@@ -15,7 +15,7 @@ local invites = module:depends("invites");
 local tokens = module:depends("tokenauth");
 local mod_pep = module:depends("pep");
 local mod_groups = module:depends("groups_internal");
-local mod_lastlog2 = module:depends("lastlog2");
+local mod_account_activity = module:depends("account_activity");
 
 local push_errors = module:shared("cloud_notify/push_errors");
 
@@ -30,9 +30,25 @@ local www_authenticate_header = ("Bearer realm=%q"):format(module.host.."/"..mod
 local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
 local xmlns_nick = "http://jabber.org/protocol/nick";
 
-assert(mod_lastlog2.get_last_active, "Newer version of mod_lastlog2 is required to use this module");
-
 local deleted_users = module:open_store("accounts_cleanup");
+
+local errors = require "util.error".init(module.name, "https://prosody.im/protocol/errors", {
+	["feature-not-implemented"] = { "cancel", "feature-not-implemented", "Feature not implemented" };
+	["unknown-invite-type"] = { "cancel", "bad-request", "Unknown invitation type" };
+	["invite-creation-failed"] = { "cancel", "internal-server-error", "Failed to create invitation" };
+	["invalid-json"] = { "modify", "bad-request", "Invalid JSON submitted" };
+	["user-not-found"] = { "cancel", "item-not-found", "User not found", "user-not-found" };
+
+	-- From mod_groups_internal
+	["group-name-required"] = { "modify", "bad-request", "Group name required", "group-name-required" };
+	["group-not-found"] = { "cancel", "item-not-found", "Group not found", "group-not-found" };
+
+	-- Generic
+	["conflict"] = { "cancel", "conflict", "Resource already exists" };
+	["internal-server-error"] = { "wait", "internal-server-error", "Internal server error" };
+	["service-unavailable"] = { "cancel", "service-unavailable", "Unable to perform the requested action" };
+	["bad-request"] = { "cancel", "bad-request", "Invalid request" };
+});
 
 local function check_credentials(request)
 	local auth_type, auth_data = string.match(request.headers.authorization or "", "^(%S+)%s(.+)$");
@@ -71,7 +87,8 @@ function check_auth(routes)
 			if not permit then
 				return code;
 			end
-			return handler(event, ...);
+			local ret, err = errors.coerce(handler(event, ...));
+			return ret or err;
 		end;
 	end
 	return routes;
@@ -131,7 +148,7 @@ end
 function get_invite_by_id(event, invite_id)
 	local invite = invites.get_account_invite_info(invite_id);
 	if not invite then
-		return 404;
+		return nil, "item-not-found";
 	end
 
 	event.response.headers["Content-Type"] = json_content_type;
@@ -145,12 +162,12 @@ function create_invite_type(event, invite_type)
 	if request.body and #request.body > 0 then
 		if request.headers.content_type ~= json_content_type then
 			module:log("warn", "Invalid content type");
-			return 400;
+			return nil, "invalid-json";
 		end
 		options = json.decode(event.request.body);
 		if not options then
 			module:log("warn", "Invalid JSON");
-			return 400;
+			return nil, "invalid-json";
 		end
 	else
 		options = {};
@@ -161,7 +178,7 @@ function create_invite_type(event, invite_type)
 	local invite;
 	if invite_type == "reset" then
 		if not options.username then
-			return 400;
+			return nil, "bad-request";
 		end
 		local info = debug.getinfo(invites.create_account_reset, "u");
 		if info.nparams == 3 then
@@ -172,7 +189,7 @@ function create_invite_type(event, invite_type)
 		end
 	elseif invite_type == "group" then
 		if not options.groups then
-			return 400;
+			return nil, "bad-request";
 		end
 		invite = invites.create_group(options.groups, {
 			source = source;
@@ -189,18 +206,19 @@ function create_invite_type(event, invite_type)
 		additional_data.note = options.note;
 		invite = invites.create_account(options.username, additional_data, options.ttl);
 	else
-		return 400;
+		return nil, "unknown-invite-type";
 	end
 	if not invite then
-		return 500;
+		return nil, "invite-creation-failed";
 	end
 	event.response.headers["Content-Type"] = json_content_type;
 	return json.encode(token_info_to_invite_info(invite));
 end
 
 function delete_invite(event, invite_id) --luacheck: ignore 212/event
-	if not invites.delete_account_invite(invite_id) then
-		return 404;
+	local ok, err = invites.delete_account_invite(invite_id);
+	if not ok then
+		return nil, err;
 	end
 	return 200;
 end
@@ -228,7 +246,7 @@ end
 
 local function get_user_info(username)
 	if not usermanager.user_exists(username, module.host) then
-		return nil;
+		return nil, "user-not-found";
 	end
 	local display_name;
 	do
@@ -264,7 +282,7 @@ local function get_user_info(username)
 		secondary_roles = secondary_roles;
 		roles = legacy_roles; -- COMPAT w/0.12
 		enabled = enabled;
-		last_active = mod_lastlog2.get_last_active(username);
+		last_active = mod_account_activity.get_last_active(username);
 		deletion_request = not enabled and deleted_users:get(username) or nil;
 		avatar_info = get_user_avatar_info(username);
 	};
@@ -449,7 +467,7 @@ function get_user_by_name(event, username)
 
 	local user_info = get_user_info(username);
 	if not user_info then
-		return 404;
+		return nil, "user-not-found";
 	end
 
 	event.response.headers["Content-Type"] = json_content_type;
@@ -479,27 +497,28 @@ function patch_user(event, username)
 	if not username then return; end
 
 	local current_user = get_user_info(username);
-	if not current_user then return 404; end
+	if not current_user then return nil, "user-not-found"; end
 
 	local request = event.request;
 	if request.headers.content_type ~= json_content_type
 	or (not request.body or #request.body == 0) then
-		return 400;
+		return nil, "invalid-json";
 	end
 	local new_user = json.decode(event.request.body);
 	if not new_user then
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	local updated_attributes = set.new(array.collect(it.keys(new_user)));
 	if not (updated_attributes - writable_user_attributes):empty() then
 		module:log("warn", "Unable to service PATCH user request, unsupported attributes: %s", (updated_attributes - writable_user_attributes));
-		return 400;
+		return nil, "feature-not-implemented";
 	end
 
 	if new_user.enabled ~= nil and new_user.enabled ~= current_user.enabled then
-		if not user_attribute_writers.enabled(username, new_user.enabled) then
-			return 500;
+		local ok, err = user_attribute_writers.enabled(username, new_user.enabled);
+		if not ok then
+			return nil, err;
 		end
 	end
 
@@ -508,21 +527,21 @@ end
 
 function update_user(event, username)
 	if not username then
-		return 400;
+		return nil, "bad-request";
 	end
 
 	local request = event.request;
 	if request.headers.content_type ~= json_content_type
 	or (not request.body or #request.body == 0) then
-		return 400;
+		return nil, "invalid-json";
 	end
 	local new_user = json.decode(event.request.body);
 	if not new_user then
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	if new_user.username and new_user.username ~= username then
-		return 400;
+		return nil, "bad-request"; -- Cannot change the username
 	end
 
 	if new_user.display_name then
@@ -538,17 +557,18 @@ function update_user(event, username)
 
 	if new_user.role then
 		if not usermanager.set_user_role then
-			return 500, "feature-not-implemented";
+			return nil, "feature-not-implemented";
 		end
-		if not usermanager.set_user_role(username, module.host, new_user.role) then
-			module:log("error", "failed to set role %s for %s", new_user.role, username);
-			return 500;
+		local role, role_err = usermanager.set_user_role(username, module.host, new_user.role);
+		if not role then
+			module:log("error", "failed to set role %s for %s: ", new_user.role, username, role_err);
+			return nil, role_err;
 		end
 	end
 
 	if new_user.roles then -- COMPAT w/0.12
 		if not usermanager.set_user_roles then
-			return 500, "feature-not-implemented"
+			return nil, "feature-not-implemented";
 		end
 
 		local backend_roles = {};
@@ -556,15 +576,17 @@ function update_user(event, username)
 			backend_roles[role] = true;
 		end
 		local user_jid = username.."@"..module.host;
-		if not usermanager.set_user_roles(username, module.host, backend_roles) then
-			module:log("error", "failed to set roles %q for %s", backend_roles, user_jid)
-			return 500
+		local role, role_err = usermanager.set_user_roles(username, module.host, backend_roles);
+		if not role then
+			module:log("error", "failed to set roles %q for %s: %s", backend_roles, user_jid, role_err)
+			return nil, role_err;
 		end
 	end
 
 	if new_user.enabled ~= nil then
-		if not user_attribute_writers.enabled(username, new_user.enabled) then
-			return 500;
+		local ok, err = user_attribute_writers.enabled(username, new_user.enabled);
+		if not ok then
+			return nil, err;
 		end
 	end
 
@@ -572,8 +594,9 @@ function update_user(event, username)
 end
 
 function delete_user(event, username) --luacheck: ignore 212/event
-	if not usermanager.delete_user(username, module.host) then
-		return 404;
+	local ok, err = usermanager.delete_user(username, module.host);
+	if not ok then
+		return nil, err;
 	end
 	return 200;
 end
@@ -597,7 +620,7 @@ end
 function get_group_by_id(event, group_id)
 	local group = mod_groups.get_info(group_id);
 	if not group then
-		return 404;
+		return nil, "group-not-found";
 	end
 
 	event.response.headers["Content-Type"] = json_content_type;
@@ -614,21 +637,16 @@ function create_group(event)
 	local request = event.request;
 	if request.headers.content_type ~= json_content_type
 	or (not request.body or #request.body == 0) then
-		return 400;
+		return nil, "invalid-json";
 	end
 	local group = json.decode(event.request.body);
 	if not group then
-		return 400;
-	end
-
-	if not group.name then
-		module:log("warn", "Group missing name property");
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	local create_muc = group.create_muc and true or false;
 
-	local group_id = mod_groups.create(
+	local group_id, err = mod_groups.create(
 		{
 			name = group.name;
 		},
@@ -636,7 +654,7 @@ function create_group(event)
 		group.id
 	);
 	if not group_id then
-		return 500;
+		return nil, err;
 	end
 
 	event.response.headers["Content-Type"] = json_content_type;
@@ -658,37 +676,36 @@ function update_group(event, group) --luacheck: ignore 212/event
 			local ok, err = mod_groups.add_member(group_id, member_name);
 			if ok then
 				return 204;
-			elseif err == "group-not-found" then
-				return 404;
 			else
-				return 500;
+				return nil, err;
 			end
 		end
 	end
 
 	local group_id = group:match("^([^/]+)$")
-	if not group_id then return 404; end
+	if not group_id then return nil, "group-not-found"; end
 
 	local request = event.request;
 	if request.headers.content_type ~= json_content_type or (not request.body or #request.body == 0) then
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	local update = json.decode(event.request.body);
 	if not update then
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	local group_info = mod_groups.get_info(group_id);
 	if not group_info then
-		return 404;
+		return nil, "group-not-found";
 	end
 
 	if update.name then
 		group_info["name"] = update.name;
 	end
-	if not mod_groups.set_info(group_id, group_info) then
-		return 500;
+	local ok, err = mod_groups.set_info(group_id, group_info);
+	if not ok then
+		return nil, err;
 	end
 	return 204;
 end
@@ -699,16 +716,16 @@ function extend_group(event, subpath)
 	if group_id then
 		local muc_params = json.decode(event.request.body);
 		if not muc_params then
-			return 400;
+			return nil, "invalid-json";
 		end
-		local muc = mod_groups.add_group_chat(group_id, muc_params.name);
+		local muc, err = mod_groups.add_group_chat(group_id, muc_params.name);
 		if not muc then
-			return 500;
+			return nil, err;
 		end
 		return json.encode(muc);
 	end
 
-	return 404;
+	return nil, "group-not-found";
 end
 
 function delete_group(event, subpath) --luacheck: ignore 212/event
@@ -717,19 +734,19 @@ function delete_group(event, subpath) --luacheck: ignore 212/event
 	if group_id then
 		-- Operation is on a sub-resource
 		if sub_resource_type == "members" then
-			if mod_groups.remove_member(group_id, sub_resource_id) then
-				return 204;
-			else
-				return 500;
+			local ok, err = mod_groups.remove_member(group_id, sub_resource_id);
+			if not ok then
+				return nil, err;
 			end
+			return 204;
 		elseif sub_resource_type == "chats" then
-			if mod_groups.remove_group_chat(group_id, sub_resource_id) then
-				return 204;
-			else
-				return 500;
+			local ok, err = mod_groups.remove_group_chat(group_id, sub_resource_id);
+			if not ok then
+				return nil, err;
 			end
+			return 204;
 		else
-			return 404;
+			return nil, "item-not-found";
 		end
 	else
 		-- Action refers to the group
@@ -737,15 +754,16 @@ function delete_group(event, subpath) --luacheck: ignore 212/event
 	end
 
 	if not group_id then
-		return 400;
+		return nil, "bad-request";
 	end
 
 	if not mod_groups.exists(group_id) then
-		return 404;
+		return nil, "group-not-found";
 	end
 
-	if not mod_groups.delete(group_id) then
-		return 500;
+	local ok, err = mod_groups.delete(group_id);
+	if not ok then
+		return nil, err;
 	end
 	return 204;
 end
@@ -809,19 +827,19 @@ local function post_server_announcement(event)
 	local request = event.request;
 	if request.headers.content_type ~= json_content_type
 	or (not request.body or #request.body == 0) then
-		return 400;
+		return nil, "invalid-json";
 	end
 	local body = json.decode(event.request.body);
 	if not body then
-		return 400;
+		return nil, "invalid-json";
 	end
 
 	if type(body.recipients) ~= "table" and body.recipients ~= "online" and body.recipients ~= "all" then
-		return 400;
+		return nil, "bad-request";
 	end
 
 	if not body.body or #body.body == 0 then
-		return 400;
+		return nil, "bad-request";
 	end
 
 	local message = st.message():tag("body"):text(body.body):up();

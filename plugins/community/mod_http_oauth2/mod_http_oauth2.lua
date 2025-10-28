@@ -28,6 +28,18 @@ local function tmap(t)
 	end
 end
 
+local function array_contains(haystack, needle)
+	if not haystack then
+		return false
+	end
+	for i = 1, #haystack do
+		if haystack[i] == needle then
+			return true
+		end
+	end
+	return false
+end
+
 local function strict_url_parse(urlstr)
 	local url_parts = url.parse(urlstr);
 	if not url_parts then return url_parts; end
@@ -134,6 +146,7 @@ local registration_options = module:get_option("oauth2_registration_options",
 
 local pkce_required = module:get_option_boolean("oauth2_require_code_challenge", true);
 local respect_prompt = module:get_option_boolean("oauth2_respect_oidc_prompt", false);
+local expect_username_jid = module:get_option_boolean("oauth2_expect_username_jid", false);
 
 local verification_key;
 local sign_client, verify_client;
@@ -174,14 +187,23 @@ local function parse_scopes(scope_string)
 end
 
 local openid_claims = set.new();
-module:add_item("openid-claim", "openid");
+
+module:add_item("openid-claim", { claim = "openid"; title = "OpenID";
+	description = "Tells the application your JID and when you authenticated."; });
+
+-- https://openid.net/specs/openid-connect-core-1_0.html#OfflineAccess
+-- The "offline_access" scope grants access to refresh tokens
+module:add_item("openid-claim", { claim = "offline_access"; title = "Offline Access";
+	description = "Application may renew access without interaction."; });
 
 module:handle_items("openid-claim", function(event)
 	authorization_server_metadata = nil;
-	openid_claims:add(event.item);
+	openid_claims:add(event.item.claim or event.item);
 end, function()
 	authorization_server_metadata = nil;
-	openid_claims = set.new(module:get_host_items("openid-claim"));
+	openid_claims = set.new(array.new(module:get_host_items("openid-claim")):map(function(item)
+		return item.claim or item;
+	end));
 end, true);
 
 -- array -> array, array, array
@@ -264,6 +286,8 @@ end
 -- code to the user for them to copy-paste into the client, which can then
 -- continue as if it received it via redirect.
 local oob_uri = "urn:ietf:wg:oauth:2.0:oob";
+
+-- RFC 8628 OAuth 2.0 Device Authorization Grant
 local device_uri = "urn:ietf:params:oauth:grant-type:device_code";
 
 local loopbacks = set.new({ "localhost", "127.0.0.1", "::1" });
@@ -291,6 +315,10 @@ local function client_subset(client)
 	};
 end
 
+local function may_issue_refresh_token(client, scope_string)
+	return array_contains(client.grant_types, "refresh_token") and array_contains(parse_scopes(scope_string), "offline_access");
+end
+
 local function new_access_token(token_jid, role, scope_string, client, id_token, refresh_token_info)
 	local token_data = { oauth2_scopes = scope_string, oauth2_client = nil };
 	if client then
@@ -315,7 +343,10 @@ local function new_access_token(token_jid, role, scope_string, client, id_token,
 		end
 	end
 	-- in with the new refresh token
-	local refresh_token = refresh_token_info ~= false and tokens.create_token(token_jid, grant.id, nil, default_refresh_ttl, "oauth2-refresh");
+	local refresh_token;
+	if refresh_token_info ~= false and may_issue_refresh_token(client, scope_string) then
+		refresh_token = tokens.create_token(token_jid, grant.id, nil, default_refresh_ttl, "oauth2-refresh");
+	end
 
 	if role == "xmpp" then
 		-- Special scope meaning the users default role.
@@ -348,22 +379,21 @@ local function normalize_loopback(uri)
 end
 
 local function get_redirect_uri(client, query_redirect_uri) -- record client, string : string
-	if not query_redirect_uri then
+	if query_redirect_uri == device_uri and client.grant_types then
+		if array_contains(client.grant_types, device_uri) then
+			return query_redirect_uri;
+		end
+		-- Tried to use device authorization flow without registering it.
+		return;
+	elseif not client.redirect_uris then
+		return;
+	elseif not query_redirect_uri then
 		if #client.redirect_uris ~= 1 then
 			-- Client registered multiple URIs, it needs specify which one to use
 			return;
 		end
 		-- When only a single URI is registered, that's the default
 		return client.redirect_uris[1];
-	end
-	if query_redirect_uri == device_uri and client.grant_types then
-		for _, grant_type in ipairs(client.grant_types) do
-			if grant_type == device_uri then
-				return query_redirect_uri;
-			end
-		end
-		-- Tried to use device authorization flow without registering it.
-		return;
 	end
 	-- Verify the client-provided URI matches one previously registered
 	for _, redirect_uri in ipairs(client.redirect_uris) do
@@ -397,21 +427,63 @@ function grant_type_handlers.implicit()
 	return oauth_error("invalid_request");
 end
 
-function grant_type_handlers.password(params)
-	local request_jid = assert(params.username, oauth_error("invalid_request", "missing 'username' (JID)"));
-	local request_password = assert(params.password, oauth_error("invalid_request", "missing 'password'"));
-	local request_username, request_host, request_resource = jid.prepped_split(request_jid);
+local function make_client_secret(client_id) --> client_secret
+	return hashes.hmac_sha256(verification_key, client_id, true);
+end
 
-	if not (request_username and request_host) or request_host ~= module.host then
-		return oauth_error("invalid_request", "invalid JID");
+local function verify_client_secret(client_id, client_secret)
+	return hashes.equals(make_client_secret(client_id), client_secret);
+end
+
+function grant_type_handlers.password(params, client)
+	local request_username
+
+	if expect_username_jid then
+		local request_jid = params.username;
+		if not request_jid then
+			return oauth_error("invalid_request", "missing 'username' (JID)");
+		end
+		local _request_username, request_host = jid.prepped_split(request_jid);
+
+		if not (_request_username and request_host) or request_host ~= module.host then
+			return oauth_error("invalid_request", "invalid JID");
+		end
+
+		request_username = _request_username
+	else
+		request_username = params.username;
+		if not request_username then
+			return oauth_error("invalid_request", "missing 'username'");
+		end
 	end
-	if not usermanager.test_password(request_username, request_host, request_password) then
+
+	local request_password = params.password;
+	if not request_password then
+		return oauth_error("invalid_request", "missing 'password'");
+	end
+
+	local auth_event = {
+		session = {
+			type = "oauth2";
+			ip = "::";
+			username = request_username;
+			host = module.host;
+			log = module._log;
+			sasl_handler = { username = request_username; selected = "x-oauth2-password" };
+			client_id = client.client_name;
+		};
+	};
+
+	if not usermanager.test_password(request_username, module.host, request_password) then
+		module:fire_event("authentication-failure", auth_event);
 		return oauth_error("invalid_grant", "incorrect credentials");
 	end
 
-	local granted_jid = jid.join(request_username, request_host, request_resource);
+	module:fire_event("authentication-success", auth_event);
+
+	local granted_jid = jid.join(request_username, module.host);
 	local granted_scopes, granted_role = filter_scopes(request_username, params.scope);
-	return json.encode(new_access_token(granted_jid, granted_role, granted_scopes, nil));
+	return json.encode(new_access_token(granted_jid, granted_role, granted_scopes, client));
 end
 
 function response_type_handlers.code(client, params, granted_jid, id_token)
@@ -505,31 +577,11 @@ function response_type_handlers.token(client, params, granted_jid)
 	}
 end
 
-local function make_client_secret(client_id) --> client_secret
-	return hashes.hmac_sha256(verification_key, client_id, true);
-end
-
-local function verify_client_secret(client_id, client_secret)
-	return hashes.equals(make_client_secret(client_id), client_secret);
-end
-
-function grant_type_handlers.authorization_code(params)
-	if not params.client_id then return oauth_error("invalid_request", "missing 'client_id'"); end
-	if not params.client_secret then return oauth_error("invalid_request", "missing 'client_secret'"); end
+function grant_type_handlers.authorization_code(params, client)
 	if not params.code then return oauth_error("invalid_request", "missing 'code'"); end
 	if params.scope and params.scope ~= "" then
 		-- FIXME allow a subset of granted scopes
 		return oauth_error("invalid_scope", "unknown scope requested");
-	end
-
-	local client = check_client(params.client_id);
-	if not client then
-		return oauth_error("invalid_client", "incorrect credentials");
-	end
-
-	if not verify_client_secret(params.client_id, params.client_secret) then
-		module:log("debug", "client_secret mismatch");
-		return oauth_error("invalid_client", "incorrect credentials");
 	end
 	local code, err = codes:get("authorization_code:" .. params.client_id .. "#" .. params.code);
 	if err then error(err); end
@@ -553,20 +605,8 @@ function grant_type_handlers.authorization_code(params)
 	return json.encode(new_access_token(code.granted_jid, code.granted_role, code.granted_scopes, client, code.id_token));
 end
 
-function grant_type_handlers.refresh_token(params)
-	if not params.client_id then return oauth_error("invalid_request", "missing 'client_id'"); end
-	if not params.client_secret then return oauth_error("invalid_request", "missing 'client_secret'"); end
+function grant_type_handlers.refresh_token(params, client)
 	if not params.refresh_token then return oauth_error("invalid_request", "missing 'refresh_token'"); end
-
-	local client = check_client(params.client_id);
-	if not client then
-		return oauth_error("invalid_client", "incorrect credentials");
-	end
-
-	if not verify_client_secret(params.client_id, params.client_secret) then
-		module:log("debug", "client_secret mismatch");
-		return oauth_error("invalid_client", "incorrect credentials");
-	end
 
 	local refresh_token_info = tokens.get_token_info(params.refresh_token);
 	if not refresh_token_info or refresh_token_info.purpose ~= "oauth2-refresh" then
@@ -599,20 +639,8 @@ function grant_type_handlers.refresh_token(params)
 	return json.encode(new_access_token(refresh_token_info.jid, role, new_scopes, client, nil, refresh_token_info));
 end
 
-grant_type_handlers[device_uri] = function(params)
-	if not params.client_id then return oauth_error("invalid_request", "missing 'client_id'"); end
-	if not params.client_secret then return oauth_error("invalid_request", "missing 'client_secret'"); end
+grant_type_handlers[device_uri] = function(params, client)
 	if not params.device_code then return oauth_error("invalid_request", "missing 'device_code'"); end
-
-	local client = check_client(params.client_id);
-	if not client then
-		return oauth_error("invalid_client", "incorrect credentials");
-	end
-
-	if not verify_client_secret(params.client_id, params.client_secret) then
-		module:log("debug", "client_secret mismatch");
-		return oauth_error("invalid_client", "incorrect credentials");
-	end
 
 	local code = codes:get("device_code:" .. params.client_id .. "#" .. params.device_code);
 	if type(code) ~= "table" or code_expired(code) then
@@ -748,8 +776,14 @@ if module:get_host_type() == "component" then
 	local component_secret = assert(module:get_option_string("component_secret"), "'component_secret' is a required setting when loaded on a Component");
 
 	function grant_type_handlers.password(params)
-		local request_jid = assert(params.username, oauth_error("invalid_request", "missing 'username' (JID)"));
-		local request_password = assert(params.password, oauth_error("invalid_request", "missing 'password'"));
+		local request_jid = params.username;
+		if not request_jid then
+			return oauth_error("invalid_request", "missing 'username' (JID)");
+		end
+		local request_password = params.password
+		if not request_password then
+			return oauth_error("invalid_request", "missing 'password'");
+		end
 		local request_username, request_host, request_resource = jid.prepped_split(request_jid);
 		if params.scope then
 			-- TODO shouldn't we support scopes / roles here?
@@ -782,15 +816,28 @@ end
 -- the redirect_uri is missing or invalid. In those cases, we render an
 -- error directly to the user-agent.
 local function error_response(request, redirect_uri, err)
-	if not redirect_uri or redirect_uri == oob_uri or redirect_uri == device_uri then
+	if not redirect_uri or redirect_uri == oob_uri then
 		return render_error(err);
 	end
-	local q = strict_formdecode(request.url.query);
+	local params = strict_formdecode(request.url.query);
+	if redirect_uri == device_uri then
+		local is_device, device_state = verify_device_token(params.state);
+		if is_device then
+			local device_code = b64url(hashes.hmac_sha256(verification_key, device_state.user_code));
+			local code = codes:get("device_code:" .. params.client_id .. "#" .. device_code);
+			if type(code) == "table" then
+				code.error = err;
+				code.expires = os.time() + 60;
+				codes:set("device_code:" .. params.client_id .. "#" .. device_code, code);
+			end
+		end
+		return render_error(err);
+	end
 	local redirect_query = url.parse(redirect_uri);
 	local sep = redirect_query.query and "&" or "?";
 	redirect_uri = redirect_uri
 		.. sep .. http.formencode(err.extra.oauth2_response)
-		.. "&" .. http.formencode({ state = q.state, iss = get_issuer() });
+		.. "&" .. http.formencode({ state = params.state, iss = get_issuer() });
 	module:log("debug", "Sending error response to client via redirect to %s", redirect_uri);
 	return {
 		status_code = 303;
@@ -860,12 +907,32 @@ function handle_token_grant(event)
 		params.client_secret = http.urldecode(credentials.password);
 	end
 
+	if not params.client_id then return oauth_error("invalid_request", "missing 'client_id'"); end
+	if not params.client_secret then return oauth_error("invalid_request", "missing 'client_secret'"); end
+
+	local client, err = check_client(params.client_id);
+	if not client then
+		module:log("debug", "Incorrect credentials (client_id): "..err);
+		return oauth_error("invalid_client", "incorrect credentials");
+	end
+
+	if not verify_client_secret(params.client_id, params.client_secret) then
+		module:log("debug", "client_secret mismatch");
+		return oauth_error("invalid_client", "incorrect credentials");
+	end
+
+
 	local grant_type = params.grant_type
+	if not array_contains(client.grant_types, grant_type) then
+		return oauth_error("invalid_request", "'grant_type' not registered");
+	end
+
 	local grant_handler = grant_type_handlers[grant_type];
 	if not grant_handler then
-		return oauth_error("invalid_request", "No such grant type.");
+		return oauth_error("invalid_request", "'grant_type' not available");
 	end
-	return grant_handler(params);
+
+	return grant_handler(params, client);
 end
 
 local function handle_authorization_request(event)
@@ -896,10 +963,16 @@ local function handle_authorization_request(event)
 	end
 	-- From this point we know that redirect_uri is safe to use
 
-	local client_response_types = set.new(array(client.response_types or { "code" }));
-	client_response_types = set.intersection(client_response_types, allowed_response_type_handlers);
-	if not client_response_types:contains(params.response_type) then
-		return error_response(request, redirect_uri, oauth_error("invalid_client", "'response_type' not allowed"));
+	local response_type = params.response_type;
+	if not array_contains(client.response_types, response_type) then
+		return error_response(request, redirect_uri, oauth_error("invalid_client", "'response_type' not registered"));
+	end
+	if not allowed_response_type_handlers:contains(response_type) then
+		return error_response(request, redirect_uri, oauth_error("unsupported_response_type", "'response_type' not allowed"));
+	end
+	local response_handler = response_type_handlers[response_type];
+	if not response_handler then
+		return error_response(request, redirect_uri, oauth_error("unsupported_response_type"));
 	end
 
 	local requested_scopes = parse_scopes(params.scope or "");
@@ -936,6 +1009,10 @@ local function handle_authorization_request(event)
 		roles = user_assumable_roles(auth_state.user.username, roles);
 
 		if not prompt:contains("consent") then
+			if array_contains(scopes, "offline_access") then
+				-- MUST ensure that the prompt parameter contains consent
+				return error_response(request, redirect_uri, oauth_error("consent_required"));
+			end
 			local grants = tokens.get_user_grants(auth_state.user.username);
 			local matching_grant;
 			if grants then
@@ -959,20 +1036,34 @@ local function handle_authorization_request(event)
 
 		else
 			-- Render consent page
-			return render_page(templates.consent, { state = auth_state; client = client; scopes = scopes+roles }, true);
+			module:log("debug", "scopes=%q", scopes);
+			local scope_choices = array.new(module:get_host_items("openid-claim")):map(function(item)
+				if type(item) == "string" then
+					return { claim = item };
+				elseif type(item) == "table" and type(item.claim) == "string" then
+					return item;
+				end
+			end):filter(function (item)
+				if array_contains(scopes, item.claim) then
+					module:log("debug", "scopes contains %q", item);
+					return true;
+				else
+					module:log("debug", "scopes contains NO %q", item);
+					return false;
+				end
+			end);
+			for _, role in ipairs(roles) do
+				if role == "xmpp" then
+					scope_choices:push({ claim = role; title = "XMPP";
+						description = "Unlimited access to your account, including sending and receiving messages."; });
+				else
+					scope_choices:push({ claim = role; title = role, description = "Prosody Role" });
+				end
+			end
+			return render_page(templates.consent, { state = auth_state; client = client; scopes = scope_choices }, true);
 		end
 	elseif not auth_state.consent then
 		-- Notify client of rejection
-		if redirect_uri == device_uri then
-			local is_device, device_state = verify_device_token(params.state);
-			if is_device then
-				local device_code = b64url(hashes.hmac_sha256(verification_key, device_state.user_code));
-				local code = codes:get("device_code:" .. params.client_id .. "#" .. device_code);
-				code.error = oauth_error("access_denied");
-				code.expires = os.time() + 60;
-				codes:set("device_code:" .. params.client_id .. "#" .. device_code, code);
-			end
-		end
 		return error_response(request, redirect_uri, oauth_error("access_denied"));
 	end
 	-- else auth_state.consent == true
@@ -988,20 +1079,21 @@ local function handle_authorization_request(event)
 	params.scope = granted_scopes:concat(" ");
 
 	local user_jid = jid.join(auth_state.user.username, module.host);
-	local client_secret = make_client_secret(params.client_id);
-	local id_token_signer = jwt.new_signer("HS256", client_secret);
-	local id_token = id_token_signer({
-		iss = get_issuer();
-		sub = url.build({ scheme = "xmpp"; path = user_jid });
-		aud = params.client_id;
-		auth_time = auth_state.user.iat;
-		nonce = params.nonce;
-		amr = auth_state.user.amr;
-	});
-	local response_type = params.response_type;
-	local response_handler = response_type_handlers[response_type];
-	if not response_handler then
-		return error_response(request, redirect_uri, oauth_error("unsupported_response_type"));
+	local id_token;
+	-- https://openid.net/specs/openid-connect-core-1_0.html#rfc.section.3.1.2.1
+	if array_contains(granted_scopes, "openid") then
+		local client_secret = make_client_secret(params.client_id);
+		local id_token_signer = jwt.new_signer("HS256", client_secret);
+		id_token = id_token_signer({
+			iss = get_issuer(); -- REQUIRED
+			sub = url.build({ scheme = "xmpp"; path = user_jid }); -- REQUIRED
+			aud = params.client_id; -- REQUIRED
+			-- exp REQUIRED, set by util.jwt
+			-- iat REQUIRED, set by util.jwt
+			auth_time = auth_state.user.iat; -- REQUIRED when Essential Claim, otherwise OPTIONAL
+			nonce = params.nonce;
+			amr = auth_state.user.amr; -- RFC 8176: Authentication Method Reference Values
+		});
 	end
 	local ret = response_handler(client, params, user_jid, id_token);
 	if errors.is_err(ret) then
@@ -1039,7 +1131,7 @@ local function handle_device_authorization_request(event)
 		return render_error(oauth_error("invalid_request", "Invalid 'client_id' parameter"));
 	end
 
-	if not set.new(client.grant_types):contains(device_uri) then
+	if not array_contains(client.grant_types, device_uri) then
 		return render_error(oauth_error("invalid_client", "Client not registered for device authorization grant"));
 	end
 
@@ -1230,8 +1322,6 @@ local registration_schema = {
 		-- These are shown to users in the template
 		"client_name";
 		"client_uri";
-		-- We need at least one redirect URI for things to work
-		"redirect_uris";
 	};
 	properties = {
 		redirect_uris = {
@@ -1248,8 +1338,10 @@ local registration_schema = {
 					"http://localhost:8080/redirect";
 					"com.example.app:/redirect";
 					oob_uri;
-					device_uri;
 				};
+				["not"] = {
+					const = device_uri;
+				}
 			};
 		};
 		token_endpoint_auth_method = {
@@ -1294,7 +1386,6 @@ local registration_schema = {
 		response_types = {
 			title = "Response Types";
 			type = "array";
-			minItems = 1;
 			uniqueItems = true;
 			items = { type = "string"; enum = { "code"; "token" } };
 			default = { "code" };
@@ -1422,9 +1513,12 @@ function create_client(client_metadata)
 		return nil, oauth_error("invalid_client_metadata", "Missing, invalid or insecure client_uri");
 	end
 
-	if not client_metadata.application_type and redirect_uri_allowed(client_metadata.redirect_uris[1], client_uri, "native") then
-		client_metadata.application_type = "native";
-		-- else defaults to "web"
+	if not client_metadata.application_type then
+		if client_metadata.redirect_uris and redirect_uri_allowed(client_metadata.redirect_uris[1], client_uri, "native") then
+			client_metadata.application_type = "native";
+		elseif array_contains(client_metadata.grant_types, device_uri) then
+			client_metadata.application_type = "native";
+		end
 	end
 
 	-- Fill in default values
@@ -1441,9 +1535,11 @@ function create_client(client_metadata)
 		end
 	end
 
-	for _, redirect_uri in ipairs(client_metadata.redirect_uris) do
-		if not redirect_uri_allowed(redirect_uri, client_uri, client_metadata.application_type) then
-			return nil, oauth_error("invalid_redirect_uri", "Invalid, insecure or inappropriate redirect URI.");
+	if client_metadata.redirect_uris then
+		for _, redirect_uri in ipairs(client_metadata.redirect_uris) do
+			if not redirect_uri_allowed(redirect_uri, client_uri, client_metadata.application_type) then
+				return nil, oauth_error("invalid_redirect_uri", "Invalid, insecure or inappropriate redirect URI.");
+			end
 		end
 	end
 
@@ -1458,16 +1554,25 @@ function create_client(client_metadata)
 	local grant_types = set.new(client_metadata.grant_types);
 	local response_types = set.new(client_metadata.response_types);
 
+	if not (grant_types - allowed_grant_type_handlers):empty() then
+		return nil, oauth_error("invalid_client_metadata", "Disallowed 'grant_types' specified");
+	elseif not (response_types - allowed_response_type_handlers):empty() then
+		return nil, oauth_error("invalid_client_metadata", "Disallowed 'response_types' specified");
+	end
+
+
+	if not client_metadata.redirect_uris then
+		if grant_types:contains("authorization_code") then
+			return nil, oauth_error("invalid_client_metadata", "The 'authorization_code' grant requires 'redirect_uris' to be present.");
+		elseif grant_types:contains("implicit") then
+			return nil, oauth_error("invalid_client_metadata", "The 'implicit' grant requires 'redirect_uris' to be present.");
+		end
+	end
+
 	if grant_types:contains("authorization_code") and not response_types:contains("code") then
 		return nil, oauth_error("invalid_client_metadata", "Inconsistency between 'grant_types' and 'response_types'");
 	elseif grant_types:contains("implicit") and not response_types:contains("token") then
 		return nil, oauth_error("invalid_client_metadata", "Inconsistency between 'grant_types' and 'response_types'");
-	end
-
-	if set.intersection(grant_types, allowed_grant_type_handlers):empty() then
-		return nil, oauth_error("invalid_client_metadata", "No allowed 'grant_types' specified");
-	elseif set.intersection(response_types, allowed_response_type_handlers):empty() then
-		return nil, oauth_error("invalid_client_metadata", "No allowed 'response_types' specified");
 	end
 
 	if client_metadata.token_endpoint_auth_method ~= "none" then
@@ -1477,6 +1582,8 @@ function create_client(client_metadata)
 		-- Not needed for public clients without a secret, but those are expected
 		-- to be uncommon since they can only do the insecure implicit flow.
 		client_metadata.nonce = id.short();
+	elseif grant_types ~= set.new({ "implicit" }) then
+		return nil, oauth_error("invalid_client_metadata", "A 'token_endpoint_auth_method' value of 'none' only works with the 'implicit' grant");
 	end
 
 	-- Do we want to keep everything?
@@ -1656,28 +1763,34 @@ function get_authorization_server_metadata()
 		issuer = get_issuer();
 		authorization_endpoint = handle_authorization_request and module:http_url() .. "/authorize" or nil;
 		token_endpoint = handle_token_grant and module:http_url() .. "/token" or nil;
+		jwks_uri = nil; -- REQUIRED in OpenID Discovery but not in OAuth 2.0 Metadata
 		registration_endpoint = handle_register_request and module:http_url() .. "/register" or nil;
-		scopes_supported = usermanager.get_all_roles
-			and array(it.keys(usermanager.get_all_roles(module.host))):push("xmpp"):append(array(openid_claims:items()));
+		scopes_supported = array({ "xmpp" }):append(array(it.keys(usermanager.get_all_roles(module.host)))):append(array(openid_claims:items()));
 		response_types_supported = array(it.keys(response_type_handlers));
-		token_endpoint_auth_methods_supported = array({ "client_secret_post"; "client_secret_basic" });
+		response_modes_supported = array(it.keys(response_type_handlers)):map(tmap { token = "fragment"; code = "query" });
+		grant_types_supported = array(it.keys(grant_type_handlers));
+		token_endpoint_auth_methods_supported = array({ "client_secret_basic"; "client_secret_post"; "none" });
+		token_endpoint_auth_signing_alg_values_supported = nil;
+		service_documentation = module:get_option_string("oauth2_service_documentation", "https://modules.prosody.im/mod_http_oauth2.html");
+		ui_locales_supported = allowed_locales[1] and allowed_locales;
 		op_policy_uri = module:get_option_string("oauth2_policy_url", nil);
 		op_tos_uri = module:get_option_string("oauth2_terms_url", nil);
 		revocation_endpoint = handle_revocation_request and module:http_url() .. "/revoke" or nil;
-		revocation_endpoint_auth_methods_supported = array({ "client_secret_basic" });
-		device_authorization_endpoint = handle_device_authorization_request and module:http_url() .. "/device";
+		revocation_endpoint_auth_methods_supported = array({ "client_secret_basic"; "client_secret_post"; "none" });
+		revocation_endpoint_auth_signing_alg_values_supported = nil;
 		introspection_endpoint = handle_introspection_request and module:http_url() .. "/introspect";
 		introspection_endpoint_auth_methods_supported = nil;
+		introspection_endpoint_auth_signing_alg_values_supported = nil;
 		code_challenge_methods_supported = array(it.keys(verifier_transforms));
-		grant_types_supported = array(it.keys(grant_type_handlers));
-		response_modes_supported = array(it.keys(response_type_handlers)):map(tmap { token = "fragment"; code = "query" });
-		authorization_response_iss_parameter_supported = true;
-		service_documentation = module:get_option_string("oauth2_service_documentation", "https://modules.prosody.im/mod_http_oauth2.html");
-		ui_locales_supported = allowed_locales[1] and allowed_locales;
 
-		-- OpenID
+		-- RFC 8628: OAuth 2.0 Device Authorization Grant
+		device_authorization_endpoint = handle_device_authorization_request and module:http_url() .. "/device";
+
+		-- RFC 9207: OAuth 2.0 Authorization Server Issuer Identification
+		authorization_response_iss_parameter_supported = true;
+
+		-- OpenID Connect Discovery 1.0
 		userinfo_endpoint = handle_userinfo_request and module:http_url() .. "/userinfo" or nil;
-		jwks_uri = nil; -- REQUIRED in OpenID Discovery but not in OAuth 2.0 Metadata
 		id_token_signing_alg_values_supported = { "HS256" }; -- The algorithm RS256 MUST be included, but we use HS256 and client_secret as shared key.
 	}
 	return authorization_server_metadata;

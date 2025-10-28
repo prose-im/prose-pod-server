@@ -3,6 +3,8 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use std::sync::Arc;
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -46,9 +48,9 @@ pub struct Error {
 
     status: StatusCode,
 
-    message: String,
+    message: Arc<str>,
 
-    description: String,
+    description: Arc<str>,
 }
 
 impl Error {
@@ -58,11 +60,11 @@ impl Error {
         kind: &'static str,
         code: &'static str,
         status: StatusCode,
-        message: impl Into<String>,
-        description: impl Into<String>,
+        message: impl AsRef<str>,
+        description: impl AsRef<str>,
     ) -> Self {
-        let message: String = message.into();
-        let description: String = description.into();
+        let message: Arc<str> = message.as_ref().into();
+        let description: Arc<str> = description.as_ref().into();
 
         // Check values.
         {
