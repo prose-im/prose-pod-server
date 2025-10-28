@@ -14,7 +14,7 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use prosody_child_process::ProsodyChildProcess;
 use prosody_http::ProsodyHttpConfig;
-use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2Client};
+use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2};
 use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
@@ -72,7 +72,7 @@ pub async fn bootstrap(
     let prosody_http_config = Arc::new(ProsodyHttpConfig {
         url: "http://prose-pod-server:5280".to_owned(),
     });
-    let oauth2_client = Arc::new(oauth2::Client::new(prosody_http_config));
+    let oauth2_client = Arc::new(ProsodyOAuth2::new(prosody_http_config));
 
     // TODO: Allow avoiding registration by passing
     //   client credentials via configuration.
@@ -237,7 +237,7 @@ async fn start_prosody(
 }
 
 async fn register_oauth2_client(
-    oauth2: &ProsodyOAuth2Client,
+    oauth2: &ProsodyOAuth2,
 ) -> Result<oauth2::ClientCredentials, anyhow::Error> {
     let oauth2_client_config = OAuth2ClientConfig {
         client_name: "Prose Pod Server API".to_owned(),
@@ -265,7 +265,7 @@ async fn create_service_accounts(
     app_config: &AppConfig,
     prosodyctl: &mut Prosodyctl,
     prosody_rest: &ProsodyRest,
-    oauth2: &ProsodyOAuth2Client,
+    oauth2: &ProsodyOAuth2,
     secrets: &SecretsService,
 ) -> Result<Vec<BareJid>, anyhow::Error> {
     use prosody_rest::prose_xmpp::stanza::{VCard4, vcard4};

@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context as _, anyhow};
 use arc_swap::ArcSwap;
-use prosody_http::{mod_http_oauth2::ProsodyOAuth2Client, oauth2};
+use prosody_http::{mod_http_oauth2::ProsodyOAuth2, oauth2};
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 use tokio_util::sync::CancellationToken;
 
@@ -23,7 +23,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SecretsService {
     pub store: SecretsStore,
-    pub oauth2: Arc<ProsodyOAuth2Client>,
+    pub oauth2: Arc<ProsodyOAuth2>,
     pub oauth2_client_credentials: ArcSwap<oauth2::ClientCredentials>,
 }
 

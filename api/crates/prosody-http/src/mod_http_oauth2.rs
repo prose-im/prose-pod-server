@@ -14,21 +14,19 @@ use ureq::http::header::ACCEPT;
 use crate::Timestamp;
 use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt as _};
 
-pub use self::ProsodyOAuth2Client as Client;
-
 /// Rust interface to [`mod_http_oauth2`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_oauth2).
 #[derive(Debug)]
-pub struct ProsodyOAuth2Client {
+pub struct ProsodyOAuth2 {
     http_config: Arc<ProsodyHttpConfig>,
 }
 
-impl ProsodyOAuth2Client {
+impl ProsodyOAuth2 {
     pub fn new(http_config: Arc<ProsodyHttpConfig>) -> Self {
         Self { http_config }
     }
 }
 
-impl ProsodyOAuth2Client {
+impl ProsodyOAuth2 {
     #[inline]
     pub async fn register(
         &self,
@@ -63,7 +61,7 @@ impl ProsodyOAuth2Client {
     }
 }
 
-impl ProsodyOAuth2Client {
+impl ProsodyOAuth2 {
     /// Utility function (i.e. non-OAuth 2.0) that
     /// logs a user in using their credentials.
     #[inline]
@@ -455,7 +453,7 @@ impl From<ureq::Error> for ProsodyHttpOAuth2Error {
 
 // MARK: - Helpers
 
-impl ProsodyOAuth2Client {
+impl ProsodyOAuth2 {
     fn url(&self, path: &str) -> String {
         assert!(path.starts_with('/'));
         format!("{base}/oauth2{path}", base = self.http_config.url)
@@ -484,7 +482,8 @@ impl ProsodyOAuth2Client {
     }
 }
 
-/// NOTE: This is separated from [`Client::get`] and similar for two reasons:
+/// NOTE: This is separated from [`ProsodyOAuth2::get`] and similar
+///   for two reasons:
 ///
 ///   1. Separate concerns.
 ///   2. Allow routes to do something with the response before it’s parsed.

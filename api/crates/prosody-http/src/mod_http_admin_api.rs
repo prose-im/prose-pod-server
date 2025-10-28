@@ -11,11 +11,9 @@ use ureq::http::header::ACCEPT;
 
 use crate::{Password, ProsodyHttpConfig, Timestamp, util::RequestBuilderExt as _};
 
-pub use self::ProsodyAdminApiClient as Client;
-
 /// Rust interface to [`mod_http_admin_api`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_admin_api).
 #[derive(Debug)]
-pub struct ProsodyAdminApiClient {
+pub struct ProsodyAdminApi {
     http_config: Arc<ProsodyHttpConfig>,
 }
 
@@ -27,7 +25,7 @@ impl ProsodyAdminApi {
 
 // MARK: Users
 
-impl ProsodyAdminApiClient {
+impl ProsodyAdminApi {
     pub async fn list_users(&self, auth: &Password) -> Result<Vec<UserInfo>, self::Error> {
         let response = self.get("/users").bearer_auth(auth).call()?;
 
@@ -109,7 +107,7 @@ pub struct UpdateUserInfoRequest {
 
 // MARK: Groups
 
-impl ProsodyAdminApiClient {
+impl ProsodyAdminApi {
     pub async fn create_group(
         &self,
         group_id: &str,
@@ -155,7 +153,7 @@ impl ProsodyAdminApiClient {
 
 // MARK: Invites
 
-impl ProsodyAdminApiClient {
+impl ProsodyAdminApi {
     pub async fn list_invites(&self, auth: &Password) -> Result<Vec<InviteInfo>, self::Error> {
         let response = self.get("/invites").bearer_auth(auth).call()?;
 
@@ -340,7 +338,7 @@ impl From<ureq::Error> for ProsodyHttpAdminApiError {
 
 // MARK: - Helpers
 
-impl Client {
+impl ProsodyAdminApi {
     fn url(&self, path: &str) -> String {
         assert!(path.starts_with('/'));
         format!("{base}/admin_api{path}", base = self.http_config.url)
@@ -381,7 +379,8 @@ impl Client {
     }
 }
 
-/// NOTE: This is separated from [`Client::get`] and similar for two reasons:
+/// NOTE: This is separated from [`ProsodyAdminApi::get`] and similar
+///   for two reasons:
 ///
 ///   1. Separate concerns.
 ///   2. Allow routes to do something with the response before it’s parsed.

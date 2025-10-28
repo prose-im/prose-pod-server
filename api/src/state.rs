@@ -298,7 +298,7 @@ pub mod backend {
     use std::sync::Arc;
 
     use prosody_child_process::ProsodyChildProcess;
-    use prosody_http::mod_http_oauth2::ProsodyOAuth2Client;
+    use prosody_http::mod_http_oauth2::ProsodyOAuth2;
     use prosody_rest::ProsodyRest;
     use prosodyctl::Prosodyctl;
     use tokio::sync::RwLock;
@@ -363,7 +363,7 @@ pub mod backend {
             pub prosody: Arc<RwLock<ProsodyChildProcess>>,
             pub prosodyctl: Arc<RwLock<Prosodyctl>>,
             pub prosody_rest: ProsodyRest,
-            pub oauth2_client: Arc<ProsodyOAuth2Client>,
+            pub oauth2_client: Arc<ProsodyOAuth2>,
             pub secrets_service: SecretsService,
         }
     }
