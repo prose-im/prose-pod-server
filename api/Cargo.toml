@@ -11,7 +11,7 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 
 [dependencies]
 anyhow = { version = "=1.0.99", default-features = false }
-arc-swap = { version = "1", default-features = false }
+arc-swap = { version = "=1.7.1", default-features = false }
 axum = { version = "=0.8.4", default-features = false, features = ["tokio", "http1", "json", "matched-path"] }
 axum-hot-swappable-router = { git = "https://github.com/RemiBardon/axum-hot-swappable-router.git", rev = "26b1a3324dafaa7df05355275c9b878045aebd2d", default-features = false }
 base64 = { version = "=0.22.1", default-features = false }
