@@ -11,6 +11,8 @@ mod util;
 
 #[cfg(feature = "secrecy")]
 pub use secrecy;
+#[cfg(feature = "time")]
+pub use time;
 
 pub use self::error::{Error, ProsodyHttpError};
 #[cfg(feature = "mod_http_admin_api")]
