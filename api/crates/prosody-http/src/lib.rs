@@ -24,9 +24,9 @@ pub struct ProsodyHttpConfig {
 }
 
 #[cfg(not(feature = "secrecy"))]
-pub type Password = str;
+pub type Secret = str;
 #[cfg(feature = "secrecy")]
-pub type Password = secrecy::SecretString;
+pub type Secret = secrecy::SecretString;
 
 #[cfg(not(feature = "time"))]
 pub type Timestamp = u32;

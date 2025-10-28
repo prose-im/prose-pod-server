@@ -12,7 +12,7 @@ use serde_json::json;
 use ureq::http::header::ACCEPT;
 
 use crate::Timestamp;
-use crate::{Password, ProsodyHttpConfig, util::RequestBuilderExt as _};
+use crate::{ProsodyHttpConfig, Secret, util::RequestBuilderExt as _};
 
 /// Rust interface to [`mod_http_oauth2`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_oauth2).
 #[derive(Debug)]
@@ -39,14 +39,14 @@ impl ProsodyOAuth2 {
     }
 
     #[inline]
-    pub async fn userinfo(&self, auth: &Password) -> Result<UserInfoResponse, self::Error> {
+    pub async fn userinfo(&self, auth: &Secret) -> Result<UserInfoResponse, self::Error> {
         let response = self.get("/userinfo").bearer_auth(auth).call()?;
 
         receive(response)
     }
 
     #[inline]
-    pub async fn revoke(&self, auth: &Password) -> Result<(), self::Error> {
+    pub async fn revoke(&self, auth: &Secret) -> Result<(), self::Error> {
         let token = auth;
 
         #[cfg(feature = "secrecy")]
@@ -68,7 +68,7 @@ impl ProsodyOAuth2 {
     pub async fn util_log_in(
         &self,
         username: &str,
-        password: &Password,
+        password: &Secret,
         ClientCredentials {
             client_id,
             client_secret,
@@ -265,9 +265,9 @@ pub struct TokenResponse {
     pub token_type: Box<str>,
 
     #[serde(default)]
-    pub refresh_token: Option<Password>,
+    pub refresh_token: Option<Secret>,
 
-    pub access_token: Password,
+    pub access_token: Secret,
 }
 
 pub use self::OAuth2ClientMetadata as ClientMetadata;
@@ -348,7 +348,7 @@ pub struct OAuth2ClientMetadata {
     #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
     pub client_id_issued_at: Timestamp,
 
-    pub client_secret: Password,
+    pub client_secret: Secret,
 
     /// WARN: DO NOT use `#[serde(default)]` here: `0` has a special meaning.
     #[cfg_attr(feature = "time", serde(with = "time::serde::timestamp"))]
@@ -369,7 +369,7 @@ pub use self::OAuth2ClientCredentials as ClientCredentials;
 pub struct OAuth2ClientCredentials {
     pub client_id: Box<str>,
 
-    pub client_secret: Password,
+    pub client_secret: Secret,
 }
 
 impl ClientMetadata {

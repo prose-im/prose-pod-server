@@ -3,15 +3,15 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use crate::Password;
+use crate::Secret;
 
 pub(crate) trait RequestBuilderExt {
-    fn basic_auth(self, username: &str, password: &Password) -> Self;
-    fn bearer_auth(self, token: &Password) -> Self;
+    fn basic_auth(self, username: &str, password: &Secret) -> Self;
+    fn bearer_auth(self, token: &Secret) -> Self;
 }
 
 impl<T> RequestBuilderExt for ureq::RequestBuilder<T> {
-    fn basic_auth(self, username: &str, password: &Password) -> Self {
+    fn basic_auth(self, username: &str, password: &Secret) -> Self {
         use base64::prelude::{BASE64_STANDARD, Engine as _};
         use ureq::http::header::AUTHORIZATION;
 
@@ -27,7 +27,7 @@ impl<T> RequestBuilderExt for ureq::RequestBuilder<T> {
         )
     }
 
-    fn bearer_auth(self, token: &Password) -> Self {
+    fn bearer_auth(self, token: &Secret) -> Self {
         use ureq::http::header::AUTHORIZATION;
 
         #[cfg(feature = "secrecy")]

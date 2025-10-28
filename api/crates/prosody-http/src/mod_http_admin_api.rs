@@ -5,11 +5,13 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "secrecy")]
+use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::{Password, ProsodyHttpConfig, Timestamp, util::RequestBuilderExt as _};
+use crate::{ProsodyHttpConfig, Secret, Timestamp, util::RequestBuilderExt as _};
 
 /// Rust interface to [`mod_http_admin_api`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_admin_api).
 #[derive(Debug)]
@@ -26,7 +28,7 @@ impl ProsodyAdminApi {
 // MARK: Users
 
 impl ProsodyAdminApi {
-    pub async fn list_users(&self, auth: &Password) -> Result<Box<[UserInfo]>, self::Error> {
+    pub async fn list_users(&self, auth: &Secret) -> Result<Box<[UserInfo]>, self::Error> {
         let response = self.get("/users").bearer_auth(auth).call()?;
 
         receive(response)
@@ -35,7 +37,7 @@ impl ProsodyAdminApi {
     pub async fn get_user_by_name(
         &self,
         username: &str,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<Option<UserInfo>, self::Error> {
         let response = self
             .get(&format!("/users/{username}"))
@@ -49,7 +51,7 @@ impl ProsodyAdminApi {
         &self,
         username: &str,
         req: &UpdateUserInfoRequest,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<(), self::Error> {
         // TODO: It’s `PUT`, but it really behaves as a `PATCH`.
         //   We will fix this but until then we have to use `PUT`.
@@ -61,7 +63,7 @@ impl ProsodyAdminApi {
         receive(response)
     }
 
-    pub async fn delete_user(&self, username: &str, auth: &Password) -> Result<(), self::Error> {
+    pub async fn delete_user(&self, username: &str, auth: &Secret) -> Result<(), self::Error> {
         let response = self
             .delete(&format!("/users/{username}"))
             .bearer_auth(auth)
@@ -112,7 +114,7 @@ impl ProsodyAdminApi {
         &self,
         group_id: &str,
         group_name: &str,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<(), self::Error> {
         let response = self
             .put("/groups")
@@ -126,7 +128,7 @@ impl ProsodyAdminApi {
         &self,
         group_id: &str,
         username: &str,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<(), self::Error> {
         let response = self
             .put(&format!("/groups/{group_id}/members/{username}"))
@@ -140,7 +142,7 @@ impl ProsodyAdminApi {
         &self,
         group_id: &str,
         username: &str,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<(), self::Error> {
         let response = self
             .delete(&format!("/groups/{group_id}/members/{username}"))
@@ -154,7 +156,7 @@ impl ProsodyAdminApi {
 // MARK: Invites
 
 impl ProsodyAdminApi {
-    pub async fn list_invites(&self, auth: &Password) -> Result<Box<[InviteInfo]>, self::Error> {
+    pub async fn list_invites(&self, auth: &Secret) -> Result<Box<[InviteInfo]>, self::Error> {
         let response = self.get("/invites").bearer_auth(auth).call()?;
 
         receive(response)
@@ -163,7 +165,7 @@ impl ProsodyAdminApi {
     pub async fn create_invite_for_account(
         &self,
         req: &CreateAccountInvitationRequest,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<InviteInfo, self::Error> {
         let response = self
             .post("/invites/account")
@@ -176,7 +178,7 @@ impl ProsodyAdminApi {
     pub async fn create_invite_for_account_reset(
         &self,
         req: &CreateAccountResetInvitationRequest,
-        auth: &Password,
+        auth: &Secret,
     ) -> Result<InviteInfo, self::Error> {
         let response = self
             .post("/invites/reset")
@@ -188,9 +190,12 @@ impl ProsodyAdminApi {
 
     pub async fn get_invite_by_id(
         &self,
-        invite_id: &str,
-        auth: &Password,
+        invite_id: &InviteId,
+        auth: &Secret,
     ) -> Result<Option<InviteInfo>, self::Error> {
+        #[cfg(feature = "secrecy")]
+        let invite_id = invite_id.expose_secret();
+
         let response = self
             .get(&format!("/invites/{invite_id}"))
             .bearer_auth(auth)
@@ -199,7 +204,14 @@ impl ProsodyAdminApi {
         receive(response).or_else(accept_not_found)
     }
 
-    pub async fn delete_invite(&self, invite_id: &str, auth: &Password) -> Result<(), self::Error> {
+    pub async fn delete_invite(
+        &self,
+        invite_id: &InviteId,
+        auth: &Secret,
+    ) -> Result<(), self::Error> {
+        #[cfg(feature = "secrecy")]
+        let invite_id = invite_id.expose_secret();
+
         let response = self
             .delete(&format!("/invites/{invite_id}"))
             .bearer_auth(auth)
@@ -208,6 +220,9 @@ impl ProsodyAdminApi {
         receive(response).or_else(accept_not_found)
     }
 }
+
+// NOTE: What `mod_http_admin_api` calls “Invite IDs” really are invite tokens.
+pub type InviteId = crate::Secret;
 
 #[serde_with::skip_serializing_none]
 #[derive(Serialize)]
