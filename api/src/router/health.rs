@@ -3,6 +3,11 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! `HealthTrait` implementations for all app substates.
+//!
+//! Having it all in a single file allows one to
+//! see all possible health errors at once.
+
 use axum::http::StatusCode;
 use axum::response::IntoResponse as _;
 

@@ -132,6 +132,7 @@ impl<F1, B1> AppState<F1, B1> {
 
     #[must_use]
     #[inline]
+    #[allow(unused)]
     pub fn with_frontend_transition<F2>(
         self,
         transition: impl FnOnce(F1) -> F2,
@@ -251,18 +252,6 @@ pub mod frontend {
 
     #[derive(Debug, Clone)]
     pub struct FrontendUndergoingFactoryReset {}
-
-    // MARK: State transitions
-
-    impl<Substate> From<Running<Substate>> for UndergoingFactoryReset
-    where
-        Substate: RunningState,
-    {
-        #[inline(always)]
-        fn from(_: Running<Substate>) -> Self {
-            Self {}
-        }
-    }
 
     // MARK: Boilerplate
 
@@ -397,16 +386,6 @@ pub mod backend {
         #[inline(always)]
         fn from(StartFailed { state, .. }: StartFailed<Substate>) -> Self {
             Self { state }
-        }
-    }
-
-    impl<Substate> From<Running<Substate>> for UndergoingFactoryReset
-    where
-        Substate: RunningState,
-    {
-        #[inline(always)]
-        fn from(_: Running<Substate>) -> Self {
-            Self {}
         }
     }
 

@@ -17,7 +17,7 @@ pub async fn users_stats(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<GetUsersStatsResponse>, Error> {
     let domain = &frontend.config.server.domain;
 
@@ -47,7 +47,7 @@ pub async fn list_admin_jids(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<Vec<BareJid>>, Error> {
     use std::str::FromStr as _;
 

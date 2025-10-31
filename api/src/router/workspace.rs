@@ -67,7 +67,7 @@ async fn init_workspace(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     Json(req): Json<InitWorkspaceRequest>,
 ) -> Result<(), Error> {
     let server_domain = frontend.config.server.domain.as_str();
@@ -114,7 +114,7 @@ async fn get_workspace(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<WorkspaceProfile>, Error> {
     let ref jid = frontend.config.workspace_jid();
     let ref ctx = service_account_credentials(backend, jid).await?;
@@ -138,7 +138,7 @@ pub async fn patch_workspace(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     caller_info: CallerInfo,
     Json(req): Json<PatchWorkspaceRequest>,
 ) -> Result<(), Error> {
@@ -172,7 +172,7 @@ pub async fn get_workspace_name(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<String>, Error> {
     let ref jid = frontend.config.workspace_jid();
     let ref ctx = service_account_credentials(backend, jid).await?;
@@ -187,7 +187,7 @@ pub async fn set_workspace_name(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     caller_info: CallerInfo,
     Json(name): Json<String>,
 ) -> Result<(), Error> {
@@ -218,7 +218,7 @@ pub async fn get_workspace_accent_color(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<Option<Color>>, Error> {
     let ref jid = frontend.config.workspace_jid();
     let ref ctx = service_account_credentials(backend, jid).await?;
@@ -233,7 +233,7 @@ pub async fn set_workspace_accent_color(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     caller_info: CallerInfo,
     Json(color_opt): Json<Option<Color>>,
 ) -> Result<(), Error> {
@@ -264,7 +264,7 @@ pub async fn get_workspace_icon(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<Option<Avatar>>, Error> {
     let ref jid = frontend.config.workspace_jid();
     let ref ctx = service_account_credentials(backend, jid).await?;
@@ -286,7 +286,7 @@ pub async fn set_workspace_icon(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     caller_info: CallerInfo,
     icon: Avatar,
 ) -> Result<(), Error> {

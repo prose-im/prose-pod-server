@@ -5,70 +5,86 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::routing::post;
 use prosody_child_process::ProsodyChildProcess;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::errors;
 use crate::responders::Error;
-use crate::router::util::backend_health;
 use crate::state::prelude::*;
 
-impl AppState<f::Running, b::Running> {
-    pub(in crate::router) fn backend_restart_routes() -> axum::Router<Self> {
-        Router::<Self>::new().route("/backend/restart", post(Self::backend_restart_route))
-    }
-}
-
-/// **Starting** (during a startup and after a factory reset).
-impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
-    fn state_name() -> &'static str {
-        "Starting"
-    }
-
-    fn into_router(self) -> axum::Router {
-        let todo = "Keep one route for safety?";
-        Router::<Self>::new()
-            .fallback(backend_health)
-            .with_state(self)
-    }
-}
-
-/// **Restarting** (during a restart).
-impl AppStateTrait for AppState<f::Running, b::Starting> {
-    fn state_name() -> &'static str {
-        "Restarting"
-    }
-
-    fn into_router(self) -> axum::Router {
-        Router::<Self>::new()
-            // NOTE: Keep `/backend/restart` available just in case an internal
-            //   error happened and we ended up stuck in this state.
-            .route("/backend/restart", post(Self::backend_restart_route))
-            .fallback(backend_health)
-            .with_state(self)
-    }
-}
-
-/// **Start failed** (during a failed restart).
-impl AppStateTrait for AppState<f::Running, b::StartFailed> {
-    fn state_name() -> &'static str {
-        "Start failed"
-    }
-
-    fn into_router(self) -> axum::Router {
-        Router::<Self>::new()
-            .route("/backend/restart", post(Self::backend_start_route))
-            .fallback(backend_health)
-            .with_state(self)
-    }
-}
+// MARK: - Routes
 
 impl AppState<f::Running, b::Running> {
-    #[inline]
-    async fn do_stop_backend<'a, B2>(
+    pub(in crate::router) async fn backend_restart_route(
+        State(app_state): State<Self>,
+    ) -> Result<(), Error> {
+        let backend_state = Arc::clone(&app_state.backend.state);
+        let mut prosody = backend_state.prosody.write().await;
+
+        match app_state.do_stop_backend::<b::Starting>(&mut prosody).await {
+            Ok(app_state) => match app_state.do_start_backend(&mut prosody).await {
+                Ok(_) => Ok(()),
+
+                Err((_, error)) => {
+                    tracing::error!("Backend restart failed: {error:?}");
+                    Err(errors::restart_failed(&error))
+                }
+            },
+
+            Err((_, error)) => {
+                tracing::error!("Backend restart failed: {error:?}");
+                Err(errors::restart_failed(&error))
+            }
+        }
+    }
+}
+
+impl AppState<f::Running, b::Starting> {
+    pub(in crate::router) async fn backend_restart_route(
+        State(app_state): State<Self>,
+    ) -> Result<(), Error> {
+        let backend_state = Arc::clone(&app_state.backend.state);
+        let mut prosody = backend_state.prosody.write().await;
+
+        match app_state.do_start_backend(&mut prosody).await {
+            Ok(_) => Ok(()),
+
+            Err((_, error)) => {
+                tracing::error!("{error:?}");
+                Err(errors::restart_failed(&error))
+            }
+        }
+    }
+}
+
+impl AppState<f::Running, b::StartFailed> {
+    pub(in crate::router) async fn backend_start_route(
+        State(app_state): State<Self>,
+    ) -> Result<(), Error> {
+        let backend_state = Arc::clone(&app_state.backend.state);
+        let mut prosody = backend_state.prosody.write().await;
+
+        match app_state.do_start_backend(&mut prosody).await {
+            Ok(_) => Ok(()),
+
+            Err((_, error)) => {
+                tracing::error!("{error:?}");
+                Err(errors::restart_failed(&error))
+            }
+        }
+    }
+}
+
+// MARK: - State transitions
+
+impl AppState<f::Running, b::Running> {
+    /// ```txt
+    /// AppState<Running, Running>
+    /// -------------------------------------- (Stop backend)
+    /// AppState<Running, B>  B ∈ { Starting }
+    /// ```
+    pub(crate) async fn do_stop_backend<'a, B2>(
         self,
         prosody: &mut RwLockWriteGuard<'a, ProsodyChildProcess>,
     ) -> Result<AppState<f::Running, B2>, (Self, Arc<anyhow::Error>)>
@@ -79,6 +95,7 @@ impl AppState<f::Running, b::Running> {
     {
         match prosody.stop().await {
             Ok(()) => Ok(self.with_auto_transition::<f::Running, B2>()),
+
             Err(err) => {
                 let error = err.context("Could not stop Prosody");
                 let error = Arc::new(error);
@@ -98,8 +115,13 @@ impl AppState<f::Running, b::Running> {
 }
 
 impl<B> AppState<f::Running, B> {
-    #[inline]
-    async fn do_start_backend<'a>(
+    /// ```txt
+    /// AppState<Running, B>  B ∈ { Starting, StartFailed }
+    /// --------------------------------------------------- (Start backend)
+    /// AppState<Running, Running>      if success
+    /// AppState<Running, StartFailed>  if failure
+    /// ```
+    pub(crate) async fn do_start_backend<'a>(
         self,
         prosody: &mut RwLockWriteGuard<'a, ProsodyChildProcess>,
     ) -> Result<
@@ -130,61 +152,6 @@ impl<B> AppState<f::Running, B> {
                 });
 
                 Err((new_state, error))
-            }
-        }
-    }
-}
-
-impl AppState<f::Running, b::Running> {
-    async fn backend_restart_route(State(app_state): State<Self>) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
-
-        match app_state.do_stop_backend::<b::Starting>(&mut prosody).await {
-            Ok(app_state) => match app_state.do_start_backend(&mut prosody).await {
-                Ok(_) => Ok(()),
-
-                Err((_, error)) => {
-                    tracing::error!("Backend restart failed: {error:?}");
-                    Err(errors::restart_failed(&error))
-                }
-            },
-
-            Err((_, error)) => {
-                tracing::error!("Backend restart failed: {error:?}");
-                Err(errors::restart_failed(&error))
-            }
-        }
-    }
-}
-
-impl AppState<f::Running, b::Starting> {
-    async fn backend_restart_route(State(app_state): State<Self>) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
-
-        match app_state.do_start_backend(&mut prosody).await {
-            Ok(_) => Ok(()),
-
-            Err((_, error)) => {
-                tracing::error!("{error:?}");
-                Err(errors::restart_failed(&error))
-            }
-        }
-    }
-}
-
-impl AppState<f::Running, b::StartFailed> {
-    async fn backend_start_route(State(app_state): State<Self>) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
-
-        match app_state.do_start_backend(&mut prosody).await {
-            Ok(_) => Ok(()),
-
-            Err((_, error)) => {
-                tracing::error!("{error:?}");
-                Err(errors::restart_failed(&error))
             }
         }
     }

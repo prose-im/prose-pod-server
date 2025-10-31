@@ -9,18 +9,28 @@ use crate::responders::Error;
 use crate::state::prelude::*;
 use crate::util::{NoContext as _, ResultPanic as _};
 
+// MARK: - Routes
+
 impl AppState<f::Running, b::Running> {
     pub(in crate::router) async fn backend_reload_route(
         State(app_state): State<Self>,
     ) -> Result<(), Error> {
-        _ = app_state.do_reload_backend().await?;
-        Ok(())
+        match app_state.do_reload_backend().await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        }
     }
 }
 
+// MARK: - State transitions
+
 impl AppState<f::Running, b::Running> {
-    #[inline]
-    pub async fn do_reload_backend(self) -> Result<Self, Error> {
+    /// ```txt
+    /// AppState<Running, Running>
+    /// -------------------------- (Reload backend)
+    /// AppState<Running, Running>
+    /// ```
+    pub(crate) async fn do_reload_backend(self) -> Result<Self, Error> {
         use anyhow::Context as _;
 
         // Reload Prosody itself.

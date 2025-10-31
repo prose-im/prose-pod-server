@@ -18,6 +18,15 @@ pub const fn is_upper_snake_case(b: u8) -> bool {
     b.is_ascii_uppercase() || b == b'_'
 }
 
+pub fn unix_timestamp() -> u64 {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
+}
+
 /// Equivalent of [`debug_assert!`] but still
 /// logs an error message in release mode.
 #[inline(always)]

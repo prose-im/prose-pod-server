@@ -16,7 +16,7 @@ pub async fn invitations_stats(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
 ) -> Result<Json<GetInvitationsStatsResponse>, Error> {
     let domain = &frontend.config.server.domain;
 

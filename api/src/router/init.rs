@@ -35,7 +35,7 @@ pub async fn init_first_account(
         ref frontend,
         ref backend,
         ..
-    }): State<AppState<f::Running, b::Running>>,
+    }): State<AppState>,
     Json(dto): Json<CreateAccountRequest>,
 ) -> Result<Json<CreateAccountResponse>, Error> {
     let ref server_domain = frontend.config.server.domain;

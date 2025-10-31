@@ -25,133 +25,127 @@ use crate::models::{BareJid, JidDomain, JidNode, Password};
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
 use crate::state::prelude::*;
+use crate::util::unix_timestamp;
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
-/// See [docs/initialization-phases.md](../docs/initialization-phases.md).
-pub async fn bootstrap(
-    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
-) -> Result<AppState<f::Running, b::Running>, anyhow::Error> {
-    tracing::info!("Bootstrapping…");
-    let start = Instant::now();
+impl AppState<f::Running, b::Starting<b::NotInitialized>> {
+    /// Try bootstrapping the backend, but do not transition if an error occurs.
+    /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
+    /// about bootstrapping.
+    ///
+    /// NOTE: This method does not log errors.
+    pub(crate) async fn try_bootstrapping(
+        self,
+    ) -> Result<AppState<f::Running, b::Running>, anyhow::Error> {
+        tracing::info!("Bootstrapping…");
+        let start = Instant::now();
 
-    let app_config = Arc::deref(&app_state.frontend.config);
-    let ref server_domain = app_config.server.domain;
-    let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
+        let app_config = Arc::deref(&self.frontend.config);
+        let ref server_domain = app_config.server.domain;
 
-    create_required_dirs()?;
+        create_required_dirs()?;
 
-    backup_prosody_conf_if_needed(prosody_config_file_path)?;
-    // apply_init_config(prosody_config_file_path)?;
+        backup_prosody_conf_if_needed()?;
 
-    apply_bootstrap_config(prosody_config_file_path, server_domain)?;
+        apply_bootstrap_config(server_domain)?;
 
-    // NOTE: While it’s here that we could delete the `localhost` data
-    //   generated during a factory reset, it’s better to not do it to
-    //   avoid data loss. If someone starts a Prose Pod on existing
-    //   Prosody data while they had important things stored in `localhost`,
-    //   they’d be horrified if we deleted their data without consent.
-    //   We’ll keep destructive actions during factory resets only.
-    //   It will make the Prose Pod Server more predictable, safer to use
-    //   and faster to audit (only one place where `fs::remove_dir_all`
-    //   happens).
+        // NOTE: While it’s here that we could delete the `localhost` data
+        //   generated during a factory reset, it’s better to not do it to
+        //   avoid data loss. If someone starts a Prose Pod on existing
+        //   Prosody data while they had important things stored in `localhost`,
+        //   they’d be horrified if we deleted their data without consent.
+        //   We’ll keep destructive actions during factory resets only.
+        //   It will make the Prose Pod Server more predictable, safer to use
+        //   and faster to audit (only one place where `fs::remove_dir_all`
+        //   happens).
 
-    // Launch Prosody.
-    let mut prosody = ProsodyChildProcess::new();
-    start_prosody(&app_state, &mut prosody).await?;
+        // Launch Prosody.
+        let mut prosody = ProsodyChildProcess::new();
+        start_prosody(&self, &mut prosody).await?;
 
-    let mut prosodyctl = Prosodyctl::new();
+        let mut prosodyctl = Prosodyctl::new();
 
-    let todo = "Store somewhere";
-    let reload_bound_cancellation_token = CancellationToken::new();
+        let todo = "Store somewhere";
+        let reload_bound_cancellation_token = CancellationToken::new();
 
-    let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
+        let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
-    let prosody_http_config = Arc::new(ProsodyHttpConfig {
-        url: "http://prose-pod-server:5280".to_owned(),
-    });
-    let oauth2_client = Arc::new(ProsodyOAuth2::new(prosody_http_config));
+        let prosody_http_config = Arc::new(ProsodyHttpConfig {
+            url: "http://prose-pod-server:5280".to_owned(),
+        });
+        let oauth2_client = Arc::new(ProsodyOAuth2::new(prosody_http_config));
 
-    // TODO: Allow avoiding registration by passing
-    //   client credentials via configuration.
-    let oauth2_client_credentials = register_oauth2_client(&oauth2_client).await?;
+        // TODO: Allow avoiding registration by passing
+        //   client credentials via configuration.
+        let oauth2_client_credentials = register_oauth2_client(&oauth2_client).await?;
 
-    let secrets = SecretsService {
-        store: SecretsStore::new(app_config),
-        oauth2: oauth2_client.clone(),
-        oauth2_client_credentials: ArcSwap::from_pointee(oauth2_client_credentials),
-    };
-    // Run cache purge tasks in the background.
-    tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
+        let secrets = SecretsService {
+            store: SecretsStore::new(app_config),
+            oauth2: oauth2_client.clone(),
+            oauth2_client_credentials: ArcSwap::from_pointee(oauth2_client_credentials),
+        };
+        // Run cache purge tasks in the background.
+        tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
 
-    let service_accounts = create_service_accounts(
-        app_config,
-        &mut prosodyctl,
-        &prosody_rest,
-        &oauth2_client,
-        &secrets,
-    )
-    .await?;
+        let service_accounts = create_service_accounts(
+            app_config,
+            &mut prosodyctl,
+            &prosody_rest,
+            &oauth2_client,
+            &secrets,
+        )
+        .await?;
 
-    let groups = Groups::new(app_config.as_ref());
-    create_groups(&mut prosodyctl, &groups, server_domain).await?;
+        let groups = Groups::new(app_config.as_ref());
+        create_groups(&mut prosodyctl, &groups, server_domain).await?;
 
-    add_service_accounts_to_groups(
-        &mut prosodyctl,
-        service_accounts
-            .iter()
-            .flat_map(|jid| jid.node().map(JidNode::from)),
-        groups.keys().into_iter(),
-        server_domain,
-    )
-    .await?;
+        add_service_accounts_to_groups(
+            &mut prosodyctl,
+            service_accounts
+                .iter()
+                .flat_map(|jid| jid.node().map(JidNode::from)),
+            groups.keys().into_iter(),
+            server_domain,
+        )
+        .await?;
 
-    synchronize_rosters(&mut prosodyctl, groups.keys().into_iter(), server_domain).await?;
+        synchronize_rosters(&mut prosodyctl, groups.keys().into_iter(), server_domain).await?;
 
-    let new_state = app_state.with_transition(|state| {
-        state.with_backend(b::Running {
-            state: Arc::new(b::Operational {
-                prosody: Arc::new(RwLock::new(prosody)),
-                prosodyctl: Arc::new(RwLock::new(prosodyctl)),
-                prosody_rest,
-                oauth2_client,
-                secrets_service: secrets,
-            }),
-        })
-    });
+        let new_state = self.with_transition(|state| {
+            state.with_backend(b::Running {
+                state: Arc::new(b::Operational {
+                    prosody: Arc::new(RwLock::new(prosody)),
+                    prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+                    prosody_rest,
+                    oauth2_client,
+                    secrets_service: secrets,
+                }),
+            })
+        });
 
-    tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
-    Ok(new_state)
-}
-
-pub async fn startup(
-    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
-) -> Result<(), anyhow::Error> {
-    tracing::info!("Running startup actions…");
-    let start = Instant::now();
-
-    _ = bootstrap(app_state).await?;
-
-    tracing::info!("Now serving all routes.");
-
-    tracing::info!("Startup took {:.0?}.", start.elapsed());
-    Ok(())
+        tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
+        Ok(new_state)
+    }
 }
 
 // MARK: Steps
 
 fn create_required_dirs() -> Result<(), anyhow::Error> {
     fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
-        "Could not create Prosody certs dir at <{PROSODY_CERTS_DIR}>"
+        "Could not create Prosody certs dir at <{path}>",
+        path = PROSODY_CERTS_DIR,
     ))?;
 
     Ok(())
 }
 
-fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> Result<(), anyhow::Error> {
+fn backup_prosody_conf_if_needed() -> Result<(), anyhow::Error> {
     use std::fs::File;
     use std::io::{self, Read as _};
+
+    let prosody_config_file_path = Path::new(PROSODY_CONFIG_FILE_PATH);
 
     // Back up the Prosody configuration if it was not generated by Prose.
     // This is just to avoid a bad surprise to anyone deploying Prose on an
@@ -193,10 +187,7 @@ fn backup_prosody_conf_if_needed(prosody_config_file_path: &Path) -> Result<(), 
     }
 }
 
-fn apply_bootstrap_config(
-    prosody_config_file_path: &Path,
-    server_domain: &JidDomain,
-) -> Result<(), anyhow::Error> {
+fn apply_bootstrap_config(server_domain: &JidDomain) -> Result<(), anyhow::Error> {
     use std::fs::File;
     use std::io::Write as _;
 
@@ -204,7 +195,7 @@ fn apply_bootstrap_config(
         .write(true)
         .truncate(true)
         .create(true)
-        .open(prosody_config_file_path)
+        .open(PROSODY_CONFIG_FILE_PATH)
         .context("Error opening Prosody config file")?;
 
     let bootstrap_config_template = include_str!("prosody-bootstrap.cfg.lua");
@@ -483,17 +474,6 @@ impl Groups {
 
         Self(data)
     }
-}
-
-// MARK: - Helpers
-
-fn unix_timestamp() -> u64 {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
 }
 
 // MARK: - Boilerplate

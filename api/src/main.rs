@@ -19,12 +19,11 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use axum::Router;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, time::Instant};
 
 use crate::state::prelude::*;
 
 pub(crate) use self::app_config::AppConfig;
-use self::startup::startup;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -69,7 +68,7 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
         async move {
             let app: Router = Router::new()
                 .fallback_service(app_context.router())
-                .layer(axum::middleware::from_fn(router::log_request))
+                .layer(axum::middleware::from_fn(router::util::log_request))
                 .with_state(app_context);
 
             tracing::info!("Serving the Prose Pod Server API on {address}…");
@@ -99,6 +98,18 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     }
 
     main_res.unwrap_or(Err(anyhow::Error::msg("No task ran.")))
+}
+
+async fn startup(
+    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
+) -> Result<(), anyhow::Error> {
+    tracing::info!("Running startup actions…");
+    let start = Instant::now();
+
+    _ = app_state.try_bootstrapping().await?;
+
+    tracing::info!("Startup took {:.0?}.", start.elapsed());
+    Ok(())
 }
 
 async fn listen_for_graceful_shutdown() {
