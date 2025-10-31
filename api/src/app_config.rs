@@ -142,8 +142,10 @@ pub mod server {
     use crate::models::JidDomain;
 
     #[derive(Debug)]
+    #[serde_with::serde_as]
     #[derive(Deserialize)]
     pub struct ServerConfig {
+        #[serde_as(as = "serde_with::DisplayFromStr")]
         pub domain: JidDomain,
 
         pub local_hostname: String,
@@ -197,10 +199,13 @@ pub mod service_accounts {
     }
 
     #[derive(Debug)]
+    #[serde_with::serde_as]
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     pub struct ServiceAccountConfig {
+        #[serde_as(as = "serde_with::DisplayFromStr")]
         pub xmpp_node: JidNode,
+
         #[serde(default)]
         pub password: Option<Password>,
     }

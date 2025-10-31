@@ -25,7 +25,6 @@ use crate::models::{BareJid, JidDomain, JidNode, Password};
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
 use crate::state::prelude::*;
-use crate::util::jid_0_12_to_jid_0_11;
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
@@ -316,7 +315,7 @@ async fn create_service_accounts(
         // Store the password in the secrets store for later use.
         secrets
             .set_password(
-                jid.clone(),
+                jid.to_owned(),
                 password.clone(),
                 &mut passwords_guard,
                 &mut tokens_guard,
@@ -335,7 +334,7 @@ async fn create_service_accounts(
             .access_token;
         #[cfg_attr(not(debug_assertions), allow(unused))]
         let previous_token = secrets
-            .save_token(jid.clone(), token.clone().into(), &mut tokens_guard)
+            .save_token(jid.to_owned(), token.clone().into(), &mut tokens_guard)
             .await;
 
         // NOTE: We just changed the password and hold a lock on tokens
@@ -348,7 +347,7 @@ async fn create_service_accounts(
 
         // Create vCard if necessary.
         let creds = prosody_rest::CallerCredentials {
-            bare_jid: jid_0_12_to_jid_0_11(jid),
+            bare_jid: jid.to_owned(),
             auth_token: token.clone(),
         };
         {

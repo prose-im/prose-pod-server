@@ -14,7 +14,7 @@ use crate::errors::{invalid_avatar, prelude::*};
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
 use crate::responders;
 use crate::state::prelude::*;
-use crate::util::{NoContext, jid_0_12_to_jid_0_11};
+use crate::util::NoContext;
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
@@ -321,7 +321,7 @@ async fn service_account_credentials(
 ) -> Result<prosody_rest::CallerCredentials, Error> {
     let token = backend.secrets_service.get_token(jid).await.no_context()?;
     Ok(prosody_rest::CallerCredentials {
-        bare_jid: jid_0_12_to_jid_0_11(jid),
+        bare_jid: jid.to_owned(),
         auth_token: token.inner().to_owned(),
     })
 }

@@ -14,14 +14,18 @@ use crate::responders::Error;
 use crate::state::prelude::*;
 use crate::util::NoContext as _;
 
+#[serde_with::serde_as]
 #[derive(Debug, Deserialize)]
 pub struct CreateAccountRequest {
+    #[serde_as(as = "serde_with::DisplayFromStr")]
     pub username: JidNode,
     pub password: Password,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Serialize)]
 pub struct CreateAccountResponse {
+    #[serde_as(as = "serde_with::DisplayFromStr")]
     pub username: JidNode,
     pub role: String,
 }

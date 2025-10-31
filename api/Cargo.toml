@@ -17,7 +17,7 @@ axum-hot-swappable-router = { git = "https://github.com/RemiBardon/axum-hot-swap
 base64 = { version = "=0.22.1", default-features = false }
 figment = { version = "=0.10.19", default-features = false, features = ["env", "toml"] }
 iso8601-duration = { version = "=0.2.0", default-features = false, features = ["serde"] }
-jid = { version = "=0.12.0", default-features = false, features = ["serde"] }
+jid = { version = "=0.11.1", default-features = false, features = ["serde"] }
 media-type-detect = { path = "crates/media-type-detect" }
 prosody-child-process = { path = "crates/prosody-child-process" }
 prosody-http = { path = "crates/prosody-http", features = ["secrecy", "mod_http_oauth2"] }

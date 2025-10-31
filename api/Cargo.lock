@@ -1089,18 +1089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jid"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50fe7c84851804789723602f7a6f8e3420993d9dc465218cd202e673e44d12cc"
-dependencies = [
- "idna",
- "memchr",
- "serde",
- "stringprep",
-]
-
-[[package]]
 name = "jobserver"
 version = "0.1.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1467,7 +1455,7 @@ dependencies = [
  "base64",
  "figment",
  "iso8601-duration",
- "jid 0.12.0",
+ "jid",
  "media-type-detect",
  "prosody-child-process",
  "prosody-http",
@@ -1524,7 +1512,7 @@ dependencies = [
  "base64",
  "chrono",
  "futures",
- "jid 0.11.1",
+ "jid",
  "minidom",
  "parking_lot",
  "prose-proc-macros",
@@ -1560,7 +1548,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
- "jid 0.12.0",
+ "jid",
  "secrecy",
  "serde",
  "serde_json",
@@ -1577,7 +1565,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "jid 0.11.1",
+ "jid",
  "media-metadata",
  "media-type-detect",
  "minidom",
@@ -3070,7 +3058,7 @@ dependencies = [
  "blake2",
  "chrono",
  "digest",
- "jid 0.11.1",
+ "jid",
  "minidom",
  "sha1",
  "sha2",
@@ -3085,7 +3073,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c1e554e5e6689a0ec1b62a3b5ed450a1bb45118553a9665f4ee2277d135ba83"
 dependencies = [
  "base64",
- "jid 0.11.1",
+ "jid",
  "minidom",
  "rxml",
  "xso_proc",
