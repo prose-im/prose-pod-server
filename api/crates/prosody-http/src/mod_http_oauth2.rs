@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use ureq::http::header::ACCEPT;
 
-use crate::{BareJid, JidNodeView, SecretView, Timestamp};
+#[cfg(feature = "jid")]
+use crate::BareJid;
+use crate::{JidNodeView, SecretView, Timestamp};
 use crate::{ProsodyHttpConfig, Secret, util::RequestBuilderExt as _};
 
 /// Rust interface to [`mod_http_oauth2`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_oauth2).
