@@ -30,7 +30,7 @@ where
 // MARK: - State transitions
 
 impl<F, B> AppState<F, B> {
-    /// NOTE: This method does not log errors.
+    /// NOTE: This method does **not** log errors.
     fn reload_frontend() -> Result<f::Running, anyhow::Error> {
         let app_config = AppConfig::from_default_figment()?;
 
@@ -50,7 +50,7 @@ impl<F, B> AppState<F, B> {
     /// AppState<Running, B2>
     /// ```
     ///
-    /// NOTE: This method **does** log errors.
+    /// NOTE: This method does **not** log errors.
     pub(crate) fn try_reload_frontend<B2>(
         self,
     ) -> Result<AppState<f::Running, B2>, (Self, anyhow::Error)>
@@ -73,9 +73,6 @@ impl<F, B> AppState<F, B> {
 
             Err(err) => {
                 let error = err.context("Frontend reload failed");
-
-                // Log debug info.
-                tracing::error!("{error:?}");
 
                 Err((self, error))
             }
@@ -112,6 +109,9 @@ where
 
             Err((app_state, error)) => {
                 let error = Arc::new(error);
+
+                // Log debug info.
+                tracing::error!("{error:?}");
 
                 let new_state = app_state
                     .with_transition::<f::Running<f::WithMisconfiguration>, B>(|state| {

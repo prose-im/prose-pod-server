@@ -115,6 +115,11 @@ async fn startup(
             Ok(())
         }
         Err((_new_state, error)) => {
+            let error = error.context("Startup failed");
+
+            // Log debug info.
+            tracing::error!("{error:?}");
+
             tracing::info!("Startup failed in {:.0?}.", start.elapsed());
             Err(error)
         }

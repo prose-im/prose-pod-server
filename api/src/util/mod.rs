@@ -151,6 +151,14 @@ pub mod secrets {
     }
 }
 
+pub mod either {
+    #[derive(Debug)]
+    pub enum Either<E1, E2> {
+        E1(E1),
+        E2(E2),
+    }
+}
+
 // MARK: - Error helpers
 
 pub const PROSODY_JIDS_ARE_VALID: &'static str = "JIDs coming from Prosody should always be valid";

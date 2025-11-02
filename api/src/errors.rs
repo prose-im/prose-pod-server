@@ -217,6 +217,17 @@ pub fn restart_failed(error: &anyhow::Error) -> Error {
     )
 }
 
+#[must_use]
+#[inline]
+pub fn factory_reset_failed(error: &anyhow::Error) -> Error {
+    self::internal_server_error(
+        error,
+        "FACTORY_RESET_FAILED",
+        "Something went wrong while resetting your Prose Server. \
+        Contact an administrator to fix this.",
+    )
+}
+
 // MARK: - Helpers
 
 #[must_use]

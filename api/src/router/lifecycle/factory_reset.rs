@@ -5,13 +5,15 @@
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use axum::extract::State;
 use axum::http::StatusCode;
+use tokio::time::Instant;
 
+use crate::errors;
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::{NoContext as _, empty_dir};
-use crate::{AppConfig, errors};
+use crate::util::either::Either;
 
 // MARK: - Routes
 
@@ -19,91 +21,115 @@ impl AppState<f::Running, b::Running> {
     pub(crate) async fn lifecycle_factory_reset_route(
         State(app_state): State<Self>,
     ) -> Result<StatusCode, Error> {
-        app_state.do_factory_reset().await?;
-        Ok(StatusCode::RESET_CONTENT)
+        match app_state.do_factory_reset().await {
+            Ok(_new_state) => Ok(StatusCode::RESET_CONTENT),
+            Err((_new_state, error)) => Err(errors::factory_reset_failed(&error)),
+        }
     }
 }
 
 // MARK: - State transitions
 
 impl<F, B> AppState<F, B> {
-    /// ```txt
-    /// AppState<_, _>
-    /// -------------------------------------------------------- (Factory reset)
-    /// AppState<UndergoingFactoryReset, UndergoingFactoryReset>
-    /// ```
-    pub(crate) async fn do_factory_reset(self) -> Result<(), Error>
-    where
-        B: Clone + AsRef<b::Operational>,
-    {
-        use tokio::time::Instant;
+    /// NOTE: This method does **not** log errors.
+    async fn factory_reset(backend: impl AsRef<b::Operational>) -> Result<(), anyhow::Error> {
+        use crate::util::empty_dir;
 
-        let start = Instant::now();
-
-        let substate = self.backend.clone();
-        let mut prosody = substate.as_ref().prosody.write().await;
-        let mut prosodyctl = substate.as_ref().prosodyctl.write().await;
+        let mut prosody = backend.as_ref().prosody.write().await;
+        let mut prosodyctl = backend.as_ref().prosodyctl.write().await;
 
         // Read Prosody paths early to abort before doing anything non-recoverable.
-        let config_path = prosodyctl.prosody_paths_config().await.no_context()?;
-        let data_path = prosodyctl.prosody_paths_data().await.no_context()?;
+        let config_path = prosodyctl.prosody_paths_config().await?;
+        let data_path = prosodyctl.prosody_paths_data().await?;
 
-        let app_state = self.with_transition(|state| {
-            state
-                .with_backend(b::UndergoingFactoryReset {})
-                .with_frontend(f::UndergoingFactoryReset {})
-        });
-
-        prosody.stop().await.no_context()?;
+        prosody.stop().await?;
 
         tracing::warn!("Emptying `{config_path}`…");
-        empty_dir(&config_path)
-            .map_err(|err| anyhow::Error::new(err).context(format!("Emptying `{config_path}`")))
-            .no_context()?;
+        empty_dir(&config_path).context(format!("Emptying `{config_path}`"))?;
+
         tracing::warn!("Emptying `{data_path}`…");
-        empty_dir(&data_path)
-            .map_err(|err| anyhow::Error::new(err).context(format!("Emptying `{data_path}`")))
-            .no_context()?;
+        empty_dir(&data_path).context(format!("Emptying `{data_path}`"))?;
 
         reset_config_file().await?;
 
-        match AppConfig::from_default_figment() {
-            Ok(app_config) => {
+        Ok(())
+    }
+
+    /// ```txt
+    /// AppState<_, _>
+    /// -------------------------------------------------------- (Factory reset)
+    /// AppState<Misconfigured, Stopped<NotInitialized>>
+    ///   if success
+    /// AppState<Running, Running>
+    ///   if success and minimal config in env
+    /// AppState<UndergoingFactoryReset, UndergoingFactoryReset>
+    ///   if failure
+    /// AppState<f::Running, b::StartFailed<b::NotInitialized>>
+    ///   if failure and minimal config in env
+    /// ```
+    ///
+    /// NOTE: This method **does** log errors.
+    pub(crate) async fn do_factory_reset(
+        self,
+    ) -> Result<
+        Either<
+            AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
+            AppState<f::Running, b::Running>,
+        >,
+        (
+            Either<
+                AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
+                AppState<f::Running, b::StartFailed<b::NotInitialized>>,
+            >,
+            Arc<anyhow::Error>,
+        ),
+    >
+    where
+        B: Clone + AsRef<b::Operational>,
+    {
+        tracing::info!("Performing factory reset…");
+        let start = Instant::now();
+
+        let backend = self.backend.clone();
+
+        let app_state = self.with_transition(|state| {
+            state
+                .with_frontend(f::UndergoingFactoryReset {})
+                .with_backend(b::UndergoingFactoryReset {})
+        });
+
+        if let Err(error) = Self::factory_reset(backend).await {
+            tracing::error!("Factory reset failed: {error:?}");
+            return Err((Either::E1(app_state), Arc::new(error)));
+        }
+
+        // Transition app to “Starting”.
+        match app_state.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
+            Ok(new_state) => {
                 // NOTE: After a factory reset, the default configuration is,
                 //   at least, missing the Server domain. However, in some cases
                 //   like for Prose Cloud instances, the required values will be
                 //   set via environment variables. This allows seamless factory
-                //   resets, without requireing one to edit the configuration
+                //   resets, without requiring one to edit the configuration
                 //   file manually.
 
-                // Transition app to “Starting”.
-                let app_state = app_state.with_transition(|state| {
-                    state
-                        .with_frontend(f::Running {
-                            state: Arc::new(f::Operational {}),
-                            config: Arc::new(app_config),
-                        })
-                        .with_backend(b::Starting {
-                            state: Arc::new(b::NotInitialized {}),
-                        })
-                });
-
                 // Try to bootstrap the backend.
-                match app_state.do_bootstrapping().await {
-                    Ok(_new_state) => {}
+                match new_state.do_bootstrapping().await {
+                    Ok(new_state) => Ok(Either::E2(new_state)),
 
-                    Err((_new_state, error)) => {
+                    Err((new_state, error)) => {
                         tracing::debug!("Bootstrapping failed after factory reset: {error:?}");
-                        return Err(errors::restart_failed(&error));
+                        Err((Either::E2(new_state), error))
                     }
                 }
             }
-            Err(error) => {
-                let error = Arc::new(
-                    anyhow::Error::new(error).context("Factory reset done, configuration needed"),
-                );
+            Err((new_state, error)) => {
+                let error = Arc::new(error.context("Factory reset done, configuration needed"));
 
-                app_state.transition_with(|state| {
+                // Log debug info.
+                tracing::warn!("{error:?}");
+
+                let new_state = new_state.with_transition(|state| {
                     state
                         .with_frontend(f::Misconfigured {
                             error: Arc::clone(&error),
@@ -113,52 +139,41 @@ impl<F, B> AppState<F, B> {
                         })
                 });
 
-                // Log debug info.
-                tracing::warn!("{error:?}");
-
-                // NOTE: Do not return a failure status code
-                //   as this is expected behavior.
+                tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
+                // NOTE: Do not return a failure as this is expected behavior.
+                Ok(Either::E1(new_state))
             }
-        };
-
-        tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
-
-        Ok(())
+        }
     }
 }
 
-async fn reset_config_file() -> Result<(), Error> {
+// MARK: - Steps
+
+async fn reset_config_file() -> Result<(), anyhow::Error> {
     use crate::app_config::CONFIG_FILE_PATH;
-    use crate::errors::ERROR_CODE_INTERNAL;
-    use crate::util::Context as _;
     use std::fs;
     use std::io::Write as _;
 
     tracing::warn!("Resetting the Prose configuration file…");
 
     let config_file_path = CONFIG_FILE_PATH.as_path();
+
+    // Open file in overwrite mode.
     let mut file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(config_file_path)
-        .context(
-            ERROR_CODE_INTERNAL,
-            &format!(
-                "Could not reset API config file at <{path}>: Cannot open",
-                path = config_file_path.display(),
-            ),
-        )?;
-    let bootstrap_config = r#"# Prose Pod configuration file
-# Template: https://github.com/prose-im/prose-pod-system/blob/master/templates/prose.toml
-# All keys: https://github.com/prose-im/prose-pod-api/blob/master/src/service/src/features/app_config.rs
-"#;
-    file.write_all(bootstrap_config.as_bytes()).context(
-        ERROR_CODE_INTERNAL,
-        &format!(
-            "Could not reset API config file at <{path}>: Cannot write",
+        .context(format!(
+            "Could not reset API config file at <{path}>: Cannot open",
             path = config_file_path.display(),
-        ),
-    )?;
+        ))?;
+
+    // Write the placeholder configuration.
+    let empty_config = include_str!("../../prose-empty.toml");
+    file.write_all(empty_config.as_bytes()).context(format!(
+        "Could not reset API config file at <{path}>: Cannot write",
+        path = config_file_path.display(),
+    ))?;
 
     Ok(())
 }

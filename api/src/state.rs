@@ -416,6 +416,15 @@ pub mod backend {
         }
     }
 
+    impl From<UndergoingFactoryReset> for Starting<NotInitialized> {
+        #[inline(always)]
+        fn from(_: UndergoingFactoryReset) -> Self {
+            Self {
+                state: Arc::new(NotInitialized {}),
+            }
+        }
+    }
+
     // MARK: Boilerplate
 
     state_boilerplate!(Running, RunningState);

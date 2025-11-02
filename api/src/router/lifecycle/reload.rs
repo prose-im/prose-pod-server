@@ -25,7 +25,9 @@ where
             }
 
             Err((_, error)) => {
-                tracing::warn!("{error:?}");
+                // Log debug info.
+                tracing::error!("{error:?}");
+
                 Err(errors::bad_configuration(&error))
             }
         }
@@ -46,7 +48,9 @@ impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
             // Transition state if the reload failed.
             Err((app_state, error)) => {
                 let error = Arc::new(error);
-                tracing::warn!("{error:?}");
+
+                // Log debug info.
+                tracing::error!("{error:?}");
 
                 // Update stored error (for better health diagnostics).
                 app_state.transition_with::<f::Misconfigured, b::Stopped<b::NotInitialized>>(

@@ -8,7 +8,6 @@ use std::fs;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::Context as _;
 use arc_swap::ArcSwap;
@@ -18,6 +17,7 @@ use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2};
 use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
 use tokio::sync::RwLock;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::AppConfig;
@@ -30,12 +30,14 @@ use crate::util::unix_timestamp;
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
+// MARK: - State transitions
+
 impl<BackendState> AppState<f::Running, BackendState> {
     /// Try bootstrapping the backend, but do not transition if an error occurs.
     /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
     /// about bootstrapping.
     ///
-    /// NOTE: This method does not log errors.
+    /// NOTE: This method does **not** log errors.
     async fn bootstrap(app_state: &Self) -> Result<b::Running, anyhow::Error> {
         let app_config = Arc::deref(&app_state.frontend.config);
         let ref server_domain = app_config.server.domain;
@@ -130,7 +132,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
     /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
     /// about bootstrapping.
     ///
-    /// NOTE: This method **does** log errors.
+    /// NOTE: This method does **not** log errors.
     pub(crate) async fn try_bootstrapping(
         self,
     ) -> Result<AppState<f::Running, b::Running>, (Self, anyhow::Error)> {
@@ -146,9 +148,6 @@ impl<BackendState> AppState<f::Running, BackendState> {
             }
             Err(err) => {
                 let error = err.context("Bootstrapping failed");
-
-                // Log debug info.
-                tracing::error!("{error:?}");
 
                 tracing::info!("Bootstrapping failed in {:.0?}.", start.elapsed());
                 Err((self, error))
@@ -179,6 +178,9 @@ impl<BackendState> AppState<f::Running, BackendState> {
             Err((app_state, error)) => {
                 let error = Arc::new(error);
 
+                // Log debug info.
+                tracing::error!("{error:?}");
+
                 let new_state = app_state
                     .with_transition::<f::Running, b::StartFailed<b::NotInitialized>>(|state| {
                         state.with_backend_transition(|substate| b::StartFailed {
@@ -193,7 +195,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
     }
 }
 
-// MARK: Steps
+// MARK: - Steps
 
 fn create_required_dirs() -> Result<(), anyhow::Error> {
     fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
