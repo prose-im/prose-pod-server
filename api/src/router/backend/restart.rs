@@ -58,7 +58,7 @@ impl AppState<f::Running, b::Starting> {
     }
 }
 
-impl AppState<f::Running, b::StartFailed> {
+impl AppState<f::Running, b::StartFailed<b::Operational>> {
     pub(in crate::router) async fn backend_start_route(
         State(app_state): State<Self>,
     ) -> Result<(), Error> {
@@ -66,9 +66,26 @@ impl AppState<f::Running, b::StartFailed> {
         let mut prosody = backend_state.prosody.write().await;
 
         match app_state.do_start_backend(&mut prosody).await {
-            Ok(_) => Ok(()),
+            Ok(_new_state) => Ok(()),
 
-            Err((_, error)) => {
+            Err((_new_state, error)) => {
+                tracing::error!("{error:?}");
+                Err(errors::restart_failed(&error))
+            }
+        }
+    }
+}
+
+impl AppState<f::Running, b::StartFailed<b::NotInitialized>> {
+    pub(in crate::router) async fn backend_start_route(
+        State(app_state): State<Self>,
+    ) -> Result<(), Error> {
+        let todo = "Move all lifecycle routes under /lifecycle";
+
+        match app_state.do_bootstrapping().await {
+            Ok(_new_state) => Ok(()),
+
+            Err((_new_state, error)) => {
                 tracing::error!("{error:?}");
                 Err(errors::restart_failed(&error))
             }
@@ -126,7 +143,10 @@ impl<B> AppState<f::Running, B> {
         prosody: &mut RwLockWriteGuard<'a, ProsodyChildProcess>,
     ) -> Result<
         AppState<f::Running, b::Running>,
-        (AppState<f::Running, b::StartFailed>, Arc<anyhow::Error>),
+        (
+            AppState<f::Running, b::StartFailed<b::Operational>>,
+            Arc<anyhow::Error>,
+        ),
     >
     where
         b::Running: From<B>,
@@ -144,12 +164,13 @@ impl<B> AppState<f::Running, B> {
                 // Log debug info.
                 tracing::debug!("{error:?}");
 
-                let new_state = self.with_transition::<f::Running, b::StartFailed>(|state| {
-                    state.with_backend_transition(|substate| b::StartFailed {
-                        state: substate.into(),
-                        error: Arc::clone(&error),
-                    })
-                });
+                let new_state =
+                    self.with_transition::<f::Running, b::StartFailed<b::Operational>>(|state| {
+                        state.with_backend_transition(|substate| b::StartFailed {
+                            state: substate.into(),
+                            error: Arc::clone(&error),
+                        })
+                    });
 
                 Err((new_state, error))
             }

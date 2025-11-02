@@ -329,7 +329,7 @@ pub mod backend {
     // MARK: Stopped with error
 
     #[derive(Debug)]
-    pub struct BackendStartFailed<State: BackendStartFailedState = Operational> {
+    pub struct BackendStartFailed<State: BackendStartFailedState> {
         pub state: Arc<State>,
         pub error: Arc<anyhow::Error>,
     }
@@ -364,8 +364,8 @@ pub mod backend {
         Substate: RunningState + StartingState,
     {
         #[inline(always)]
-        fn from(value: Running<Substate>) -> Self {
-            Self { state: value.state }
+        fn from(Running { state, .. }: Running<Substate>) -> Self {
+            Self { state }
         }
     }
 
@@ -374,8 +374,18 @@ pub mod backend {
         Substate: StartingState + RunningState,
     {
         #[inline(always)]
-        fn from(value: Starting<Substate>) -> Self {
-            Self { state: value.state }
+        fn from(Starting { state, .. }: Starting<Substate>) -> Self {
+            Self { state }
+        }
+    }
+
+    impl<Substate> From<Starting<Substate>> for Arc<Substate>
+    where
+        Substate: StartingState,
+    {
+        #[inline(always)]
+        fn from(Starting { state, .. }: Starting<Substate>) -> Self {
+            state
         }
     }
 
@@ -389,24 +399,20 @@ pub mod backend {
         }
     }
 
+    impl<Substate> From<StartFailed<Substate>> for Arc<Substate>
+    where
+        Substate: StartFailedState,
+    {
+        #[inline(always)]
+        fn from(StartFailed { state, .. }: StartFailed<Substate>) -> Self {
+            state
+        }
+    }
+
     impl From<Stopped<NotInitialized>> for Starting<NotInitialized> {
         #[inline(always)]
         fn from(Stopped { state, .. }: Stopped<NotInitialized>) -> Self {
             Self { state }
-        }
-    }
-
-    impl From<Starting<Operational>> for Arc<Operational> {
-        #[inline(always)]
-        fn from(value: Starting<Operational>) -> Self {
-            value.state
-        }
-    }
-
-    impl From<StartFailed<Operational>> for Arc<Operational> {
-        #[inline(always)]
-        fn from(value: StartFailed<Operational>) -> Self {
-            value.state
         }
     }
 

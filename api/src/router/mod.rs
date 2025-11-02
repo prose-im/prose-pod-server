@@ -108,10 +108,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
     }
 }
 
-/// **Start failed** (during a failed restart).
-impl AppStateTrait for AppState<f::Running, b::StartFailed> {
+/// **Restart failed**.
+impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
     fn state_name() -> &'static str {
-        "Start failed"
+        "Restart failed"
     }
 
     fn into_router(self) -> axum::Router {
@@ -158,6 +158,20 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>
         Router::new()
             .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
             .fallback(frontend_health)
+            .with_state(self)
+    }
+}
+
+/// **Bootstrapping failed**.
+impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
+    fn state_name() -> &'static str {
+        "Bootstrapping failed"
+    }
+
+    fn into_router(self) -> axum::Router {
+        Router::<Self>::new()
+            .route("/backend/restart", post(Self::backend_start_route))
+            .fallback(backend_health)
             .with_state(self)
     }
 }

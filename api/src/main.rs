@@ -33,6 +33,9 @@ async fn main() -> anyhow::Result<()> {
     //   an error every time prosodyctl is invoked (status included).
     //   Running shells don’t stop though, and c2s seems to still work.)
     //   -> Report SERVICE_UNAVAILABLE, but keep Prosody running.
+    let todo = "Change all `try_` signatures to take `&Self`";
+    let todo = "Check if we can get rid of with_transition and \
+        switch call sites to a functional programming style";
 
     init_tracing();
 
@@ -106,10 +109,16 @@ async fn startup(
     tracing::info!("Running startup actions…");
     let start = Instant::now();
 
-    _ = app_state.try_bootstrapping().await?;
-
-    tracing::info!("Startup took {:.0?}.", start.elapsed());
-    Ok(())
+    match app_state.try_bootstrapping().await {
+        Ok(_new_state) => {
+            tracing::info!("Startup took {:.0?}.", start.elapsed());
+            Ok(())
+        }
+        Err((_new_state, error)) => {
+            tracing::info!("Startup failed in {:.0?}.", start.elapsed());
+            Err(error)
+        }
+    }
 }
 
 async fn listen_for_graceful_shutdown() {

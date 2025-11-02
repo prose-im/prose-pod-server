@@ -8,10 +8,10 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::AppConfig;
 use crate::responders::Error;
 use crate::state::prelude::*;
 use crate::util::{NoContext as _, empty_dir};
+use crate::{AppConfig, errors};
 
 // MARK: - Routes
 
@@ -89,11 +89,14 @@ impl<F, B> AppState<F, B> {
                 });
 
                 // Try to bootstrap the backend.
-                _ = app_state
-                    .try_bootstrapping()
-                    .await
-                    .map_err(|err| err.context("Bootstrapping failed after factory reset"))
-                    .no_context()?;
+                match app_state.do_bootstrapping().await {
+                    Ok(_new_state) => {}
+
+                    Err((_new_state, error)) => {
+                        tracing::debug!("Bootstrapping failed after factory reset: {error:?}");
+                        return Err(errors::restart_failed(&error));
+                    }
+                }
             }
             Err(error) => {
                 let error = Arc::new(

@@ -30,19 +30,14 @@ use crate::util::unix_timestamp;
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
-impl AppState<f::Running, b::Starting<b::NotInitialized>> {
+impl<BackendState> AppState<f::Running, BackendState> {
     /// Try bootstrapping the backend, but do not transition if an error occurs.
     /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
     /// about bootstrapping.
     ///
     /// NOTE: This method does not log errors.
-    pub(crate) async fn try_bootstrapping(
-        self,
-    ) -> Result<AppState<f::Running, b::Running>, anyhow::Error> {
-        tracing::info!("Bootstrapping…");
-        let start = Instant::now();
-
-        let app_config = Arc::deref(&self.frontend.config);
+    async fn bootstrap(app_state: &Self) -> Result<b::Running, anyhow::Error> {
+        let app_config = Arc::deref(&app_state.frontend.config);
         let ref server_domain = app_config.server.domain;
 
         create_required_dirs()?;
@@ -63,7 +58,7 @@ impl AppState<f::Running, b::Starting<b::NotInitialized>> {
 
         // Launch Prosody.
         let mut prosody = ProsodyChildProcess::new();
-        start_prosody(&self, &mut prosody).await?;
+        start_prosody(&app_state.frontend.config, &mut prosody).await?;
 
         let mut prosodyctl = Prosodyctl::new();
 
@@ -101,32 +96,100 @@ impl AppState<f::Running, b::Starting<b::NotInitialized>> {
         let groups = Groups::new(app_config.as_ref());
         create_groups(&mut prosodyctl, &groups, server_domain).await?;
 
-        add_service_accounts_to_groups(
-            &mut prosodyctl,
-            service_accounts
+        {
+            let service_accounts_usernames = service_accounts
                 .iter()
-                .flat_map(|jid| jid.node().map(JidNode::from)),
-            groups.keys().into_iter(),
-            server_domain,
-        )
-        .await?;
+                .flat_map(|jid| jid.node().map(JidNode::from));
+            let group_ids = groups.keys().into_iter();
+            add_service_accounts_to_groups(
+                &mut prosodyctl,
+                service_accounts_usernames,
+                group_ids,
+                server_domain,
+            )
+            .await?;
+        }
 
-        synchronize_rosters(&mut prosodyctl, groups.keys().into_iter(), server_domain).await?;
+        {
+            let group_ids = groups.keys().into_iter();
+            synchronize_rosters(&mut prosodyctl, group_ids, server_domain).await?;
+        }
 
-        let new_state = self.with_transition(|state| {
-            state.with_backend(b::Running {
-                state: Arc::new(b::Operational {
-                    prosody: Arc::new(RwLock::new(prosody)),
-                    prosodyctl: Arc::new(RwLock::new(prosodyctl)),
-                    prosody_rest,
-                    oauth2_client,
-                    secrets_service: secrets,
-                }),
-            })
-        });
+        Ok(b::Running {
+            state: Arc::new(b::Operational {
+                prosody: Arc::new(RwLock::new(prosody)),
+                prosodyctl: Arc::new(RwLock::new(prosodyctl)),
+                prosody_rest,
+                oauth2_client,
+                secrets_service: secrets,
+            }),
+        })
+    }
 
-        tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
-        Ok(new_state)
+    /// Try bootstrapping the backend, but do not transition if an error occurs.
+    /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
+    /// about bootstrapping.
+    ///
+    /// NOTE: This method **does** log errors.
+    pub(crate) async fn try_bootstrapping(
+        self,
+    ) -> Result<AppState<f::Running, b::Running>, (Self, anyhow::Error)> {
+        tracing::info!("Bootstrapping…");
+        let start = Instant::now();
+
+        match Self::bootstrap(&self).await {
+            Ok(backend) => {
+                let new_state = self.with_transition(|state| state.with_backend(backend));
+
+                tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
+                Ok(new_state)
+            }
+            Err(err) => {
+                let error = err.context("Bootstrapping failed");
+
+                // Log debug info.
+                tracing::error!("{error:?}");
+
+                tracing::info!("Bootstrapping failed in {:.0?}.", start.elapsed());
+                Err((self, error))
+            }
+        }
+    }
+
+    /// Bootstrap the backend or transition to a fail state if an error occurs.
+    /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
+    /// about bootstrapping.
+    ///
+    /// NOTE: This method **does** log errors.
+    pub(crate) async fn do_bootstrapping(
+        self,
+    ) -> Result<
+        AppState<f::Running, b::Running>,
+        (
+            AppState<f::Running, b::StartFailed<b::NotInitialized>>,
+            Arc<anyhow::Error>,
+        ),
+    >
+    where
+        BackendState: Into<Arc<b::NotInitialized>>,
+    {
+        match self.try_bootstrapping().await {
+            Ok(new_state) => Ok(new_state),
+
+            Err((app_state, error)) => {
+                let error = Arc::new(error);
+
+                let new_state = app_state
+                    .with_transition::<f::Running, b::StartFailed<b::NotInitialized>>(|state| {
+                        state.with_backend_transition(|substate| b::StartFailed {
+                            state: substate.into(),
+                            error: Arc::clone(&error),
+                        })
+                    });
+
+                Err((new_state, error))
+            }
+        }
     }
 }
 
@@ -210,12 +273,10 @@ fn apply_bootstrap_config(server_domain: &JidDomain) -> Result<(), anyhow::Error
 }
 
 async fn start_prosody(
-    app_state: &AppState<f::Running, b::Starting<b::NotInitialized>>,
+    app_config: &AppConfig,
     prosody: &mut ProsodyChildProcess,
 ) -> Result<(), anyhow::Error> {
     use secrecy::ExposeSecret as _;
-
-    let app_config = Arc::deref(&app_state.frontend.config);
 
     prosody.set_env(
         "OAUTH2_REGISTRATION_KEY",
@@ -401,7 +462,7 @@ async fn create_groups(
 async fn add_service_accounts_to_groups<'a, A, G>(
     prosodyctl: &mut Prosodyctl,
     service_accounts: A,
-    groups: G,
+    group_ids: G,
     server_domain: &JidDomain,
 ) -> Result<(), anyhow::Error>
 where
@@ -411,7 +472,7 @@ where
     let host: &str = server_domain.as_str();
 
     for ref username in service_accounts {
-        for group_id in groups.clone() {
+        for group_id in group_ids.clone() {
             tracing::debug!("Adding `{username}` to group `{group_id}`…");
             let summary = prosodyctl
                 .groups_add_member(host, group_id, username, Some(true))
@@ -432,7 +493,7 @@ where
 /// going to do the subscriptions here anyway, we used `delay_update` there.
 async fn synchronize_rosters<'a, G>(
     prosodyctl: &mut Prosodyctl,
-    groups: G,
+    group_ids: G,
     server_domain: &JidDomain,
 ) -> Result<(), anyhow::Error>
 where
@@ -440,7 +501,7 @@ where
 {
     let host: &str = server_domain.as_str();
 
-    for group_id in groups {
+    for group_id in group_ids {
         tracing::debug!("Synchronizing groups…");
         let summary = prosodyctl.groups_sync(host, group_id).await?;
         tracing::info!("groups_sync: {summary}");

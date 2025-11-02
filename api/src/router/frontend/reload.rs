@@ -40,6 +40,12 @@ where
     /// Try reloading the frontend, but do not transition if an error occurs.
     ///
     /// NOTE: This method does not log errors.
+    ///
+    /// ```txt
+    /// AppState<F, B1>
+    /// ----------------------------------
+    /// AppState<Running<Operational>, B2>
+    /// ```
     pub(crate) fn try_reload_frontend<B2>(
         self,
     ) -> Result<AppState<f::Running<f::Operational>, B2>, (Self, anyhow::Error)>

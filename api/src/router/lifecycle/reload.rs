@@ -37,16 +37,10 @@ impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
         State(app_state): State<Self>,
     ) -> Result<(), Error> {
         match app_state.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
-            Ok(app_state) => match app_state.try_bootstrapping().await {
-                Ok(app_state) => {
-                    let fixme = "That shouldn’t be here";
-                    _ = app_state.do_reload_backend().await?;
-                    Ok(())
-                }
-                Err(err) => {
-                    let todo = "Handle error";
-                    panic!("{err:?}")
-                }
+            Ok(app_state) => match app_state.do_bootstrapping().await {
+                Ok(_new_state) => Ok(()),
+
+                Err((_new_state, err)) => Err(errors::restart_failed(&err)),
             },
 
             // Transition state if the reload failed.
