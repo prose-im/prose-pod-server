@@ -70,9 +70,12 @@ pub(in crate::router) async fn backend_start_retry(
     }
 }
 
-pub(in crate::router) async fn backend_init_retry(
-    State(app_state): State<AppState<f::Running, b::StartFailed<b::NotInitialized>>>,
-) -> Result<(), Error> {
+pub(in crate::router) async fn backend_init_retry<B>(
+    State(app_state): State<AppState<f::Running, B>>,
+) -> Result<(), Error>
+where
+    B: Into<Arc<b::NotInitialized>>,
+{
     match app_state.do_bootstrapping().await {
         Ok(_new_state) => Ok(()),
 

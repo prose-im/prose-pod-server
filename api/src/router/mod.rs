@@ -91,8 +91,13 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
     }
 
     fn into_router(self) -> axum::Router {
-        let todo = "Keep one route for safety?";
         Router::<Self>::new()
+            // NOTE: Keep `/lifecycle/backend-restart` available just in case
+            //   an internal error happened and we ended up stuck in this state.
+            .route(
+                "/lifecycle/backend-restart",
+                post(lifecycle::backend_init_retry),
+            )
             .fallback(backend_health)
             .with_state(self)
     }
