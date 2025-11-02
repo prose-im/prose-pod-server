@@ -12,7 +12,7 @@ use serde_json::json;
 use ureq::http::header::ACCEPT;
 
 use crate::{
-    BareJid, JidNode, JidNodeMut, JidNodeView, ProsodyHttpConfig, SecretView, Timestamp,
+    BareJid, JidNodeMut, JidNodeView, ProsodyHttpConfig, SecretView, Timestamp,
     util::RequestBuilderExt as _,
 };
 
@@ -82,11 +82,13 @@ impl ProsodyAdminApi {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 pub struct UserInfo {
     pub jid: BareJid,
 
-    pub username: JidNode,
+    #[serde_as(as = "serde_with::DisplayFromStr")]
+    pub username: JidNodeMut,
 
     pub display_name: Box<str>,
 
@@ -233,8 +235,10 @@ pub type InviteId = crate::Secret;
 pub type InviteIdView = crate::SecretView;
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Serialize)]
 pub struct CreateAccountInvitationRequest<AdditionalData = serde_json::Value> {
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>")]
     pub username: Option<JidNodeMut>,
 
     #[cfg(not(feature = "time"))]
@@ -255,8 +259,10 @@ pub struct CreateAccountInvitationRequest<AdditionalData = serde_json::Value> {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Serialize)]
 pub struct CreateAccountResetInvitationRequest<AdditionalData = serde_json::Value> {
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>")]
     pub username: Option<JidNodeMut>,
 
     #[cfg(not(feature = "time"))]

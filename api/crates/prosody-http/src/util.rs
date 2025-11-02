@@ -5,8 +5,10 @@
 
 use crate::SecretView;
 
+#[allow(unused)]
 pub const PROSODY_VALID_JIDS: &'static str = "JIDs returned by Prosody should be valid";
 
+#[allow(unused)]
 pub trait RequestBuilderExt {
     fn basic_auth(self, username: &str, password: &SecretView) -> Self;
     fn bearer_auth(self, token: &SecretView) -> Self;
