@@ -80,8 +80,6 @@ impl AppState<f::Running, b::StartFailed<b::NotInitialized>> {
     pub(in crate::router) async fn backend_start_route(
         State(app_state): State<Self>,
     ) -> Result<(), Error> {
-        let todo = "Move all lifecycle routes under /lifecycle";
-
         match app_state.do_bootstrapping().await {
             Ok(_new_state) => Ok(()),
 

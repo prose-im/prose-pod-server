@@ -3,8 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-mod backend;
-mod frontend;
 mod health;
 mod init;
 mod invitations_util;
@@ -65,9 +63,18 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
                 "/invitations-util/stats",
                 get(invitations_util::invitations_stats),
             )
-            .route("/frontend/reload", post(Self::frontend_reload_route))
-            .route("/backend/reload", post(Self::backend_reload_route))
-            .route("/backend/restart", post(Self::backend_restart_route))
+            .route(
+                "/lifecycle/frontend-reload",
+                post(Self::frontend_reload_route),
+            )
+            .route(
+                "/lifecycle/backend-reload",
+                post(Self::backend_reload_route),
+            )
+            .route(
+                "/lifecycle/backend-restart",
+                post(Self::backend_restart_route),
+            )
             .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
             .route(
                 "/lifecycle/factory-reset",
@@ -100,9 +107,12 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
 
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
-            // NOTE: Keep `/backend/restart` available just in case an internal
-            //   error happened and we ended up stuck in this state.
-            .route("/backend/restart", post(Self::backend_restart_route))
+            // NOTE: Keep `/lifecycle/backend-restart` available just in case
+            //   an internal error happened and we ended up stuck in this state.
+            .route(
+                "/lifecycle/backend-restart",
+                post(Self::backend_restart_route),
+            )
             .fallback(backend_health)
             .with_state(self)
     }
@@ -116,7 +126,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
 
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
-            .route("/backend/restart", post(Self::backend_start_route))
+            .route(
+                "/lifecycle/backend-restart",
+                post(Self::backend_start_route),
+            )
             .fallback(backend_health)
             .with_state(self)
     }
@@ -170,7 +183,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
 
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
-            .route("/backend/restart", post(Self::backend_start_route))
+            .route(
+                "/lifecycle/backend-restart",
+                post(Self::backend_start_route),
+            )
             .fallback(backend_health)
             .with_state(self)
     }
