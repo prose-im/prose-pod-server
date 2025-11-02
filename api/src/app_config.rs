@@ -109,6 +109,43 @@ impl AppConfig {
     }
 }
 
+impl AppConfig {
+    /// When reloading the configuration at runtime, validate that the changes
+    /// can be applied. For example, one cannot change the server domain at
+    /// runtime.
+    ///
+    /// Note that this function doesn’t always return errors, sometimes only
+    /// printing a warning to avoid unnecessary downtime.
+    pub(crate) fn validate_config_changes(
+        old_config: &AppConfig,
+        new_config: &AppConfig,
+    ) -> Result<(), anyhow::Error> {
+        use anyhow::anyhow;
+
+        if new_config.server.domain != old_config.server.domain {
+            // TODO: Support domain migrations.
+            return Err(anyhow!(
+                "Once set, the server domain cannot be changed. \
+                Such migrations are planned, but are not a priority. \
+                If that’s a feature you need, contact us at <https://prose.org/contact/>. \
+                Until then, you need to perform a factory reset or host a second \
+                Prose instance if you want to use another domain."
+            ));
+        }
+
+        if new_config.server_api.address() != old_config.server_api.address() {
+            // TODO: Support frontend restarts.
+            tracing::warn!(
+                "The Prose Pod Server API address cannot be changed at runtime. \
+                You need to restart the Prose Pod Server for this change to be effective. \
+                If you need no-downtime restarts, contact us at <https://prose.org/contact/>."
+            );
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 #[derive(Deserialize)]
 pub(crate) struct AppConfig {

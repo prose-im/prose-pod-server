@@ -13,6 +13,7 @@ mod workspace;
 use axum::Router;
 use axum::routing::{get, post, put};
 
+use crate::AppConfig;
 use crate::router::util::{backend_health, frontend_health};
 use crate::state::prelude::*;
 
@@ -83,6 +84,10 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             .merge(Self::workspace_routes())
             .with_state(self)
     }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
 }
 
 /// **Starting** (during a startup and after a factory reset).
@@ -96,6 +101,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
         Router::<Self>::new()
             .fallback(backend_health)
             .with_state(self)
+    }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
 }
 
@@ -116,6 +125,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
             .fallback(backend_health)
             .with_state(self)
     }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
 }
 
 /// **Restart failed**.
@@ -133,6 +146,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
             .fallback(backend_health)
             .with_state(self)
     }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
 }
 
 /// **Running with misconfiguration** (after a `SIGHUP`
@@ -148,6 +165,10 @@ impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running>
             .fallback(frontend_health)
             .with_state(self)
     }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
 }
 
 /// **Undergoing factory reset** (during a factory reset).
@@ -158,6 +179,10 @@ impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryR
 
     fn into_router(self) -> axum::Router {
         Router::new().fallback(frontend_health).with_state(self)
+    }
+
+    fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        Ok(())
     }
 }
 
@@ -172,6 +197,10 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>
             .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
             .fallback(frontend_health)
             .with_state(self)
+    }
+
+    fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        Ok(())
     }
 }
 
@@ -189,6 +218,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
             )
             .fallback(backend_health)
             .with_state(self)
+    }
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
 }
 

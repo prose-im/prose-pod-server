@@ -16,6 +16,7 @@ use crate::{AppConfig, errors};
 impl<FrontendSubstate> AppState<f::Running<FrontendSubstate>, b::Running>
 where
     FrontendSubstate: f::RunningState,
+    AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
 {
     pub(in crate::router) async fn frontend_reload_route(
         State(app_state): State<Self>,
@@ -29,12 +30,15 @@ where
 
 // MARK: - State transitions
 
-impl<F, B> AppState<F, B> {
+impl<F, B> AppState<F, B>
+where
+    AppState<F, B>: AppStateTrait,
+{
     /// NOTE: This method does **not** log errors.
-    fn reload_frontend() -> Result<f::Running, anyhow::Error> {
+    fn reload_frontend(app_state: &Self) -> Result<f::Running, anyhow::Error> {
         let app_config = AppConfig::from_default_figment()?;
 
-        let todo = "Log warn if config changed and needs a restart (e.g. server address/port).";
+        app_state.validate_config_changes(&app_config)?;
 
         Ok(f::Running {
             state: Arc::new(f::Operational {}),
@@ -60,7 +64,7 @@ impl<F, B> AppState<F, B> {
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         AppState<f::Running, B2>: AppStateTrait,
     {
-        match Self::reload_frontend() {
+        match Self::reload_frontend(&self) {
             Ok(frontend) => {
                 let new_state = self.with_transition::<f::Running, B2>(|state| {
                     state
@@ -84,6 +88,7 @@ impl<FrontendSubstate, B> AppState<f::Running<FrontendSubstate>, B>
 where
     FrontendSubstate: f::RunningState,
     B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+    AppState<f::Running<FrontendSubstate>, B>: AppStateTrait,
     AppState<f::Running, B>: AppStateTrait,
     AppState<f::Running<f::WithMisconfiguration>, B>: AppStateTrait,
 {

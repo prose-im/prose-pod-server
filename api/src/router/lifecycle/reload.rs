@@ -14,6 +14,7 @@ use crate::state::prelude::*;
 impl<FrontendSubstate> AppState<f::Running<FrontendSubstate>, b::Running>
 where
     FrontendSubstate: FrontendRunningState,
+    AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
 {
     pub(in crate::router) async fn lifecycle_reload_route(
         State(app_state): State<Self>,

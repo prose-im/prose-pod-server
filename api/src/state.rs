@@ -172,6 +172,8 @@ pub trait AppStateTrait {
     fn state_name() -> &'static str;
 
     fn into_router(self) -> axum::Router;
+
+    fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error>;
 }
 
 macro_rules! state_boilerplate {
