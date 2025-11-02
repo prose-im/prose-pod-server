@@ -19,8 +19,8 @@ where
         State(app_state): State<Self>,
     ) -> Result<(), Error> {
         match app_state.try_reload_frontend() {
-            Ok(app_state) => {
-                _ = app_state.do_reload_backend().await?;
+            Ok(new_state) => {
+                let _new_state = new_state.do_reload_backend().await?;
                 Ok(())
             }
 
