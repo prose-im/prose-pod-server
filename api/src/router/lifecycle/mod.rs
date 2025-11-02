@@ -8,3 +8,9 @@ mod backend_restart;
 mod factory_reset;
 mod frontend_reload;
 mod reload;
+
+pub(in crate::router) use self::backend_reload::*;
+pub(in crate::router) use self::backend_restart::*;
+pub(in crate::router) use self::factory_reset::*;
+pub(in crate::router) use self::frontend_reload::*;
+pub(in crate::router) use self::reload::*;

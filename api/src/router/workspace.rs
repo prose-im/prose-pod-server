@@ -18,35 +18,33 @@ use crate::util::NoContext;
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 
-impl AppState<f::Running, b::Running> {
-    pub(in crate::router) fn workspace_routes() -> axum::Router<Self> {
-        Router::<Self>::new()
-            .route("/workspace-init", put(self::init_workspace))
-            .route(
-                "/workspace",
-                MethodRouter::new()
-                    .get(self::get_workspace)
-                    .patch(self::patch_workspace),
-            )
-            .route(
-                "/workspace/name",
-                MethodRouter::new()
-                    .get(self::get_workspace_name)
-                    .put(self::set_workspace_name),
-            )
-            .route(
-                "/workspace/accent-color",
-                MethodRouter::new()
-                    .get(self::get_workspace_accent_color)
-                    .put(self::set_workspace_accent_color),
-            )
-            .route(
-                "/workspace/icon",
-                MethodRouter::new()
-                    .get(self::get_workspace_icon)
-                    .put(self::set_workspace_icon),
-            )
-    }
+pub(in crate::router) fn router() -> axum::Router<AppState<f::Running, b::Running>> {
+    Router::<AppState>::new()
+        .route("/workspace-init", put(self::init_workspace))
+        .route(
+            "/workspace",
+            MethodRouter::new()
+                .get(self::get_workspace)
+                .patch(self::patch_workspace),
+        )
+        .route(
+            "/workspace/name",
+            MethodRouter::new()
+                .get(self::get_workspace_name)
+                .put(self::set_workspace_name),
+        )
+        .route(
+            "/workspace/accent-color",
+            MethodRouter::new()
+                .get(self::get_workspace_accent_color)
+                .put(self::set_workspace_accent_color),
+        )
+        .route(
+            "/workspace/icon",
+            MethodRouter::new()
+                .get(self::get_workspace_icon)
+                .put(self::set_workspace_icon),
+        )
 }
 
 #[derive(Debug)]

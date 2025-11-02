@@ -15,78 +15,70 @@ use crate::state::prelude::*;
 
 // MARK: - Routes
 
-impl AppState<f::Running, b::Running> {
-    pub(in crate::router) async fn backend_restart_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
+pub(in crate::router) async fn backend_restart(
+    State(app_state): State<AppState<f::Running, b::Running>>,
+) -> Result<(), Error> {
+    let backend_state = Arc::clone(&app_state.backend.state);
+    let mut prosody = backend_state.prosody.write().await;
 
-        match app_state.do_stop_backend::<b::Starting>(&mut prosody).await {
-            Ok(app_state) => match app_state.do_start_backend(&mut prosody).await {
-                Ok(_) => Ok(()),
-
-                Err((_, error)) => {
-                    tracing::error!("Backend restart failed: {error:?}");
-                    Err(errors::restart_failed(&error))
-                }
-            },
+    match app_state.do_stop_backend::<b::Starting>(&mut prosody).await {
+        Ok(app_state) => match app_state.do_start_backend(&mut prosody).await {
+            Ok(_) => Ok(()),
 
             Err((_, error)) => {
                 tracing::error!("Backend restart failed: {error:?}");
                 Err(errors::restart_failed(&error))
             }
+        },
+
+        Err((_, error)) => {
+            tracing::error!("Backend restart failed: {error:?}");
+            Err(errors::restart_failed(&error))
         }
     }
 }
 
-impl AppState<f::Running, b::Starting> {
-    pub(in crate::router) async fn backend_restart_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
+pub(in crate::router) async fn backend_start(
+    State(app_state): State<AppState<f::Running, b::Starting>>,
+) -> Result<(), Error> {
+    let backend_state = Arc::clone(&app_state.backend.state);
+    let mut prosody = backend_state.prosody.write().await;
 
-        match app_state.do_start_backend(&mut prosody).await {
-            Ok(_) => Ok(()),
+    match app_state.do_start_backend(&mut prosody).await {
+        Ok(_) => Ok(()),
 
-            Err((_, error)) => {
-                tracing::error!("{error:?}");
-                Err(errors::restart_failed(&error))
-            }
+        Err((_, error)) => {
+            tracing::error!("{error:?}");
+            Err(errors::restart_failed(&error))
         }
     }
 }
 
-impl AppState<f::Running, b::StartFailed<b::Operational>> {
-    pub(in crate::router) async fn backend_start_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        let backend_state = Arc::clone(&app_state.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
+pub(in crate::router) async fn backend_start_retry(
+    State(app_state): State<AppState<f::Running, b::StartFailed<b::Operational>>>,
+) -> Result<(), Error> {
+    let backend_state = Arc::clone(&app_state.backend.state);
+    let mut prosody = backend_state.prosody.write().await;
 
-        match app_state.do_start_backend(&mut prosody).await {
-            Ok(_new_state) => Ok(()),
+    match app_state.do_start_backend(&mut prosody).await {
+        Ok(_new_state) => Ok(()),
 
-            Err((_new_state, error)) => {
-                tracing::error!("{error:?}");
-                Err(errors::restart_failed(&error))
-            }
+        Err((_new_state, error)) => {
+            tracing::error!("{error:?}");
+            Err(errors::restart_failed(&error))
         }
     }
 }
 
-impl AppState<f::Running, b::StartFailed<b::NotInitialized>> {
-    pub(in crate::router) async fn backend_start_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        match app_state.do_bootstrapping().await {
-            Ok(_new_state) => Ok(()),
+pub(in crate::router) async fn backend_init_retry(
+    State(app_state): State<AppState<f::Running, b::StartFailed<b::NotInitialized>>>,
+) -> Result<(), Error> {
+    match app_state.do_bootstrapping().await {
+        Ok(_new_state) => Ok(()),
 
-            Err((_new_state, error)) => {
-                tracing::error!("{error:?}");
-                Err(errors::restart_failed(&error))
-            }
+        Err((_new_state, error)) => {
+            tracing::error!("{error:?}");
+            Err(errors::restart_failed(&error))
         }
     }
 }

@@ -17,14 +17,12 @@ use crate::util::either::Either;
 
 // MARK: - Routes
 
-impl AppState<f::Running, b::Running> {
-    pub(crate) async fn lifecycle_factory_reset_route(
-        State(app_state): State<Self>,
-    ) -> Result<StatusCode, Error> {
-        match app_state.do_factory_reset().await {
-            Ok(_new_state) => Ok(StatusCode::RESET_CONTENT),
-            Err((_new_state, error)) => Err(errors::factory_reset_failed(&error)),
-        }
+pub(in crate::router) async fn factory_reset(
+    State(app_state): State<AppState<f::Running, b::Running>>,
+) -> Result<StatusCode, Error> {
+    match app_state.do_factory_reset().await {
+        Ok(_new_state) => Ok(StatusCode::RESET_CONTENT),
+        Err((_new_state, error)) => Err(errors::factory_reset_failed(&error)),
     }
 }
 

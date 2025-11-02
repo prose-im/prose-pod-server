@@ -11,14 +11,12 @@ use crate::util::{NoContext as _, ResultPanic as _};
 
 // MARK: - Routes
 
-impl AppState<f::Running, b::Running> {
-    pub(in crate::router) async fn backend_reload_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        match app_state.do_reload_backend().await {
-            Ok(_) => Ok(()),
-            Err(err) => Err(err),
-        }
+pub(in crate::router) async fn backend_reload(
+    State(app_state): State<AppState<f::Running, b::Running>>,
+) -> Result<(), Error> {
+    match app_state.do_reload_backend().await {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err),
     }
 }
 

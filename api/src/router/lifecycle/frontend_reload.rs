@@ -13,18 +13,16 @@ use crate::{AppConfig, errors};
 
 // MARK: - Routes
 
-impl<FrontendSubstate> AppState<f::Running<FrontendSubstate>, b::Running>
+pub(in crate::router) async fn frontend_reload<FrontendSubstate>(
+    State(app_state): State<AppState<f::Running<FrontendSubstate>, b::Running>>,
+) -> Result<(), Error>
 where
     FrontendSubstate: f::RunningState,
     AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
 {
-    pub(in crate::router) async fn frontend_reload_route(
-        State(app_state): State<Self>,
-    ) -> Result<(), Error> {
-        match app_state.do_reload_frontend() {
-            Ok(_new_state) => Ok(()),
-            Err((_new_state, error)) => Err(errors::bad_configuration(&error)),
-        }
+    match app_state.do_reload_frontend() {
+        Ok(_new_state) => Ok(()),
+        Err((_new_state, error)) => Err(errors::bad_configuration(&error)),
     }
 }
 

@@ -66,22 +66,16 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             )
             .route(
                 "/lifecycle/frontend-reload",
-                post(Self::frontend_reload_route),
+                post(lifecycle::frontend_reload),
             )
-            .route(
-                "/lifecycle/backend-reload",
-                post(Self::backend_reload_route),
-            )
+            .route("/lifecycle/backend-reload", post(lifecycle::backend_reload))
             .route(
                 "/lifecycle/backend-restart",
-                post(Self::backend_restart_route),
+                post(lifecycle::backend_restart),
             )
-            .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
-            .route(
-                "/lifecycle/factory-reset",
-                post(Self::lifecycle_factory_reset_route),
-            )
-            .merge(Self::workspace_routes())
+            .route("/lifecycle/reload", post(lifecycle::reload))
+            .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
+            .merge(workspace::router())
             .with_state(self)
     }
 
@@ -118,10 +112,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
         Router::<Self>::new()
             // NOTE: Keep `/lifecycle/backend-restart` available just in case
             //   an internal error happened and we ended up stuck in this state.
-            .route(
-                "/lifecycle/backend-restart",
-                post(Self::backend_restart_route),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_start))
             .fallback(backend_health)
             .with_state(self)
     }
@@ -141,7 +132,7 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
         Router::<Self>::new()
             .route(
                 "/lifecycle/backend-restart",
-                post(Self::backend_start_route),
+                post(lifecycle::backend_start_retry),
             )
             .fallback(backend_health)
             .with_state(self)
@@ -161,7 +152,7 @@ impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running>
 
     fn into_router(self) -> axum::Router {
         Router::new()
-            .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
+            .route("/lifecycle/reload", post(lifecycle::reload))
             .fallback(frontend_health)
             .with_state(self)
     }
@@ -194,7 +185,7 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>
 
     fn into_router(self) -> axum::Router {
         Router::new()
-            .route("/lifecycle/reload", post(Self::lifecycle_reload_route))
+            .route("/lifecycle/reload", post(lifecycle::init_config))
             .fallback(frontend_health)
             .with_state(self)
     }
@@ -214,7 +205,7 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
         Router::<Self>::new()
             .route(
                 "/lifecycle/backend-restart",
-                post(Self::backend_start_route),
+                post(lifecycle::backend_init_retry),
             )
             .fallback(backend_health)
             .with_state(self)
