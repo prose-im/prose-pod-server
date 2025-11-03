@@ -15,7 +15,7 @@ pub use rw_lock_guards::OptionRwLockReadGuard;
 #[must_use]
 #[inline]
 pub const fn is_upper_snake_case(b: u8) -> bool {
-    b.is_ascii_uppercase() || b == b'_'
+    b.is_ascii_uppercase() || b == b'_' || b.is_ascii_digit()
 }
 
 pub fn unix_timestamp() -> u64 {
