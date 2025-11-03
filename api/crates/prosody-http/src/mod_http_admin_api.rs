@@ -462,7 +462,7 @@ fn receive<Response: DeserializeOwned>(
             // Not found.
             "item-not-found" | "user-not-found" | "group-not-found" => {
                 tracing::debug!("{error}");
-                Err(self::Error::Unauthorized(anyhow::Error::new(error)))
+                Err(self::Error::NotFound(anyhow::Error::new(error)))
             }
 
             // Conflict.
