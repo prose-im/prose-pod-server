@@ -94,8 +94,10 @@ pub struct UserInfo {
 
     pub role: Option<Box<str>>,
 
+    #[serde(default)]
     pub secondary_roles: Box<[Box<str>]>,
 
+    #[serde(default)]
     pub groups: Box<[Box<str>]>,
 
     #[serde(default)]
