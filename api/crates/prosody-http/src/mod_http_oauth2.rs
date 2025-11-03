@@ -438,22 +438,22 @@ pub use self::ProsodyHttpOAuth2Error as Error;
 #[derive(Debug, thiserror::Error)]
 pub enum ProsodyHttpOAuth2Error {
     /// Your credentials are incorrect.
-    #[error("Unauthorized: {0:?}")]
+    #[error("Unauthorized: {0:#}")]
     Unauthorized(anyhow::Error),
 
     /// You’re not allowed to do what you asked for.
-    #[error("Forbidden: {0:?}")]
+    #[error("Forbidden: {0:#}")]
     Forbidden(anyhow::Error),
 
     /// One of us made a mistake somewhere.
-    #[error("{0:?}")]
+    #[error("{0:#}")]
     Internal(anyhow::Error),
 
     /// An unknown error happened.
     ///
     /// The request has failed at the networking layer, there was a breaking
     /// change in Prosody or we didn’t write enough tests.
-    #[error("{0:?}")]
+    #[error("{0:#}")]
     Other(#[from] anyhow::Error),
 }
 
