@@ -435,7 +435,7 @@ fn receive<Response: DeserializeOwned>(
         let error = response
             .body_mut()
             .read_json::<crate::Error>()
-            .context("Could not decode Prosody OAuth 2.0 API error")?;
+            .context("Could not decode Prosody Admin API error")?;
 
         let condition = error
             .extra
