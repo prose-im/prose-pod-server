@@ -6,6 +6,7 @@
 
 local encodings = require "util.encodings";
 local base64 = encodings.base64;
+local code2err = require "net.http.errors".registry;
 local errors = require "util.error";
 local http = require "net.http";
 local id = require "util.id";
@@ -532,8 +533,6 @@ function new_webhook(rest_url, send_type)
 			end
 		end);
 
-	local code2err = require "net.http.errors".registry;
-
 	local function handle_stanza(event)
 		local stanza, origin = event.stanza, event.origin;
 		local reply_allowed = stanza.attr.type ~= "error" and stanza.attr.type ~= "result";
@@ -685,6 +684,11 @@ local http_server = require "net.http.server";
 module:hook_object_event(http_server, "http-error", function (event)
 	local request, response = event.request, event.response;
 	local response_as = decide_type(request and request.headers.accept or "", supported_errors);
+
+	if not event.error and code2err[event.code] then
+		event.error = errors.new(event.code, nil, code2err);
+	end
+
 	if response_as == "application/xmpp+xml" then
 		if response then
 			response.headers.content_type = "application/xmpp+xml";

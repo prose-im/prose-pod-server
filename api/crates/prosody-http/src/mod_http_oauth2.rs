@@ -516,57 +516,105 @@ fn receive<Response: DeserializeOwned>(
     } else {
         // Read the reponse body, as `mod_http_oauth2` isn’t very
         // expressive with HTTP status codes.
-        let error = response
+        let json = response
             .body_mut()
-            .read_json::<crate::Error<self::ApiError>>()
-            .context("Could not decode Prosody OAuth 2.0 API error")?
-            .into_inner();
+            .read_json::<serde_json::Value>()
+            .context("Prosody OAuth 2.0 API error is not valid JSON")?;
 
-        match error.name.as_ref() {
-            // Unauthorized.
-            "not-authorized" | "expired_token" | "invalid_grant" | "login_required" => {
-                tracing::debug!("{error}");
-                Err(self::Error::Unauthorized(anyhow::Error::new(error)))
-            }
-            "invalid_request" if error.description.as_deref() == Some("invalid JID") => {
-                tracing::debug!("{error}");
-                Err(self::Error::Unauthorized(anyhow::Error::new(error)))
-            }
-
-            // Forbidden.
-            "forbidden" | "access_denied" => {
-                tracing::warn!("{error}");
-                Err(self::Error::Forbidden(anyhow::Error::new(error)))
-            }
-
-            // Internal errors.
-            "internal-server-error"
-            | "feature-not-implemented"
-            | "invalid_client"
-            | "invalid_client_metadata"
-            | "invalid_redirect_uri"
-            | "invalid_request"
-            | "invalid_scope"
-            | "temporarily_unavailable"
-            | "unsupported_response_type" => {
-                tracing::error!("{error}");
-                Err(self::Error::Internal(anyhow::Error::new(error)))
-            }
-            "unauthorized_client" => {
-                tracing::warn!(
-                    "OAuth 2.0 client unauthorized ({error}). \
-                    Make sure to register one before making calls."
-                );
-                Err(self::Error::Internal(anyhow::Error::new(error)))
-            }
-
-            // Catch-all.
-            _ => {
-                tracing::error!("{error}");
-                if cfg!(debug_assertions) {
-                    panic!("Unknown error")
+        match serde_json::from_value::<self::ApiError>(json.clone()) {
+            Ok(error) => match error.name.as_ref() {
+                // Unauthorized.
+                "expired_token" | "invalid_grant" | "login_required" => {
+                    tracing::debug!("{error}");
+                    Err(self::Error::Unauthorized(anyhow::Error::new(error)))
                 }
-                Err(self::Error::Internal(anyhow::Error::new(error)))
+                "invalid_request" if error.description.as_deref() == Some("invalid JID") => {
+                    tracing::debug!("{error}");
+                    Err(self::Error::Unauthorized(anyhow::Error::new(error)))
+                }
+
+                // Forbidden.
+                "access_denied" => {
+                    tracing::warn!("{error}");
+                    Err(self::Error::Forbidden(anyhow::Error::new(error)))
+                }
+
+                // Internal errors.
+                "invalid_client"
+                | "invalid_client_metadata"
+                | "invalid_redirect_uri"
+                | "invalid_request"
+                | "invalid_scope"
+                | "temporarily_unavailable"
+                | "unsupported_response_type" => {
+                    tracing::error!("{error}");
+                    Err(self::Error::Internal(anyhow::Error::new(error)))
+                }
+                "unauthorized_client" => {
+                    tracing::warn!(
+                        "OAuth 2.0 client unauthorized ({error}). \
+                        Make sure to register one before making calls."
+                    );
+                    Err(self::Error::Internal(anyhow::Error::new(error)))
+                }
+
+                // Catch-all.
+                _ => {
+                    tracing::error!("{error}");
+                    if cfg!(debug_assertions) {
+                        panic!("Unknown error")
+                    }
+                    Err(self::Error::Internal(anyhow::Error::new(error)))
+                }
+            },
+            Err(_) => {
+                // TODO: Factor this case so it’s shared between all mods.
+                let error = serde_json::from_value::<crate::Error>(json)
+                    .context("Could not decode Prosody OAuth 2.0 API error")?;
+
+                match error.condition.as_ref() {
+                    // Unauthorized.
+                    "not-authorized" => {
+                        tracing::debug!("{error}");
+                        Err(self::Error::Unauthorized(anyhow::Error::new(error)))
+                    }
+
+                    // Forbidden.
+                    "forbidden" => {
+                        tracing::warn!("{error}");
+                        Err(self::Error::Forbidden(anyhow::Error::new(error)))
+                    }
+
+                    // Internal errors.
+                    "internal-server-error"
+                    | "feature-not-implemented"
+                    | "invalid_client"
+                    | "invalid_client_metadata"
+                    | "invalid_redirect_uri"
+                    | "invalid_request"
+                    | "invalid_scope"
+                    | "temporarily_unavailable"
+                    | "unsupported_response_type" => {
+                        tracing::error!("{error}");
+                        Err(self::Error::Internal(anyhow::Error::new(error)))
+                    }
+                    "unauthorized_client" => {
+                        tracing::warn!(
+                            "OAuth 2.0 client unauthorized ({error}). \
+                            Make sure to register one before making calls."
+                        );
+                        Err(self::Error::Internal(anyhow::Error::new(error)))
+                    }
+
+                    // Catch-all.
+                    _ => {
+                        tracing::error!("{error}");
+                        if cfg!(debug_assertions) {
+                            panic!("Unknown error")
+                        }
+                        Err(self::Error::Internal(anyhow::Error::new(error)))
+                    }
+                }
             }
         }
     }

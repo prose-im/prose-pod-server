@@ -92,14 +92,14 @@ pub mod error {
     /// ```
     #[derive(Debug, Deserialize, thiserror::Error)]
     #[error("{reason}", reason = error.text)]
-    pub struct ProsodyHttpError<ExtraInfo = Option<DefaultExtraInfo>> {
+    pub struct ProsodyHttpError<ExtraInfo = DefaultExtraInfo> {
         error: ProsodyHttpErrorDetails<ExtraInfo>,
         pub code: u16,
     }
 
     impl<T> ProsodyHttpError<T> {
         #[inline]
-        pub fn into_inner(self) -> T {
+        pub fn into_inner(self) -> Option<T> {
             self.error.extra
         }
     }
@@ -107,11 +107,13 @@ pub mod error {
     /// See [`ProsodyHttpError`].
     #[derive(Debug, Deserialize)]
     pub struct ProsodyHttpErrorDetails<ExtraInfo> {
-        pub source: Box<str>,
+        #[serde(default)]
+        pub source: Option<Box<str>>,
         pub text: Box<str>,
         pub condition: Box<str>,
         pub r#type: Box<str>,
-        pub extra: ExtraInfo,
+        #[serde(default = "Option::default")]
+        pub extra: Option<ExtraInfo>,
     }
 
     pub use ProsodyHttpErrorDefaultExtraInfo as DefaultExtraInfo;

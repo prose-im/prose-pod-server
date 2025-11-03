@@ -1,6 +1,2 @@
-mod_http_admin_api: Accept `"application/json"` with parameters
-
-Some HTTP clients set `"application/json; charset=utf-8"` for JSON by default.
-Instead of having to add client-side workarounds and cluttering call sites,
-we can just support it by not checking for an exact match.
+mod_http_oauth2: Coerce net.http errors more consistently
 
