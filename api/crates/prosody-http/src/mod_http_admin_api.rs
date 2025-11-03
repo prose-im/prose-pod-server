@@ -90,7 +90,7 @@ pub struct UserInfo {
     #[serde_as(as = "serde_with::DisplayFromStr")]
     pub username: JidNodeMut,
 
-    pub display_name: Box<str>,
+    pub display_name: Option<Box<str>>,
 
     pub role: Option<Box<str>>,
 
