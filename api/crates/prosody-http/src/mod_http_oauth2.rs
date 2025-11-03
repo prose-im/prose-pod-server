@@ -71,7 +71,7 @@ impl ProsodyOAuth2 {
         &self,
         username: &JidNodeView,
         password: &SecretView,
-        ClientCredentials {
+        _client_credentials @ ClientCredentials {
             client_id,
             client_secret,
             ..
