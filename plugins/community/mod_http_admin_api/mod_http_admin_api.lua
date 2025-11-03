@@ -94,6 +94,18 @@ function check_auth(routes)
 	return routes;
 end
 
+-- Checks if the content type is `application/json`.
+--
+-- | Input                               | Output  |
+-- | ----------------------------------- | ------- |
+-- | `"application/json"`                | `true`  |
+-- | `"application/json; charset=utf-8"` | `true`  |
+-- | `"application/json+whatever"`       | `false` |
+-- | `"application/foo"`                 | `false` |
+local function is_json(content_type)
+	return content_type:match("^application/json(;|$)") ~= nil
+end
+
 local function token_info_to_invite_info(token_info)
 	local additional_data = token_info.additional_data;
 	local groups = additional_data and additional_data.groups or nil;
@@ -160,7 +172,7 @@ function create_invite_type(event, invite_type)
 
 	local request = event.request;
 	if request.body and #request.body > 0 then
-		if request.headers.content_type ~= json_content_type then
+		if is_json(request.headers.content_type) then
 			module:log("warn", "Invalid content type");
 			return nil, "invalid-json";
 		end
@@ -500,7 +512,7 @@ function patch_user(event, username)
 	if not current_user then return nil, "user-not-found"; end
 
 	local request = event.request;
-	if request.headers.content_type ~= json_content_type
+	if is_json(request.headers.content_type)
 	or (not request.body or #request.body == 0) then
 		return nil, "invalid-json";
 	end
@@ -531,7 +543,7 @@ function update_user(event, username)
 	end
 
 	local request = event.request;
-	if request.headers.content_type ~= json_content_type
+	if is_json(request.headers.content_type)
 	or (not request.body or #request.body == 0) then
 		return nil, "invalid-json";
 	end
@@ -635,7 +647,7 @@ end
 
 function create_group(event)
 	local request = event.request;
-	if request.headers.content_type ~= json_content_type
+	if is_json(request.headers.content_type)
 	or (not request.body or #request.body == 0) then
 		return nil, "invalid-json";
 	end
@@ -686,7 +698,7 @@ function update_group(event, group) --luacheck: ignore 212/event
 	if not group_id then return nil, "group-not-found"; end
 
 	local request = event.request;
-	if request.headers.content_type ~= json_content_type or (not request.body or #request.body == 0) then
+	if is_json(request.headers.content_type) or (not request.body or #request.body == 0) then
 		return nil, "invalid-json";
 	end
 
@@ -825,7 +837,7 @@ end
 
 local function post_server_announcement(event)
 	local request = event.request;
-	if request.headers.content_type ~= json_content_type
+	if is_json(request.headers.content_type)
 	or (not request.body or #request.body == 0) then
 		return nil, "invalid-json";
 	end
