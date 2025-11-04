@@ -16,7 +16,7 @@ function get_invite_info(event, invite_token)
 	if not invite_token or #invite_token == 0 then
 		return 404;
 	end
-	local invite = invites.get(invite_token);
+	local invite = invites.get_account_invite_info(invite_token);
 	if not invite then
 		return 404;
 	end
@@ -63,6 +63,7 @@ function register_with_invite(event)
 	end
 
 	local user, password, token = register_data.username, register_data.password, register_data.token;
+	if user == json.null then user = nil end;
 
 	local invite = invites.get(token);
 	if not invite then

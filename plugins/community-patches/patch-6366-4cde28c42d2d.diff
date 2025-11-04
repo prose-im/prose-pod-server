@@ -1,0 +1,19 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1762270726 -28800
+#      Tue Nov 04 23:38:46 2025 +0800
+# Node ID 4cde28c42d2da7629341a910efa39013411fb094
+# Parent  6142e85f4798b9fd0da7642aa90f1062efebaf11
+mod_invites_register_api: Accept `null` as `username` in `register_with_invite`
+
+diff -r 6142e85f4798 -r 4cde28c42d2d mod_invites_register_api/mod_invites_register_api.lua
+--- a/mod_invites_register_api/mod_invites_register_api.lua	Tue Nov 04 23:37:46 2025 +0800
++++ b/mod_invites_register_api/mod_invites_register_api.lua	Tue Nov 04 23:38:46 2025 +0800
+@@ -63,6 +63,7 @@
+ 	end
+ 
+ 	local user, password, token = register_data.username, register_data.password, register_data.token;
++	if user == json.null then user = nil end;
+ 
+ 	local invite = invites.get(token);
+ 	if not invite then

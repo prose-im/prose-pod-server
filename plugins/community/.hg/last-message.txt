@@ -1,2 +1,1 @@
-mod_http_oauth2: Coerce net.http errors more consistently
-
+mod_invites_register_api: Accept `null` as `username` in `register_with_invite`
