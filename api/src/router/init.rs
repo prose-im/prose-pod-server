@@ -8,6 +8,7 @@ use axum::extract::State;
 use prosodyctl::UserCreateError;
 use serde::{Deserialize, Serialize};
 
+use crate::app_config::defaults::MAIN_TEAM_GROUP_ID;
 use crate::errors;
 use crate::models::{BareJid, JidNode, Password};
 use crate::responders::Error;
@@ -65,34 +66,40 @@ pub async fn init_first_account(
 
     // Create first admin account.
     let jid = BareJid::from_parts(Some(&dto.username), server_domain);
-    let result = prosodyctl
+    let summary = prosodyctl
         .user_create(jid.as_str(), &dto.password, Some(first_account_role))
-        .await;
+        .await
+        .map_err(|err| match err {
+            UserCreateError::Conflict => {
+                // // NOTE: Even more so since we lock the prosodyctl shell between
+                // //   listing users and creating the first admin account.
+                // unreachable!("There shouldn’t be any user")
+                // NOTE: Because we now check for admins only,
+                //   there might still be a conflict.
+                errors::conflict_error(
+                    "USERNAME_ALREADY_TAKEN",
+                    "Username already taken",
+                    "Choose another username.",
+                )
+            }
+            UserCreateError::Internal(error) => error.no_context(),
+        })?;
+    tracing::info!("{summary}");
+
+    // Add first account to main group.
+    // TODO: Move this to a hook in Prosody?
+    let summary = prosodyctl
+        .groups_add_member(server_domain, MAIN_TEAM_GROUP_ID, &dto.username, None)
+        .await
+        .no_context()?;
+    tracing::info!("{summary}");
 
     // Release lock ASAP.
     drop(prosodyctl);
 
-    match result {
-        Ok(summary) => {
-            tracing::info!("{summary}");
-            let response = CreateAccountResponse {
-                username: dto.username,
-                role: first_account_role.to_owned(),
-            };
-            Ok(Json(response))
-        }
-        Err(UserCreateError::Conflict) => {
-            // // NOTE: Even more so since we lock the prosodyctl shell between
-            // //   listing users and creating the first admin account.
-            // unreachable!("There shouldn’t be any user")
-            // NOTE: Because we now check for admins only,
-            //   there might still be a conflict.
-            Err(errors::conflict_error(
-                "USERNAME_ALREADY_TAKEN",
-                "Username already taken",
-                "Choose another username.",
-            ))
-        }
-        Err(UserCreateError::Internal(error)) => Err(error.no_context()),
-    }
+    let response = CreateAccountResponse {
+        username: dto.username,
+        role: first_account_role.to_owned(),
+    };
+    Ok(Json(response))
 }
