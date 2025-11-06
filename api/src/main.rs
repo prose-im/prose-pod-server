@@ -52,6 +52,9 @@ async fn main() -> anyhow::Result<()> {
 
     SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Relaxed);
 
+    // Wait for Prosody to shutdown gracefully.
+    app_context.cleanup().await?;
+
     drop(app_context);
 
     res

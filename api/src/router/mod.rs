@@ -10,8 +10,12 @@ mod lifecycle;
 mod users_util;
 mod workspace;
 
+use std::sync::{Arc, Weak};
+
 use axum::Router;
 use axum::routing::{get, post, put};
+use prosody_child_process::ProsodyChildProcess;
+use tokio::sync::RwLock;
 
 use crate::AppConfig;
 use crate::router::util::{backend_health, frontend_health};
@@ -82,6 +86,10 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        Some(Arc::downgrade(&self.backend.prosody))
+    }
 }
 
 /// **Starting** (during a startup and after a factory reset).
@@ -105,6 +113,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
+    }
 }
 
 /// **Restarting** (during a restart).
@@ -124,6 +136,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
 
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
     }
 }
 
@@ -146,6 +162,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
+    }
 }
 
 /// **Running with misconfiguration** (after a `SIGHUP`
@@ -165,6 +185,10 @@ impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running>
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
     }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        Some(Arc::downgrade(&self.backend.prosody))
+    }
 }
 
 /// **Undergoing factory reset** (during a factory reset).
@@ -179,6 +203,10 @@ impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryR
 
     fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
         Ok(())
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
     }
 }
 
@@ -197,6 +225,10 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>
 
     fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
         Ok(())
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
     }
 }
 
@@ -218,6 +250,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
 
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error> {
         AppConfig::validate_config_changes(&self.frontend.config, new_config)
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
     }
 }
 

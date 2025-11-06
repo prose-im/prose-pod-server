@@ -17,7 +17,10 @@ pub(crate) mod prelude {
 
 use std::sync::{Arc, Weak};
 
+use arc_swap::ArcSwapOption;
 use axum_hot_swappable_router::HotSwappableRouter;
+use prosody_child_process::ProsodyChildProcess;
+use tokio::sync::RwLock;
 
 use crate::AppConfig;
 
@@ -31,9 +34,10 @@ use crate::AppConfig;
 /// without terminating in-flight requests.
 ///
 /// NOTE: Cannot be generic because it will be immutable.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppContext {
     router: HotSwappableRouter,
+    prosody: Arc<ArcSwapOption<Weak<RwLock<ProsodyChildProcess>>>>,
 }
 
 impl Drop for AppContext {
@@ -51,6 +55,7 @@ impl AppContext {
     pub fn new() -> Self {
         Self {
             router: HotSwappableRouter::default(),
+            prosody: Arc::default(),
         }
     }
 
@@ -61,12 +66,13 @@ impl AppContext {
         F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
     {
+        self.prosody.swap(new_state.prosody_weak().map(Arc::new));
+
         let router: axum::Router = crate::router::with_base_routes(
             new_state.frontend.clone(),
             new_state.backend.clone(),
             new_state.into_router(),
         );
-
         self.router.set(router);
 
         tracing::info!("State changed: {}", AppState::<F, B>::state_name())
@@ -91,6 +97,17 @@ impl AppContext {
     #[inline(always)]
     pub fn router(&self) -> HotSwappableRouter {
         self.router.clone()
+    }
+
+    pub async fn cleanup(&self) -> Result<(), anyhow::Error> {
+        match self.prosody.load().as_deref().map(Weak::upgrade) {
+            Some(Some(prosody)) => {
+                prosody.write().await.stop().await?;
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 }
 
@@ -183,6 +200,8 @@ pub trait AppStateTrait {
     fn into_router(self) -> axum::Router;
 
     fn validate_config_changes(&self, new_config: &AppConfig) -> Result<(), anyhow::Error>;
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>>;
 }
 
 macro_rules! state_boilerplate {
