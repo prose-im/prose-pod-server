@@ -4,7 +4,8 @@
 **/.hg*
 api/target
 
-# Prosody Community modules conflicting with internal plugins (merged)
+# Prosody Community modules conflicting with internal plugins or merged
+plugins/community/mod_graceful_shutdown
 plugins/community/mod_pep_vcard_avatar
 plugins/community/mod_server_contact_info
 plugins/community/mod_server_info
