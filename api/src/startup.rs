@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, remove_dir_all};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
@@ -116,6 +116,8 @@ impl<BackendState> AppState<f::Running, BackendState> {
             let group_ids = groups.keys().into_iter();
             synchronize_rosters(&mut prosodyctl, group_ids, server_domain).await?;
         }
+
+        run_migrations(&mut prosodyctl).await?;
 
         Ok(b::Running {
             state: Arc::new(b::Operational {
@@ -507,6 +509,28 @@ where
         tracing::debug!("Synchronizing groups…");
         let summary = prosodyctl.groups_sync(host, group_id).await?;
         tracing::info!("groups_sync: {summary}");
+    }
+
+    Ok(())
+}
+
+async fn run_migrations(prosodyctl: &mut Prosodyctl) -> Result<(), anyhow::Error> {
+    let prosody_data_dir = prosodyctl.prosody_paths_data().await?;
+
+    // Delete foundations of the previous architecture.
+    {
+        // Delete `admin.prose.local` data.
+        let path = Path::new(&prosody_data_dir).join("admin%2eprose%2elocal");
+        if path.is_dir() {
+            tracing::warn!("Deleting <{path}>…", path = path.display());
+            remove_dir_all(&path)
+                .context(format!("Could not delete <{path}>", path = path.display()))?;
+        } else {
+            tracing::debug!(
+                "Not deleting <{path}>: Not a directory.",
+                path = path.display()
+            );
+        }
     }
 
     Ok(())
