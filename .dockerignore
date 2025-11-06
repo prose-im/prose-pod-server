@@ -5,6 +5,7 @@
 api/target
 
 # Prosody Community modules conflicting with internal plugins or merged
+plugins/community/mod_cloud_notify
 plugins/community/mod_graceful_shutdown
 plugins/community/mod_pep_vcard_avatar
 plugins/community/mod_server_contact_info
