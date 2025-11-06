@@ -15,7 +15,7 @@ pub(crate) mod prelude {
     pub use super::{AppContext, AppState, AppStateTrait};
 }
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use axum_hot_swappable_router::HotSwappableRouter;
 
@@ -36,9 +36,19 @@ pub struct AppContext {
     router: HotSwappableRouter,
 }
 
+impl Drop for AppContext {
+    fn drop(&mut self) {
+        if crate::SHUTTING_DOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::debug!("[Drop] App context dropped")
+        } else {
+            panic!("[Drop] App context dropped")
+        }
+    }
+}
+
 impl AppContext {
     #[inline(always)]
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             router: HotSwappableRouter::default(),
         }
@@ -92,30 +102,29 @@ pub struct AppState<
     FrontendState = frontend::FrontendRunning<frontend::substates::Operational>,
     BackendState = backend::BackendRunning<backend::substates::Operational>,
 > {
-    app_context: AppContext,
+    app_context: Weak<AppContext>,
     pub frontend: FrontendState,
     pub backend: BackendState,
 }
 
 impl<F, B> AppState<F, B> {
     #[inline]
-    pub fn new(frontend: F, backend: B) -> Self
+    pub fn new(app_context: Arc<AppContext>, frontend: F, backend: B) -> Self
     where
         Self: AppStateTrait,
         F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
     {
-        let app_context = AppContext::new();
         app_context.new_state(Self {
-            app_context: app_context.clone(),
+            app_context: Arc::downgrade(&app_context),
             frontend,
             backend,
         })
     }
 
     #[inline(always)]
-    pub fn context(&self) -> &AppContext {
-        &self.app_context
+    pub fn context(&self) -> Option<Arc<AppContext>> {
+        self.app_context.upgrade()
     }
 }
 
@@ -480,6 +489,8 @@ pub mod backend {
 
 // MARK: App state transitions
 
+const STATIC_APP_CONTEXT: &'static str = "Static router should hold app context forever";
+
 impl<F1, B1> AppState<F1, B1> {
     #[must_use]
     #[inline]
@@ -491,9 +502,9 @@ impl<F1, B1> AppState<F1, B1> {
         F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
     {
-        let app_context = self.app_context.clone();
+        let app_context = self.context().expect(STATIC_APP_CONTEXT);
         let new_state = AppState {
-            app_context: self.app_context,
+            app_context: Arc::downgrade(&app_context),
             frontend: self.frontend.into(),
             backend: self.backend.into(),
         };
@@ -517,7 +528,7 @@ impl<F1, B1> AppState<F1, B1> {
         F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
     {
-        let app_context = self.app_context.clone();
+        let app_context = self.context().expect(STATIC_APP_CONTEXT);
         app_context.new_state(transition(self))
     }
 
@@ -531,7 +542,7 @@ impl<F1, B1> AppState<F1, B1> {
         F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
     {
-        let app_context = self.app_context.clone();
+        let app_context = self.context().expect(STATIC_APP_CONTEXT);
         app_context.set_state(transition(self))
     }
 }

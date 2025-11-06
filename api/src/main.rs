@@ -15,7 +15,7 @@ mod startup;
 mod state;
 mod util;
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicBool};
 
 use anyhow::Context as _;
 use axum::Router;
@@ -24,6 +24,8 @@ use tokio::{net::TcpListener, time::Instant};
 use crate::state::prelude::*;
 
 pub(crate) use self::app_config::AppConfig;
+
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,22 +40,30 @@ async fn main() -> anyhow::Result<()> {
 
     init_tracing();
 
+    let app_context = Arc::new(AppContext::new());
     let app_config = AppConfig::from_default_figment()?;
 
-    tokio::select! {
-        res = main_inner(app_config) => res,
+    let res = tokio::select! {
+        res = main_inner(Arc::clone(&app_context), app_config) => res,
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
-    }
+    };
+
+    SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    drop(app_context);
+
+    res
 }
 
-async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
+async fn main_inner(app_context: Arc<AppContext>, app_config: AppConfig) -> anyhow::Result<()> {
     // Bind to the API address to exit early if not available.
     let address = app_config.server_api.address();
     let listener = TcpListener::bind(address).await?;
 
-    let app_state = AppState::<f::Running, b::Starting<b::NotInitialized>>::new(
+    let startup_app_state = AppState::<f::Running, b::Starting<b::NotInitialized>>::new(
+        Arc::clone(&app_context),
         frontend::Running {
             state: Arc::new(f::Operational {}),
             config: Arc::new(app_config),
@@ -66,7 +76,18 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
     // Serve a minimal HTTP API while the startup actions run.
     let mut main_tasks = tokio::task::JoinSet::<anyhow::Result<()>>::new();
     main_tasks.spawn({
-        let app_context = app_state.context().clone();
+        // NOTE: Looks like `Router::with_state` stores clones of the app state
+        //   for each route, but nothing keeps a strong reference to it if the
+        //   router is empty. Our main router has no route, which means the app
+        //   context gets dropped immediately! While we might add static routes
+        //   (e.g. `/version`) in the future, it’s better not to rely on such
+        //   implementation details and pass a strong reference to the app
+        //   context to `main_inner` (ensuring it will never get droppped early)
+        //   Doing this also gives us a reference to the app context in `main`
+        //   to do some cleanup tasks during graceful shutdowns if we ever need
+        //   to, which is good.
+        let app_context = Arc::clone(&app_context);
+
         async move {
             let app: Router = Router::new()
                 .fallback_service(app_context.router())
@@ -77,7 +98,7 @@ async fn main_inner(app_config: AppConfig) -> anyhow::Result<()> {
             axum::serve(listener, app).await.context("Serve error")
         }
     });
-    main_tasks.spawn(async move { startup(app_state).await.context("Startup error") });
+    main_tasks.spawn(async move { startup(startup_app_state).await.context("Startup error") });
 
     // Wait for both tasks to finish, or abort if one fails.
     let mut main_res: Option<anyhow::Result<()>> = None;
