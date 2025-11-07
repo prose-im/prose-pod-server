@@ -14,14 +14,19 @@ use nix::{
     sys::signal::{Signal::SIGHUP, kill},
     unistd::Pid,
 };
-use tokio::process::{Child, Command};
+use tokio::{
+    process::{Child, Command},
+    task::JoinHandle,
+};
 
 use crate::util::{debug_panic, debug_panic_or_log_warning};
 
 #[derive(Debug)]
 pub struct ProsodyChildProcess {
     handle: Option<ProsodyHandle>,
+
     envs: HashMap<OsString, OsString>,
+
     /// A unique ID that’s used in debug logs to differenciate
     /// which instance is “speaking”.
     id: UniqueId,
@@ -30,7 +35,8 @@ pub struct ProsodyChildProcess {
 #[derive(Debug)]
 struct ProsodyHandle {
     process: Child,
-    // stdout: Lines<BufReader<ChildStdout>>,
+
+    log_handle: JoinHandle<()>,
 }
 
 impl ProsodyChildProcess {
@@ -119,23 +125,36 @@ impl ProsodyChildProcess {
     }
 
     /// Stop Prosody gracefully.
+    #[inline]
     pub async fn stop(&mut self) -> Result<(), anyhow::Error> {
-        tracing::debug!(instance = %self.id, "Stopping Prosody…");
+        match self.handle.take() {
+            Some(handle) => Self::stop_(handle, &self.id).await,
+            None => {
+                debug_panic_or_log_warning(
+                    "Not stopping Prosody: No handle (likely already stopped).",
+                );
+                Ok(())
+            }
+        }
+    }
 
-        let Some(mut handle) = self.handle.take() else {
-            debug_panic_or_log_warning("Not stopping Prosody: No handle (likely already stopped).");
-            return Ok(());
-        };
+    /// Stop Prosody gracefully.
+    async fn stop_(mut handle: ProsodyHandle, instance: &UniqueId) -> Result<(), anyhow::Error> {
+        tracing::debug!(%instance, "Stopping Prosody…");
 
+        // Stop Prosody.
         handle.process.kill().await?;
 
-        // Wait for Prosody to terminate.
+        // Wait for Prosody to terminate (avoids zombies).
         // NOTE: Prosody can still save data after it’s been killed,
         //   during its graceful shutdown process. This ensures Prosody
         //   is inert after this function ends.
         handle.process.wait().await?;
 
-        tracing::info!(instance = %self.id, "Prosody stopped successfully.");
+        // Wait for all logs to be processed.
+        handle.log_handle.await?;
+
+        tracing::info!(%instance, "Prosody stopped successfully.");
         Ok(())
     }
 
@@ -170,22 +189,99 @@ impl ProsodyHandle {
     #[must_use]
     #[tracing::instrument(level = "trace", skip_all, err)]
     async fn new(envs: impl Iterator<Item = (OsString, OsString)>) -> Result<Self, anyhow::Error> {
-        let child = Command::new("prosody")
+        use tokio::io::{AsyncBufReadExt as _, BufReader};
+
+        let mut child = Command::new("prosody")
             .arg("--no-daemonize")
             .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .envs(envs)
             .spawn()
             .context("Failed spawning prosody")?;
 
-        // let stdout = (child.stdout.take()).ok_or(anyhow!("Failed to get prosody stdout"))?;
-        // let reader = BufReader::new(stdout).lines();
+        let stdout = (child.stdout.take()).ok_or(anyhow!("Failed to get prosody stdout"))?;
+        let mut reader = BufReader::new(stdout).lines();
+
+        const TRACING_TARGET: &'static str = "prosody";
+
+        let join_handle = tokio::task::spawn(async move {
+            let span = tracing::info_span!(TRACING_TARGET);
+            let _span = span.enter();
+
+            loop {
+                match reader.next_line().await {
+                    Ok(Some(line)) => {
+                        // NOTE: Line format: `module       level\tmesssage`
+                        //   (with a variable number of space characters
+                        //   between the module name and the level).
+
+                        const LOG_NAME: &'static str = "log";
+
+                        // Extract the module name.
+                        let Some((module, rest)) =
+                            line.split_once(|c: char| c.is_ascii_whitespace())
+                        else {
+                            tracing::info!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                parsing = "failed", "{line}"
+                            );
+                            continue;
+                        };
+
+                        // Trim spaces between the module name and the level.
+                        let rest = rest.trim_ascii_start();
+
+                        // Extract the level.
+                        let Some((level_str, message)) = rest.split_once('\t') else {
+                            tracing::info!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, parsing = "failed", "{rest}"
+                            );
+                            continue;
+                        };
+
+                        // Record a tracing event.
+                        match level_str {
+                            "debug" => tracing::debug!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, "{message}"
+                            ),
+                            "info" => tracing::info!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, "{message}"
+                            ),
+                            "warn" => tracing::warn!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, "{message}"
+                            ),
+                            "error" => tracing::error!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, "{message}"
+                            ),
+                            level => tracing::info!(
+                                name: LOG_NAME, target: TRACING_TARGET, parent: &span,
+                                %module, "[{level}] {message}"
+                            ),
+                        }
+                    }
+
+                    // End of stream.
+                    Ok(None) => break,
+
+                    Err(err) => {
+                        debug_panic_or_log_warning(format!(
+                            "Could not read Prosody log line: {err:?}"
+                        ));
+                        break;
+                    }
+                }
+            }
+        });
 
         let handle = ProsodyHandle {
             process: child,
-            // stdin,
-            // stdout: reader,
+            log_handle: join_handle,
         };
 
         Ok(handle)
@@ -224,21 +320,20 @@ impl std::fmt::Debug for UniqueId {
 
 impl Drop for ProsodyChildProcess {
     fn drop(&mut self) {
-        if let Some(mut handle) = self.handle.take() {
-            let instance = self.id;
+        let instance = self.id;
+        tracing::debug!(%instance, "[Drop] Dropping `ProsodyChildProcess`…");
 
-            // Move ownership of child into a background task.
-            tokio::spawn(async move {
-                tracing::debug!(%instance, "[Drop] Killing Prosody…");
-
-                // Try killing gracefully.
-                handle.process.kill().await.unwrap_or_else(|err| {
-                    tracing::error!(%instance, "Could not kill long-running `prosodyctl shell`: {err}")
+        match self.handle.take() {
+            Some(handle) => {
+                tokio::spawn(async move {
+                    Self::stop_(handle, &instance).await.unwrap_or_else(
+                        |err| tracing::error!(%instance, "[Drop] Could not stop Prosody: {err:?}"),
+                    );
                 });
-
-                // Wait to reap the process (avoids zombies).
-                let _ = handle.process.wait().await;
-            });
+            }
+            None => {
+                tracing::debug!(%instance, "[Drop] Not stopping Prosody: No handle (likely already stopped).");
+            }
         }
     }
 }

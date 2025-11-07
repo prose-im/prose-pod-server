@@ -38,10 +38,20 @@ async fn main() -> anyhow::Result<()> {
     let todo = "Check if we can get rid of with_transition and \
         switch call sites to a functional programming style";
 
-    init_tracing();
+    let app_config = AppConfig::from_default_figment()?;
+
+    // Initialize tracing subscribers.
+    let todo = "Update tracing subscribers on relead";
+    let (otel_tracer, tracing_reload_handles) = {
+        use util::tracing_subscriber_ext::init_tracing;
+
+        init_tracing(&app_config.log, app_config.server.log_level)
+            .map_err(|err| panic!("Failed to init tracing for OpenTelemetry: {err}"))
+            .unwrap()
+            .clone()
+    };
 
     let app_context = Arc::new(AppContext::new());
-    let app_config = AppConfig::from_default_figment()?;
 
     let res = tokio::select! {
         res = main_inner(Arc::clone(&app_context), app_config) => res,
@@ -54,6 +64,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Wait for Prosody to shutdown gracefully.
     app_context.cleanup().await?;
+    // Drop OTel provider to ensure all remaining spans are exported.
+    drop(otel_tracer);
 
     drop(app_context);
 
@@ -179,15 +191,4 @@ async fn listen_for_graceful_shutdown() {
             warn!("Process terminated.")
         },
     }
-}
-
-fn init_tracing() {
-    use tracing_subscriber::EnvFilter;
-
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_ansi(true)
-        .with_env_filter(env_filter)
-        .init();
 }

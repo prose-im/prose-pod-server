@@ -42,6 +42,19 @@ fn default_config_static() -> Figment {
     use secrecy::{ExposeSecret as _, SecretString};
     use toml::toml;
 
+    let default_log_format = if cfg!(debug_assertions) {
+        "pretty"
+    } else {
+        "json"
+    };
+    let default_log_timer = if cfg!(debug_assertions) {
+        "uptime"
+    } else {
+        "time"
+    };
+
+    let true_in_debug = cfg!(debug_assertions);
+
     let random_oauth2_registration_key: SecretString =
         crate::util::random_oauth2_registration_key();
     let random_oauth2_registration_key: &str = random_oauth2_registration_key.expose_secret();
@@ -64,6 +77,20 @@ fn default_config_static() -> Figment {
         [server_api]
         address = "0.0.0.0"
         port = SERVER_API_PORT
+
+        [log]
+        level = "info"
+        format = default_log_format
+        timer = default_log_timer
+        with_file = true_in_debug
+        with_target = true
+        with_thread_ids = false
+        with_line_number = true_in_debug
+        with_span_events = false
+        with_thread_names = false
+
+        [log.opentelemetry]
+        enabled = true_in_debug
 
         [service_accounts.prose_workspace]
         xmpp_node = "prose-workspace"
@@ -150,6 +177,7 @@ impl AppConfig {
 #[derive(Deserialize)]
 pub(crate) struct AppConfig {
     pub auth: AuthConfig,
+    pub log: LogConfig,
     pub server: ServerConfig,
     pub server_api: ServerApiConfig,
     pub service_accounts: ServiceAccountsConfig,
@@ -176,7 +204,7 @@ pub use server::*;
 pub mod server {
     use serde::Deserialize;
 
-    use crate::models::JidDomain;
+    use crate::{app_config::LogLevel, models::JidDomain};
 
     #[derive(Debug)]
     #[serde_with::serde_as]
@@ -188,6 +216,8 @@ pub mod server {
         pub local_hostname: String,
 
         pub http_port: u16,
+
+        pub log_level: LogLevel,
     }
 
     impl ServerConfig {
@@ -216,6 +246,109 @@ pub mod server_api {
     impl ServerApiConfig {
         pub fn address(&self) -> SocketAddr {
             SocketAddr::new(self.address, self.port)
+        }
+    }
+}
+
+pub use log::*;
+pub mod log {
+    use serde::Deserialize;
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    pub struct LogConfig {
+        pub level: LogLevel,
+
+        pub format: LogFormat,
+
+        pub timer: LogTimer,
+
+        pub with_file: bool,
+
+        pub with_target: bool,
+
+        pub with_thread_ids: bool,
+
+        pub with_line_number: bool,
+
+        pub with_span_events: bool,
+
+        pub with_thread_names: bool,
+
+        pub opentelemetry: OpenTelemetryConfig,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(serde_with::SerializeDisplay, serde_with::DeserializeFromStr)]
+    #[derive(strum::Display, strum::EnumString)]
+    #[strum(serialize_all = "snake_case")]
+    pub enum LogLevel {
+        Trace,
+        Debug,
+        Info,
+        Warn,
+        Error,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(serde_with::SerializeDisplay, serde_with::DeserializeFromStr)]
+    #[derive(strum::Display, strum::EnumString)]
+    #[strum(serialize_all = "snake_case")]
+    pub enum LogFormat {
+        Full,
+        Compact,
+        Json,
+        Pretty,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(serde_with::SerializeDisplay, serde_with::DeserializeFromStr)]
+    #[derive(strum::Display, strum::EnumString)]
+    #[strum(serialize_all = "snake_case")]
+    pub enum LogTimer {
+        None,
+        Time,
+        Uptime,
+    }
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    pub struct OpenTelemetryConfig {
+        pub enabled: bool,
+    }
+
+    // MARK: Conversions
+
+    impl From<&LogLevel> for tracing::Level {
+        fn from(level: &LogLevel) -> Self {
+            match level {
+                LogLevel::Trace => Self::TRACE,
+                LogLevel::Debug => Self::DEBUG,
+                LogLevel::Info => Self::INFO,
+                LogLevel::Warn => Self::WARN,
+                LogLevel::Error => Self::ERROR,
+            }
+        }
+    }
+
+    impl From<&LogFormat> for init_tracing_opentelemetry::LogFormat {
+        fn from(format: &LogFormat) -> Self {
+            match format {
+                LogFormat::Full => Self::Full,
+                LogFormat::Compact => Self::Compact,
+                LogFormat::Json => Self::Json,
+                LogFormat::Pretty => Self::Pretty,
+            }
+        }
+    }
+
+    impl From<&LogTimer> for init_tracing_opentelemetry::LogTimer {
+        fn from(format: &LogTimer) -> Self {
+            match format {
+                LogTimer::None => Self::None,
+                LogTimer::Time => Self::Time,
+                LogTimer::Uptime => Self::Uptime,
+            }
         }
     }
 }

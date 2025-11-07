@@ -8,6 +8,7 @@
 mod cache;
 mod rw_lock_guards;
 pub mod serde;
+pub mod tracing_subscriber_ext;
 
 pub use cache::Cache;
 pub use rw_lock_guards::OptionRwLockReadGuard;
