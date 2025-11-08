@@ -70,42 +70,39 @@ impl Error {
         {
             use crate::util::{debug_assert_or_log_error, is_upper_snake_case};
 
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 !kind.is_empty(),
-                format!("Invalid error kind '{kind}': Cannot be empty."),
+                "Invalid error kind '{kind}': Cannot be empty."
             );
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 kind.bytes().all(is_upper_snake_case),
-                format!("Invalid error kind '{kind}': Only `[A-Z_]` allowed."),
+                "Invalid error kind '{kind}': Only `[A-Z_]` allowed."
             );
 
             const KIND_SUFFIX: &'static str = "_ERROR";
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 kind.ends_with(KIND_SUFFIX),
-                format!("Invalid error kind '{kind}': Missing '{KIND_SUFFIX}' suffix."),
+                "Invalid error kind '{kind}': Missing '{KIND_SUFFIX}' suffix."
             );
 
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 !code.is_empty(),
-                format!("Invalid error code '{code}': Cannot be empty."),
+                "Invalid error code '{code}': Cannot be empty."
             );
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 code.bytes().all(is_upper_snake_case),
-                format!("Invalid error code '{code}': Only `[A-Z_]` allowed."),
+                "Invalid error code '{code}': Only `[A-Z_]` allowed."
             );
 
-            debug_assert_or_log_error(
-                !message.is_empty(),
-                format!("Error message cannot be empty."),
-            );
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(!message.is_empty(), "Error message cannot be empty.");
+            debug_assert_or_log_error!(
                 !message.ends_with("."),
-                format!("Error message cannot end with a period (`.`)."),
+                "Error message cannot end with a period (`.`)."
             );
 
-            debug_assert_or_log_error(
+            debug_assert_or_log_error!(
                 !description.is_empty(),
-                format!("Error description cannot be empty."),
+                "Error description cannot be empty."
             );
         }
 

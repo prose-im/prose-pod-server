@@ -7,7 +7,7 @@ use axum::extract::State;
 
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::{NoContext as _, ResultPanic as _};
+use crate::util::{NoContext as _, debug_panic_or_log_error};
 
 // MARK: - Routes
 
@@ -37,7 +37,7 @@ impl AppState<f::Running, b::Running> {
             prosody.reload().await
         }
         .context("Could not reload Prosody")
-        .debug_panic_or_log_error()
+        .inspect_err(|err| debug_panic_or_log_error!("{err:?}"))
         .no_context()?;
 
         // Reload Prosody modules (not done automatically).
@@ -48,7 +48,7 @@ impl AppState<f::Running, b::Running> {
             prosodyctl.module_load_modules_for_host(main_host).await
         }
         .context(format!("Could not load Prosody modules for `{main_host}`"))
-        .debug_panic_or_log_error()
+        .inspect_err(|err| debug_panic_or_log_error!("{err:?}"))
         .no_context()?;
 
         Ok(self)

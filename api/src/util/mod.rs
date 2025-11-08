@@ -30,25 +30,28 @@ pub fn unix_timestamp() -> u64 {
 
 /// Equivalent of [`debug_assert!`] but still
 /// logs an error message in release mode.
-#[inline(always)]
-pub fn debug_assert_or_log_error(cond: bool, msg: String) {
-    if cfg!(debug_assertions) {
-        assert!(cond, "{msg}");
-    } else if !cond {
-        tracing::error!(msg);
-    }
+macro_rules! debug_assert_or_log_error {
+    ($cond:expr, $($args:tt)*) => {
+        if cfg!(debug_assertions) {
+            assert!($cond, "[debug_only] {}", format!($($args)*));
+        } else if !$cond {
+            tracing::error!($($args)*);
+        }
+    };
 }
+pub(crate) use debug_assert_or_log_error;
 
 /// [`panic!`] in debug mode, [`tracing::error!`] in release.
-#[inline(always)]
-pub fn debug_panic_or_log_error(msg: impl AsRef<str>) {
-    let msg = msg.as_ref();
-    if cfg!(debug_assertions) {
-        panic!("{msg}");
-    } else {
-        tracing::error!(msg);
-    }
+macro_rules! debug_panic_or_log_error {
+    ($($args:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!("[debug_only] {}", format!($($args)*));
+        } else {
+            tracing::error!($($args)*);
+        }
+    };
 }
+pub(crate) use debug_panic_or_log_error;
 
 pub trait ResponseExt {
     fn retry_after(self, seconds: u8) -> Self;
@@ -256,20 +259,5 @@ where
                 "Internal error",
             )),
         }
-    }
-}
-
-pub trait ResultPanic {
-    fn debug_panic_or_log_error(self) -> Self;
-}
-
-impl<T> ResultPanic for Result<T, anyhow::Error> {
-    fn debug_panic_or_log_error(self) -> Self {
-        if cfg!(debug_assertions) {
-            if let Err(err) = self.as_ref() {
-                debug_panic_or_log_error(err.to_string());
-            }
-        }
-        self
     }
 }

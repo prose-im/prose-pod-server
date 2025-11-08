@@ -100,9 +100,9 @@ impl ProsodyChildProcess {
                 ));
             }
             Ok(Err(err)) => {
-                let err = format!("Failed waiting for Prosody exit: {err:#}");
-                debug_panic(&err);
-                return Err(anyhow!(err));
+                let error = anyhow!(err).context("Failed waiting for Prosody exit");
+                debug_panic!("{error:?}");
+                return Err(error);
             }
             Err(_) => {
                 // Prosody is still running -> it started successfully.
@@ -130,8 +130,8 @@ impl ProsodyChildProcess {
         match self.handle.take() {
             Some(handle) => Self::stop_(handle, &self.id).await,
             None => {
-                debug_panic_or_log_warning(
-                    "Not stopping Prosody: No handle (likely already stopped).",
+                debug_panic_or_log_warning!(
+                    "Not stopping Prosody: No handle (likely already stopped)."
                 );
                 Ok(())
             }
@@ -163,12 +163,12 @@ impl ProsodyChildProcess {
         tracing::debug!(instance = %self.id, "Reloading Prosody…");
 
         let Some(handle) = self.handle.as_ref() else {
-            debug_panic_or_log_warning("Prosody not started: No handle (likely stopped).");
+            debug_panic_or_log_warning!("Prosody not started: No handle (likely stopped).");
             return self.start().await;
         };
 
         let Some(pid) = handle.process.id() else {
-            debug_panic_or_log_warning("Prosody not started: No PID (likely stopped).");
+            debug_panic_or_log_warning!("Prosody not started: No PID (likely stopped).");
             return self.start().await;
         };
 
@@ -270,9 +270,7 @@ impl ProsodyHandle {
                     Ok(None) => break,
 
                     Err(err) => {
-                        debug_panic_or_log_warning(format!(
-                            "Could not read Prosody log line: {err:?}"
-                        ));
+                        debug_panic_or_log_warning!("Could not read Prosody log line: {err:?}");
                         break;
                     }
                 }
