@@ -3,11 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-// prose-pod-api
-//
-// Copyright: 2024–2025, Rémi Bardon <remi@remibardon.name>
-// License: Mozilla Public License v2.0 (MPL v2.0)
-
 mod prelude {
     pub(crate) use axum::{
         body::Bytes,
