@@ -85,6 +85,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
         };
         // Run cache purge tasks in the background.
         tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
+        drop(reload_bound_cancellation_token);
 
         let service_accounts = create_service_accounts(
             app_config,

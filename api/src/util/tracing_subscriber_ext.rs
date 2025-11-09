@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 
 use init_tracing_opentelemetry::opentelemetry_sdk::trace::SdkTracerProvider;
-use tracing::{Level, Subscriber};
+use tracing::Subscriber;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry,
+    filter::Filtered,
     fmt::format::FmtSpan,
     layer::{Context, Filter, Layered, SubscriberExt},
     registry::LookupSpan,
@@ -20,9 +21,8 @@ use tracing_subscriber::{
 use crate::app_config::{LogConfig, LogLevel};
 
 type BoxedLayer<T> = Box<dyn Layer<T> + Send + Sync + 'static>;
-type BoxLayered<T> = Layered<BoxedLayer<T>, T>;
 
-/// NOTE: Can only be called once.
+/// NOTE: Can only be called once. Later, use [`update_tracing_config`].
 pub fn init_tracing(
     log_config: &LogConfig,
     server_log_level: &LogLevel,
@@ -33,7 +33,7 @@ pub fn init_tracing(
     let server_api_filter = ServerApiFilter::new(&log_config.level);
 
     // Setup a temporary subscriber to log output during setup.
-    let _guard = {
+    let temp_log_guard = {
         let server_api_layer = build_server_api_logger(log_config)?;
         let subscriber = tracing_subscriber::registry()
             .with(server_api_layer.with_filter(server_api_filter.clone()));
@@ -41,10 +41,8 @@ pub fn init_tracing(
     };
     tracing::info!("Init logging & tracing.");
 
-    let (otel_layer, guard) = build_otel_layer()?;
-    let otel_layer = otel_layer
-        .with_filter(ServerApiFilter::new(&log_config.level))
-        .boxed();
+    let (otel_layer, otel_guard) = build_otel_layer()?;
+    let otel_layer = otel_layer.with_filter(server_api_filter.clone());
 
     let (server_api_logger, server_api_logger_handle) = {
         let layer = build_server_api_logger(log_config)?;
@@ -54,31 +52,40 @@ pub fn init_tracing(
         let layer = server_api_filter.clone();
         reload::Layer::new(layer)
     };
-    let server_api_layer = server_api_logger.with_filter(server_api_filter).boxed();
+    let server_api_layer: Filtered<
+        reload::Layer<BoxedLayer<Registry>, Registry>,
+        reload::Layer<ServerApiFilter, Registry>,
+        Registry,
+    > = server_api_logger.with_filter(server_api_filter);
 
     let (prosody_logger, prosody_logger_handle) = {
         let layer = build_prosody_logger(log_config)?;
-        reload::Layer::new(layer.boxed())
+        reload::Layer::new(layer)
     };
     let (prosody_filter, prosody_filter_handle) = {
         let layer = ProsodyFilter::new(server_log_level);
         reload::Layer::new(layer)
     };
-    let prosody_layer = prosody_logger.with_filter(prosody_filter).boxed();
+    let prosody_layer = prosody_logger.with_filter(prosody_filter);
 
     let subscriber = tracing_subscriber::registry()
         .with(server_api_layer)
         .with(prosody_layer)
         .with(otel_layer);
     tracing::subscriber::set_global_default(subscriber)?;
+    drop(temp_log_guard);
 
     Ok((
-        guard,
+        otel_guard,
         TracingReloadHandles {
-            server_api_logger: server_api_logger_handle,
-            server_api_filter: server_api_filter_handle,
-            prosody_logger: prosody_logger_handle,
-            prosody_filter: prosody_filter_handle,
+            server_api: ReloadableLayerHandles {
+                logger: server_api_logger_handle,
+                filter: server_api_filter_handle,
+            },
+            prosody: ReloadableLayerHandles {
+                logger: prosody_logger_handle,
+                filter: prosody_filter_handle,
+            },
         },
     ))
 }
@@ -179,14 +186,17 @@ impl ServerApiFilter {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ProsodyFilter {
-    directives: HashMap<String, Level>,
-    default_level: Level,
+    directives: HashMap<String, tracing::Level>,
+    default_level: tracing::Level,
 }
 
 impl ProsodyFilter {
     #[must_use]
     fn new(log_level: &LogLevel) -> Self {
+        use tracing::Level;
+
         // NOTE: Last values take precedence in directives (i.e.
         //   `trace,info` logs >`info`, while `info,trace` logs >`trace`),
         //   so important values must be added last.
@@ -206,11 +216,9 @@ impl ProsodyFilter {
             .map(|(k, v)| (k.to_owned(), v)),
         );
 
-        let default_level = tracing::Level::from(log_level);
-
         ProsodyFilter {
             directives,
-            default_level,
+            default_level: log_level.into(),
         }
     }
 }
@@ -247,7 +255,7 @@ impl<S> Filter<S> for ProsodyFilter {
             let allowed = self.directives.get(module).unwrap_or(&self.default_level);
 
             // NOTE: Level ordering is counter-intuitive:
-            debug_assert!(Level::INFO < Level::DEBUG);
+            debug_assert!(tracing::Level::INFO < tracing::Level::DEBUG);
             level <= allowed
         } else {
             false
@@ -257,15 +265,21 @@ impl<S> Filter<S> for ProsodyFilter {
 
 // MARK: - Reload
 
+pub struct TracingReloadHandles<S = Registry> {
+    server_api: ReloadableLayerHandles<S, ServerApiFilter>,
+    prosody: ReloadableLayerHandles<
+        Layered<Filtered<reload::Layer<BoxedLayer<S>, S>, reload::Layer<ServerApiFilter, S>, S>, S>,
+        ProsodyFilter,
+    >,
+}
+
 /// NOTE: We have to keep filters separated (i.e. we can’t store
 ///   `reload::Handle<Layered<…>, …>`s) otherwise we get “a `Filtered`
 ///   layer was used, but it had no `FilterId`; was it registered with
 ///   the subscriber?” on reloads.
-pub struct TracingReloadHandles<S = Registry> {
-    pub server_api_logger: reload::Handle<BoxedLayer<S>, S>,
-    pub server_api_filter: reload::Handle<ServerApiFilter, S>,
-    pub prosody_logger: reload::Handle<BoxedLayer<BoxLayered<S>>, BoxLayered<S>>,
-    pub prosody_filter: reload::Handle<ProsodyFilter, BoxLayered<S>>,
+struct ReloadableLayerHandles<S, F> {
+    logger: reload::Handle<BoxedLayer<S>, S>,
+    filter: reload::Handle<F, S>,
 }
 
 /// NOTE: Can be called multiple times.
@@ -277,35 +291,37 @@ pub fn update_tracing_config(
     tracing::info!("Updating global tracing configuration…");
 
     let TracingReloadHandles {
-        server_api_logger,
-        server_api_filter,
-        prosody_logger,
-        prosody_filter,
+        server_api,
+        prosody,
     } = tracing_reload_handles;
 
     let new_server_api_logger = build_server_api_logger(log_config)?;
-    server_api_logger
+    server_api
+        .logger
         .modify(|layer| *layer = new_server_api_logger)
         .unwrap_or_else(|err| {
             tracing::warn!("Error when updating global Server API logger: {err:?}");
         });
 
     let new_server_api_filter = ServerApiFilter::new(&log_config.level);
-    server_api_filter
+    server_api
+        .filter
         .modify(|layer| *layer = new_server_api_filter)
         .unwrap_or_else(|err| {
             tracing::warn!("Error when updating global Server API filter: {err:?}");
         });
 
     let new_prosody_logger = build_prosody_logger(log_config)?;
-    prosody_logger
-        .modify(|layer| *layer = new_prosody_logger.boxed())
+    prosody
+        .logger
+        .modify(|layer| *layer = new_prosody_logger)
         .unwrap_or_else(|err| {
             tracing::warn!("Error when updating global Prosody logger: {err:?}");
         });
 
     let new_prosody_filter = ProsodyFilter::new(server_log_level);
-    prosody_filter
+    prosody
+        .filter
         .modify(|layer| *layer = new_prosody_filter)
         .unwrap_or_else(|err| {
             tracing::warn!("Error when updating global Prosody filter: {err:?}");
@@ -358,10 +374,20 @@ impl<S> Clone for TracingReloadHandles<S> {
         // NOTE: `#[derive(Clone)]` doesn’t work here,
         //   we have to do it manually :/
         Self {
-            server_api_logger: self.server_api_logger.clone(),
-            server_api_filter: self.server_api_filter.clone(),
-            prosody_logger: self.prosody_logger.clone(),
-            prosody_filter: self.prosody_filter.clone(),
+            server_api: self.server_api.clone(),
+            prosody: self.prosody.clone(),
+        }
+    }
+}
+
+impl<S, F> Clone for ReloadableLayerHandles<S, F> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        // NOTE: `#[derive(Clone)]` doesn’t work here,
+        //   we have to do it manually :/
+        Self {
+            logger: self.logger.clone(),
+            filter: self.filter.clone(),
         }
     }
 }

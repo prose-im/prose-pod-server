@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     models::{AuthToken, BareJid, Password},
     secrets_store::SecretsStore,
-    util::{Cache, OptionRwLockReadGuard},
+    util::{Cache, OptionRwLockReadGuard, debug_panic_or_log_error},
 };
 
 /// The things that manages service account secrets, and ensures that
@@ -151,10 +151,7 @@ impl SecretsService {
         async move {
             tokio::select! {
                 () = Cache::purge_task(cache) => {
-                    tracing::error!("Cache purge task ended.");
-                    if cfg!(debug_assertions) {
-                        panic!("Cache purge task ended.")
-                    }
+                    debug_panic_or_log_error!("Cache purge task ended.");
                 }
                 () = cancellation_token.cancelled_owned() => {
                     tracing::debug!("Cache purge task cancelled.");

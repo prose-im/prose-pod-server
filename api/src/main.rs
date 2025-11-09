@@ -41,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
     let todo = "Check if we can get rid of with_transition and \
         switch call sites to a functional programming style";
 
+    // TODO: Allow logging at startup for debugging purposes.
     let app_config = AppConfig::from_default_figment()?;
 
     // Initialize tracing subscribers.
