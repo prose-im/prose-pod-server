@@ -5,10 +5,12 @@
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use axum::extract::State;
 
 use crate::responders::Error;
 use crate::state::prelude::*;
+use crate::util::tracing_subscriber_ext::update_tracing_config;
 use crate::{AppConfig, errors};
 
 // MARK: - Routes
@@ -31,6 +33,7 @@ where
 impl<F, B> AppState<F, B>
 where
     AppState<F, B>: AppStateTrait,
+    F: frontend::State,
 {
     /// NOTE: This method does **not** log errors.
     fn reload_frontend(app_state: &Self) -> Result<f::Running, anyhow::Error> {
@@ -38,9 +41,18 @@ where
 
         app_state.validate_config_changes(&app_config)?;
 
+        let tracing_reload_handles = app_state.frontend.tracing_reload_handles();
+        update_tracing_config(
+            &app_config.log,
+            &app_config.server.log_level,
+            &tracing_reload_handles,
+        )
+        .context("Could not update tracing config")?;
+
         Ok(f::Running {
             state: Arc::new(f::Operational {}),
             config: Arc::new(app_config),
+            tracing_reload_handles: Arc::clone(app_state.frontend.tracing_reload_handles()),
         })
     }
 
@@ -123,6 +135,7 @@ where
                                 error: Arc::clone(&error),
                             }),
                             config: state.config,
+                            tracing_reload_handles: state.tracing_reload_handles,
                         })
                     });
 

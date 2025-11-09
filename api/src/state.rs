@@ -158,7 +158,6 @@ impl<F1, B1> AppState<F1, B1> {
 
     #[must_use]
     #[inline]
-    #[allow(unused)]
     pub fn with_frontend_transition<F2>(
         self,
         transition: impl FnOnce(F1) -> F2,
@@ -227,6 +226,7 @@ macro_rules! state_boilerplate {
 pub mod frontend {
     pub mod prelude {
         pub use super::FrontendRunningState as RunningState;
+        pub use super::FrontendStateTrait as State;
         pub use super::substates::*;
         pub use super::{
             FrontendMisconfigured as Misconfigured, FrontendRunning as Running,
@@ -234,9 +234,15 @@ pub mod frontend {
         };
     }
 
+    use crate::util::tracing_subscriber_ext::TracingReloadHandles;
+
     use super::*;
 
     use self::prelude::*;
+
+    pub trait FrontendStateTrait {
+        fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles>;
+    }
 
     // MARK: Running
 
@@ -244,6 +250,7 @@ pub mod frontend {
     pub struct FrontendRunning<State: FrontendRunningState = Operational> {
         pub state: Arc<State>,
         pub(crate) config: Arc<AppConfig>,
+        pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
     pub trait FrontendRunningState: std::fmt::Debug {}
@@ -271,23 +278,44 @@ pub mod frontend {
         }
     }
 
+    impl<S: RunningState> FrontendStateTrait for Running<S> {
+        fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
+            &self.tracing_reload_handles
+        }
+    }
+
     // MARK: Misconfigured
 
     #[derive(Debug, Clone)]
     pub struct FrontendMisconfigured {
         pub error: Arc<anyhow::Error>,
+        pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
+    }
+
+    impl FrontendStateTrait for Misconfigured {
+        fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
+            &self.tracing_reload_handles
+        }
     }
 
     // MARK: Factory reset
 
     #[derive(Debug, Clone)]
-    pub struct FrontendUndergoingFactoryReset {}
+    pub struct FrontendUndergoingFactoryReset {
+        pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
+    }
+
+    impl FrontendStateTrait for UndergoingFactoryReset {
+        fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
+            &self.tracing_reload_handles
+        }
+    }
 
     // MARK: Boilerplate
 
     state_boilerplate!(Running, RunningState);
 
-    impl<State: FrontendRunningState> Clone for FrontendRunning<State> {
+    impl<State: RunningState> Clone for Running<State> {
         #[inline(always)]
         fn clone(&self) -> Self {
             // NOTE: `#[derive(Clone)]` doesn’t work here,
@@ -295,6 +323,7 @@ pub mod frontend {
             Self {
                 state: Arc::clone(&self.state),
                 config: Arc::clone(&self.config),
+                tracing_reload_handles: Arc::clone(&self.tracing_reload_handles),
             }
         }
     }

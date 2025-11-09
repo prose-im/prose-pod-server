@@ -83,6 +83,7 @@ impl<F, B> AppState<F, B> {
         ),
     >
     where
+        F: frontend::State,
         B: Clone + AsRef<b::Operational>,
     {
         tracing::info!("Performing factory reset…");
@@ -92,7 +93,9 @@ impl<F, B> AppState<F, B> {
 
         let app_state = self.with_transition(|state| {
             state
-                .with_frontend(f::UndergoingFactoryReset {})
+                .with_frontend_transition(|state| f::UndergoingFactoryReset {
+                    tracing_reload_handles: Arc::clone(state.tracing_reload_handles()),
+                })
                 .with_backend(b::UndergoingFactoryReset {})
         });
 
@@ -129,8 +132,9 @@ impl<F, B> AppState<F, B> {
 
                 let new_state = new_state.with_transition(|state| {
                     state
-                        .with_frontend(f::Misconfigured {
+                        .with_frontend_transition(|state| f::Misconfigured {
                             error: Arc::clone(&error),
+                            tracing_reload_handles: Arc::clone(&state.tracing_reload_handles),
                         })
                         .with_backend(b::Stopped {
                             state: Arc::new(b::NotInitialized {}),

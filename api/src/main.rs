@@ -21,7 +21,10 @@ use anyhow::Context as _;
 use axum::Router;
 use tokio::{net::TcpListener, time::Instant};
 
-use crate::state::prelude::*;
+use crate::{
+    state::prelude::*,
+    util::tracing_subscriber_ext::{TracingReloadHandles, init_tracing},
+};
 
 pub(crate) use self::app_config::AppConfig;
 
@@ -41,20 +44,15 @@ async fn main() -> anyhow::Result<()> {
     let app_config = AppConfig::from_default_figment()?;
 
     // Initialize tracing subscribers.
-    let todo = "Update tracing subscribers on relead";
     let (otel_tracer, tracing_reload_handles) = {
-        use util::tracing_subscriber_ext::init_tracing;
-
-        init_tracing(&app_config.log, app_config.server.log_level)
-            .map_err(|err| panic!("Failed to init tracing for OpenTelemetry: {err}"))
-            .unwrap()
-            .clone()
+        init_tracing(&app_config.log, &app_config.server.log_level)
+            .unwrap_or_else(|err| panic!("Failed to init tracing for OpenTelemetry: {err}"))
     };
 
     let app_context = Arc::new(AppContext::new());
 
     let res = tokio::select! {
-        res = main_inner(Arc::clone(&app_context), app_config) => res,
+        res = main_inner(Arc::clone(&app_context), app_config, tracing_reload_handles) => res,
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
@@ -72,7 +70,11 @@ async fn main() -> anyhow::Result<()> {
     res
 }
 
-async fn main_inner(app_context: Arc<AppContext>, app_config: AppConfig) -> anyhow::Result<()> {
+async fn main_inner(
+    app_context: Arc<AppContext>,
+    app_config: AppConfig,
+    tracing_reload_handles: TracingReloadHandles,
+) -> anyhow::Result<()> {
     // Bind to the API address to exit early if not available.
     let address = app_config.server_api.address();
     let listener = TcpListener::bind(address).await?;
@@ -82,6 +84,7 @@ async fn main_inner(app_context: Arc<AppContext>, app_config: AppConfig) -> anyh
         frontend::Running {
             state: Arc::new(f::Operational {}),
             config: Arc::new(app_config),
+            tracing_reload_handles: Arc::new(tracing_reload_handles),
         },
         backend::Starting {
             state: Arc::new(b::NotInitialized {}),

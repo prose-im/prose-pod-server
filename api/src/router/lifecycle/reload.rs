@@ -52,8 +52,9 @@ pub(in crate::router) async fn init_config(
 
             // Update stored error (for better health diagnostics).
             app_state.transition_with::<f::Misconfigured, b::Stopped<b::NotInitialized>>(|state| {
-                state.with_frontend(f::Misconfigured {
+                state.with_frontend_transition(|state| f::Misconfigured {
                     error: Arc::clone(&error),
+                    tracing_reload_handles: Arc::clone(&state.tracing_reload_handles),
                 })
             });
 
