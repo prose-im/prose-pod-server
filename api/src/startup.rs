@@ -39,6 +39,8 @@ impl<BackendState> AppState<f::Running, BackendState> {
     ///
     /// NOTE: This method does **not** log errors.
     async fn bootstrap(app_state: &Self) -> Result<b::Running, anyhow::Error> {
+        use crate::util::sync::AutoCancelToken;
+
         let app_config = Arc::deref(&app_state.frontend.config);
         let ref server_domain = app_config.server.domain;
 
@@ -64,8 +66,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
 
         let mut prosodyctl = Prosodyctl::new();
 
-        let todo = "Store somewhere";
-        let reload_bound_cancellation_token = CancellationToken::new();
+        let cancellation_token = CancellationToken::new();
 
         let prosody_rest = ProsodyRest::standard(app_config.server.http_url());
 
@@ -84,8 +85,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
             oauth2_client_credentials: ArcSwap::from_pointee(oauth2_client_credentials),
         };
         // Run cache purge tasks in the background.
-        tokio::spawn(secrets.run_purge_tasks(reload_bound_cancellation_token.child_token()));
-        drop(reload_bound_cancellation_token);
+        tokio::spawn(secrets.run_purge_tasks(cancellation_token.child_token()));
 
         let service_accounts = create_service_accounts(
             app_config,
@@ -127,6 +127,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
                 prosody_rest,
                 oauth2_client,
                 secrets_service: secrets,
+                cancellation_token: AutoCancelToken(cancellation_token),
             }),
         })
     }

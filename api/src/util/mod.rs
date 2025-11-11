@@ -163,6 +163,31 @@ pub mod either {
     }
 }
 
+pub mod sync {
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub struct AutoCancelToken(pub CancellationToken);
+
+    impl AutoCancelToken {
+        pub fn new() -> Self {
+            Self(CancellationToken::new())
+        }
+
+        pub fn token(&self) -> &CancellationToken {
+            &self.0
+        }
+    }
+
+    impl Drop for AutoCancelToken {
+        fn drop(&mut self) {
+            tracing::debug!("[Drop] Dropping `AutoCancelToken`…");
+            self.0.cancel();
+        }
+    }
+}
+
 // MARK: - Error helpers
 
 pub const PROSODY_JIDS_ARE_VALID: &'static str = "JIDs coming from Prosody should always be valid";

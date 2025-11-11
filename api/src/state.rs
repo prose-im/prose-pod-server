@@ -400,6 +400,8 @@ pub mod backend {
     impl BackendRunningState for Operational {}
 
     pub mod substates {
+        use crate::util::sync::AutoCancelToken;
+
         use super::*;
 
         #[derive(Debug, Default)]
@@ -412,6 +414,7 @@ pub mod backend {
             pub prosody_rest: ProsodyRest,
             pub oauth2_client: Arc<ProsodyOAuth2>,
             pub secrets_service: SecretsService,
+            pub cancellation_token: AutoCancelToken,
         }
     }
 
