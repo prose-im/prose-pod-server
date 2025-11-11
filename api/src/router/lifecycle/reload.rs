@@ -8,6 +8,7 @@ use axum::extract::State;
 use crate::errors;
 use crate::responders::Error;
 use crate::state::{FailState, prelude::*};
+use crate::util::NoContext as _;
 use crate::util::either::Either;
 
 pub(in crate::router) async fn reload<FrontendSubstate>(
@@ -18,10 +19,10 @@ where
     AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
 {
     match app_state.try_reload_frontend() {
-        Ok(new_state) => {
-            let _new_state = new_state.do_reload_backend().await?;
-            Ok(())
-        }
+        Ok(new_state) => match new_state.do_reload_backend().await {
+            Ok(_new_state) => Ok(()),
+            Err(FailState { error, .. }) => Err(error.no_context()),
+        },
 
         Err((_, error)) => {
             // Log debug info.

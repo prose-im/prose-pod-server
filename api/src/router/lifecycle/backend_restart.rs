@@ -31,7 +31,7 @@ pub(in crate::router) async fn backend_restart(
             }
         },
 
-        Err((_state, error)) => {
+        Err(FailState { error, .. }) => {
             tracing::error!("Backend restart failed: {error:?}");
             Err(errors::restart_failed(&error))
         }
@@ -90,10 +90,12 @@ impl AppState<f::Running, b::Running> {
     /// -------------------------------------- (Stop backend)
     /// AppState<Running, B>  B ∈ { Starting }
     /// ```
+    ///
+    /// NOTE: This method **does** log errors.
     pub(crate) async fn do_stop_backend<'a, B2>(
         self,
         prosody: &mut RwLockWriteGuard<'a, ProsodyChildProcess>,
-    ) -> Result<AppState<f::Running, B2>, (Self, Arc<anyhow::Error>)>
+    ) -> Result<AppState<f::Running, B2>, FailState<f::Running, b::Running>>
     where
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B2: From<b::Running>,
@@ -114,7 +116,7 @@ impl AppState<f::Running, b::Running> {
                 // fact an internal error that is thrown after the backend has stopped
                 // but in that case we’d have to fix that code so it doesn’t happen.
 
-                Err((self, error))
+                Err(self.with_error(error))
             }
         }
     }

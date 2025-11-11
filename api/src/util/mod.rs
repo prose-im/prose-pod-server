@@ -235,6 +235,16 @@ impl Context<crate::responders::Error> for anyhow::Error {
         internal_error_code: &'static str,
         public_description: &str,
     ) -> crate::responders::Error {
+        Context::context(&self, internal_error_code, public_description)
+    }
+}
+
+impl Context<crate::responders::Error> for &anyhow::Error {
+    fn context(
+        self,
+        internal_error_code: &'static str,
+        public_description: &str,
+    ) -> crate::responders::Error {
         crate::errors::internal_server_error(&self, internal_error_code, public_description)
     }
 }
@@ -262,9 +272,9 @@ pub trait NoContext<Res> {
     fn no_context(self) -> Res;
 }
 
-impl<E2> NoContext<E2> for anyhow::Error
+impl<E2> NoContext<E2> for &anyhow::Error
 where
-    anyhow::Error: Context<E2>,
+    for<'a> &'a anyhow::Error: Context<E2>,
 {
     fn no_context(self) -> E2 {
         Context::context(self, crate::errors::ERROR_CODE_INTERNAL, "Internal error")
