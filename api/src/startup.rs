@@ -484,6 +484,9 @@ where
 /// been skipped because they existed already. This means the automatic
 /// `do_all_group_subscriptions_by_group` might not be triggered. Since we are
 /// going to do the subscriptions here anyway, we used `delay_update` there.
+///
+/// NOTE: Rosters resynchronization (for groups) is an expensive operation
+///   (`O(n^2)`), so it might take a while.
 async fn synchronize_rosters<'a, G>(
     prosodyctl: &mut Prosodyctl,
     group_ids: G,
