@@ -21,3 +21,5 @@
 - It’d be really nice if we had a global Prosody-style pub/sub system to send an event when `AuthToken`s are `Drop`ped and have `ProsodyOAuth2` automatically revoke the token.
 
 - CI
+
+- Test SERVICE_UNAVAILABLE on SIGHUP if error

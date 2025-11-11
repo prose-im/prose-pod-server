@@ -66,3 +66,54 @@ pub(in crate::router) async fn init_config(
         Err(Either::E2(FailState { error, .. })) => Err(errors::restart_failed(&error)),
     }
 }
+
+impl AppContext {
+    pub fn reload(&self) {
+        let router = self.router();
+        tokio::task::spawn(async move {
+            match Self::reload_(router).await {
+                Ok(()) => {}
+                Err(err) => tracing::error!("{err:?}"),
+            }
+        });
+    }
+
+    async fn reload_(
+        router: axum_hot_swappable_router::HotSwappableRouter,
+    ) -> Result<(), anyhow::Error> {
+        use anyhow::Context as _;
+        use tower::ServiceExt as _;
+
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/lifecycle/reload")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = router
+            .oneshot(request)
+            .await
+            .unwrap_or_else(|err| match err {});
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            #[derive(Debug, serde::Deserialize)]
+            #[allow(dead_code)]
+            pub struct Error {
+                kind: Box<str>,
+                code: Box<str>,
+                message: Box<str>,
+                description: Box<str>,
+            }
+
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .context("Could not read HTTP response body bytes")?;
+            let error: Error = serde_json::from_slice(&bytes)
+                .context("Could not decode error from HTTP response body")?;
+
+            Err(anyhow::anyhow!("{error:?}"))
+        }
+    }
+}

@@ -17,7 +17,7 @@ mod util;
 
 use std::sync::{Arc, atomic::AtomicBool};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use axum::Router;
 use tokio::{net::TcpListener, time::Instant};
 
@@ -32,13 +32,6 @@ static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let todo = "Listen to SIGHUP";
-    // SIGHUP:
-    //   (Prosody keeps running as if nothing happened, but throws
-    //   an error every time prosodyctl is invoked (status included).
-    //   Running shells don’t stop though, and c2s seems to still work.)
-    //   -> Report SERVICE_UNAVAILABLE, but keep Prosody running.
-
     // TODO: Allow logging at startup for debugging purposes.
     let app_config = AppConfig::from_default_figment()?;
 
@@ -50,11 +43,18 @@ async fn main() -> anyhow::Result<()> {
 
     let app_context = Arc::new(AppContext::new());
 
+    let reload_callback = {
+        let app_context = Arc::clone(&app_context);
+        move || app_context.reload()
+    };
+
     let res = tokio::select! {
         res = main_inner(Arc::clone(&app_context), app_config, tracing_reload_handles) => res,
 
         // Listen for graceful shutdown signals.
         () = listen_for_graceful_shutdown() => Ok(()),
+
+        () = listen_for_reload(reload_callback) => Err(anyhow!("Reload watcher ended unexpectedly.")),
     };
 
     SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -192,5 +192,39 @@ async fn listen_for_graceful_shutdown() {
         _ = terminate => {
             warn!("Process terminated.")
         },
+    }
+}
+
+pub async fn listen_for_reload(callback: impl Fn() -> ()) {
+    use tokio::signal;
+    use tracing::warn;
+
+    #[cfg(unix)]
+    let mut sighup = signal::unix::signal(signal::unix::SignalKind::hangup())
+        .expect("failed to install SIGHUP handler");
+
+    async fn listen_for_one_reload(#[cfg(unix)] sighup: &mut signal::unix::Signal) {
+        #[cfg(unix)]
+        let sighup = async {
+            sighup.recv().await;
+        };
+
+        #[cfg(not(unix))]
+        let sighup = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = sighup => {
+                warn!("Received SIGHUP.")
+            },
+        }
+    }
+
+    loop {
+        listen_for_one_reload(
+            #[cfg(unix)]
+            &mut sighup,
+        )
+        .await;
+        callback()
     }
 }

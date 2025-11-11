@@ -170,6 +170,12 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
 
 /// **Running with misconfiguration** (after a `SIGHUP`
 /// with a bad configuration).
+///
+/// NOTE: When misconfigured after a reload, Prosody keeps running as if
+///   nothing happened, but throws an error every time `prosodyctl` is invoked
+///   (`prosodyctl status` included). Running shells don’t stop though, and c2s
+///   seems to still work. The Pod Server API should do the same, and report
+///   `SERVICE_UNAVAILABLE` when requesting the frontend health.
 impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running> {
     fn state_name() -> &'static str {
         "Running with misconfiguration"
