@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use init_tracing_opentelemetry::opentelemetry_sdk::trace::SdkTracerProvider;
-use tracing::Subscriber;
+use tracing::{Subscriber, level_filters::LevelFilter, subscriber::Interest};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry,
     filter::Filtered,
@@ -100,13 +100,31 @@ pub struct ServerApiFilter {
     env_filter: EnvFilter,
 }
 
+impl ServerApiFilter {
+    fn is_enabled(&self, meta: &tracing::Metadata<'_>) -> bool {
+        meta.target() != "prosody"
+    }
+}
+
 impl<S> Filter<S> for ServerApiFilter {
     fn enabled(&self, meta: &tracing::Metadata<'_>, cx: &Context<'_, S>) -> bool {
-        meta.target() != "prosody" && Filter::enabled(&self.env_filter, meta, cx)
+        self.is_enabled(meta) && Filter::enabled(&self.env_filter, meta, cx)
+    }
+
+    fn callsite_enabled(&self, meta: &'static tracing::Metadata<'static>) -> Interest {
+        if self.is_enabled(meta) {
+            Interest::sometimes()
+        } else {
+            Interest::never()
+        }
     }
 
     fn event_enabled(&self, event: &tracing::Event<'_>, cx: &Context<'_, S>) -> bool {
         Filter::event_enabled(&self.env_filter, event, cx)
+    }
+
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        self.env_filter.max_level_hint()
     }
 }
 
@@ -202,9 +220,23 @@ impl ProsodyFilter {
     }
 }
 
+impl ProsodyFilter {
+    fn is_enabled(&self, meta: &tracing::Metadata<'_>) -> bool {
+        meta.target() == "prosody"
+    }
+}
+
 impl<S> Filter<S> for ProsodyFilter {
     fn enabled(&self, meta: &tracing::Metadata<'_>, _cx: &Context<'_, S>) -> bool {
-        meta.target() == "prosody"
+        self.is_enabled(meta)
+    }
+
+    fn callsite_enabled(&self, meta: &'static tracing::Metadata<'static>) -> Interest {
+        if self.is_enabled(meta) {
+            Interest::sometimes()
+        } else {
+            Interest::never()
+        }
     }
 
     fn event_enabled(&self, event: &tracing::Event<'_>, _cx: &Context<'_, S>) -> bool {
@@ -229,7 +261,7 @@ impl<S> Filter<S> for ProsodyFilter {
         let mut visitor = Visitor { module: None };
         event.record(&mut visitor);
 
-        if let Some(ref module) = visitor.module {
+        let event_enabled = if let Some(ref module) = visitor.module {
             let level = event.metadata().level();
             let allowed = self.directives.get(module).unwrap_or(&self.default_level);
 
@@ -238,7 +270,25 @@ impl<S> Filter<S> for ProsodyFilter {
             level <= allowed
         } else {
             false
-        }
+        };
+
+        event_enabled
+    }
+
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        // NOTE: Level ordering is counter-intuitive:
+        debug_assert!(tracing::Level::INFO < tracing::Level::DEBUG);
+
+        let max_level = self.default_level.max(
+            self.directives
+                .iter()
+                .map(|(_, level)| level)
+                .reduce(std::cmp::max)
+                .cloned()
+                .unwrap_or(self.default_level),
+        );
+
+        Some(LevelFilter::from_level(max_level))
     }
 }
 
