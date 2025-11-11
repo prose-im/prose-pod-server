@@ -11,7 +11,7 @@ use tokio::sync::RwLockWriteGuard;
 
 use crate::errors;
 use crate::responders::Error;
-use crate::state::prelude::*;
+use crate::state::{FailState, prelude::*};
 
 // MARK: - Routes
 
@@ -25,13 +25,13 @@ pub(in crate::router) async fn backend_restart(
         Ok(app_state) => match app_state.do_start_backend(&mut prosody).await {
             Ok(_) => Ok(()),
 
-            Err((_, error)) => {
+            Err(FailState { error, .. }) => {
                 tracing::error!("Backend restart failed: {error:?}");
                 Err(errors::restart_failed(&error))
             }
         },
 
-        Err((_, error)) => {
+        Err((_state, error)) => {
             tracing::error!("Backend restart failed: {error:?}");
             Err(errors::restart_failed(&error))
         }
@@ -47,7 +47,7 @@ pub(in crate::router) async fn backend_start(
     match app_state.do_start_backend(&mut prosody).await {
         Ok(_) => Ok(()),
 
-        Err((_, error)) => {
+        Err(FailState { error, .. }) => {
             tracing::error!("{error:?}");
             Err(errors::restart_failed(&error))
         }
@@ -63,7 +63,7 @@ pub(in crate::router) async fn backend_start_retry(
     match app_state.do_start_backend(&mut prosody).await {
         Ok(_new_state) => Ok(()),
 
-        Err((_new_state, error)) => {
+        Err(FailState { error, .. }) => {
             tracing::error!("{error:?}");
             Err(errors::restart_failed(&error))
         }
@@ -78,11 +78,7 @@ where
 {
     match app_state.do_bootstrapping().await {
         Ok(_new_state) => Ok(()),
-
-        Err((_new_state, error)) => {
-            tracing::error!("{error:?}");
-            Err(errors::restart_failed(&error))
-        }
+        Err(FailState { error, .. }) => Err(errors::restart_failed(&error)),
     }
 }
 
@@ -136,36 +132,24 @@ impl<B> AppState<f::Running, B> {
         prosody: &mut RwLockWriteGuard<'a, ProsodyChildProcess>,
     ) -> Result<
         AppState<f::Running, b::Running>,
-        (
-            AppState<f::Running, b::StartFailed<b::Operational>>,
-            Arc<anyhow::Error>,
-        ),
+        FailState<f::Running, b::StartFailed<b::Operational>>,
     >
     where
         b::Running: From<B>,
         Arc<b::Operational>: From<B>,
     {
         match prosody.start().await {
-            Ok(()) => Ok(self.with_auto_transition::<f::Running, b::Running>()),
+            Ok(()) => Ok(self.with_auto_transition()),
 
             Err(err) => {
                 let error = err
                     .context("Could not start Prosody")
                     .context("Backend start failed");
-                let error = Arc::new(error);
 
                 // Log debug info.
                 tracing::debug!("{error:?}");
 
-                let new_state =
-                    self.with_transition::<f::Running, b::StartFailed<b::Operational>>(|state| {
-                        state.with_backend_transition(|substate| b::StartFailed {
-                            state: substate.into(),
-                            error: Arc::clone(&error),
-                        })
-                    });
-
-                Err((new_state, error))
+                Err(self.transition_failed(error))
             }
         }
     }

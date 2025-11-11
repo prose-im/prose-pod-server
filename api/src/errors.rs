@@ -196,9 +196,9 @@ pub fn invalid_avatar(description: impl AsRef<str>) -> Error {
 
 #[must_use]
 #[inline]
-pub fn bad_configuration(err: &anyhow::Error) -> Error {
+pub fn bad_configuration(error: &anyhow::Error) -> Error {
     self::service_unavailable_err(
-        err,
+        error,
         "BAD_CONFIGURATION",
         "Bad configuration",
         "Your Prose Server configuration is incorrect. \

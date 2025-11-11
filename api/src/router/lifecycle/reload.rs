@@ -3,13 +3,12 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use axum::extract::State;
 
 use crate::errors;
 use crate::responders::Error;
-use crate::state::prelude::*;
+use crate::state::{FailState, prelude::*};
+use crate::util::either::Either;
 
 pub(in crate::router) async fn reload<FrontendSubstate>(
     State(app_state): State<AppState<f::Running<FrontendSubstate>, b::Running>>,
@@ -33,32 +32,37 @@ where
     }
 }
 
+impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
+    pub async fn do_init_config(
+        self,
+    ) -> Result<
+        AppState<f::Running, b::Running>,
+        Either<
+            FailState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
+            FailState<f::Running, b::StartFailed<b::NotInitialized>>,
+        >,
+    > {
+        match self.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
+            Ok(app_state) => app_state.do_bootstrapping().await.map_err(Either::E2),
+
+            // Transition state if the reload failed.
+            Err((app_state, error)) => {
+                // Log debug info.
+                tracing::error!("{error:?}");
+
+                // Update stored error (for better health diagnostics).
+                Err(Either::E1(app_state.transition_failed(error)))
+            }
+        }
+    }
+}
+
 pub(in crate::router) async fn init_config(
     State(app_state): State<AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>>,
 ) -> Result<(), Error> {
-    match app_state.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
-        Ok(app_state) => match app_state.do_bootstrapping().await {
-            Ok(_new_state) => Ok(()),
-
-            Err((_new_state, err)) => Err(errors::restart_failed(&err)),
-        },
-
-        // Transition state if the reload failed.
-        Err((app_state, error)) => {
-            let error = Arc::new(error);
-
-            // Log debug info.
-            tracing::error!("{error:?}");
-
-            // Update stored error (for better health diagnostics).
-            app_state.transition_with::<f::Misconfigured, b::Stopped<b::NotInitialized>>(|state| {
-                state.with_frontend_transition(|state| f::Misconfigured {
-                    error: Arc::clone(&error),
-                    tracing_reload_handles: Arc::clone(&state.tracing_reload_handles),
-                })
-            });
-
-            Err(errors::bad_configuration(&error))
-        }
+    match app_state.do_init_config().await {
+        Ok(_new_state) => Ok(()),
+        Err(Either::E1(FailState { error, .. })) => Err(errors::bad_configuration(&error)),
+        Err(Either::E2(FailState { error, .. })) => Err(errors::restart_failed(&error)),
     }
 }

@@ -11,8 +11,7 @@ pub(crate) mod prelude {
     pub use super::backend::{prelude as backend, prelude as b};
     pub use super::frontend::FrontendRunningState;
     pub use super::frontend::{prelude as frontend, prelude as f};
-    #[allow(unused_imports)]
-    pub use super::{AppContext, AppState, AppStateTrait};
+    pub use super::{AppContext, AppState, AppStateTrait, FailState, TransitionWith as _};
 }
 
 use std::sync::{Arc, Weak};
@@ -60,7 +59,7 @@ impl AppContext {
     }
 
     #[inline]
-    pub fn set_state<F, B>(&self, new_state: AppState<F, B>)
+    fn set_state<F, B>(&self, new_state: AppState<F, B>)
     where
         AppState<F, B>: AppStateTrait,
         F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
@@ -82,7 +81,7 @@ impl AppContext {
     /// value and returns it. This makes call sites more concise when using
     /// explicit generic types for clarity.
     #[inline(always)]
-    pub fn new_state<F, B>(&self, new_state: AppState<F, B>) -> AppState<F, B>
+    fn new_state<F, B>(&self, new_state: AppState<F, B>) -> AppState<F, B>
     where
         AppState<F, B>: AppStateTrait,
         F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
@@ -140,7 +139,7 @@ impl<F, B> AppState<F, B> {
     }
 
     #[inline(always)]
-    pub fn context(&self) -> Option<Arc<AppContext>> {
+    fn context(&self) -> Option<Arc<AppContext>> {
         self.app_context.upgrade()
     }
 }
@@ -158,37 +157,11 @@ impl<F1, B1> AppState<F1, B1> {
 
     #[must_use]
     #[inline]
-    pub fn with_frontend_transition<F2>(
-        self,
-        transition: impl FnOnce(F1) -> F2,
-    ) -> AppState<F2, B1> {
-        AppState {
-            app_context: self.app_context,
-            frontend: transition(self.frontend),
-            backend: self.backend,
-        }
-    }
-
-    #[must_use]
-    #[inline]
     pub fn with_backend<B2>(self, backend: B2) -> AppState<F1, B2> {
         AppState {
             app_context: self.app_context,
             frontend: self.frontend,
             backend,
-        }
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn with_backend_transition<B2>(
-        self,
-        transition: impl FnOnce(B1) -> B2,
-    ) -> AppState<F1, B2> {
-        AppState {
-            app_context: self.app_context,
-            frontend: self.frontend,
-            backend: transition(self.backend),
         }
     }
 }
@@ -203,26 +176,6 @@ pub trait AppStateTrait {
     fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>>;
 }
 
-macro_rules! state_boilerplate {
-    ($state:ident, $substate_trait:ident) => {
-        impl<S: $substate_trait> std::ops::Deref for $state<S> {
-            type Target = S;
-
-            #[inline(always)]
-            fn deref(&self) -> &Self::Target {
-                &self.state
-            }
-        }
-
-        impl<S: $substate_trait> AsRef<S> for $state<S> {
-            #[inline(always)]
-            fn as_ref(&self) -> &S {
-                &self.state
-            }
-        }
-    };
-}
-
 pub mod frontend {
     pub mod prelude {
         pub use super::FrontendRunningState as RunningState;
@@ -234,13 +187,15 @@ pub mod frontend {
         };
     }
 
-    use crate::util::tracing_subscriber_ext::TracingReloadHandles;
+    use std::sync::Arc;
 
-    use super::*;
+    use crate::{AppConfig, util::tracing_subscriber_ext::TracingReloadHandles};
 
-    use self::prelude::*;
+    use super::macros::*;
 
-    pub trait FrontendStateTrait {
+    use self::substates::*;
+
+    pub trait FrontendStateTrait: Into<FrontendUndergoingFactoryReset> {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles>;
     }
 
@@ -252,6 +207,11 @@ pub mod frontend {
         pub(crate) config: Arc<AppConfig>,
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
+
+    state_boilerplate!(
+        FrontendRunning<any FrontendRunningState>,
+        [Clone]: { state, config, tracing_reload_handles }
+    );
 
     pub trait FrontendRunningState: std::fmt::Debug {}
     impl FrontendRunningState for Operational {}
@@ -276,9 +236,17 @@ pub mod frontend {
         pub struct WithMisconfiguration {
             pub error: Arc<anyhow::Error>,
         }
+
+        impl<'a> From<&'a Arc<anyhow::Error>> for WithMisconfiguration {
+            fn from(error: &'a Arc<anyhow::Error>) -> Self {
+                Self {
+                    error: Arc::clone(error),
+                }
+            }
+        }
     }
 
-    impl<S: RunningState> FrontendStateTrait for Running<S> {
+    impl<S: FrontendRunningState> FrontendStateTrait for FrontendRunning<S> {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
         }
@@ -292,7 +260,7 @@ pub mod frontend {
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
-    impl FrontendStateTrait for Misconfigured {
+    impl FrontendStateTrait for FrontendMisconfigured {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
         }
@@ -305,28 +273,56 @@ pub mod frontend {
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
-    impl FrontendStateTrait for UndergoingFactoryReset {
+    state_boilerplate!(FrontendUndergoingFactoryReset);
+
+    impl FrontendStateTrait for FrontendUndergoingFactoryReset {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
         }
     }
 
-    // MARK: Boilerplate
+    // MARK: State transitions
 
-    state_boilerplate!(Running, RunningState);
-
-    impl<State: RunningState> Clone for Running<State> {
-        #[inline(always)]
-        fn clone(&self) -> Self {
-            // NOTE: `#[derive(Clone)]` doesn’t work here,
-            //   we have to do it manually :/
+    impl<S: FrontendStateTrait> From<(S, &Arc<anyhow::Error>)> for FrontendMisconfigured {
+        fn from((state, error): (S, &Arc<anyhow::Error>)) -> Self {
             Self {
-                state: Arc::clone(&self.state),
-                config: Arc::clone(&self.config),
-                tracing_reload_handles: Arc::clone(&self.tracing_reload_handles),
+                error: Arc::clone(error),
+                tracing_reload_handles: Arc::clone(state.tracing_reload_handles()),
             }
         }
     }
+
+    impl<S: FrontendRunningState> From<(FrontendRunning<S>, &Arc<anyhow::Error>)>
+        for FrontendRunning<WithMisconfiguration>
+    {
+        fn from((state, error): (FrontendRunning<S>, &Arc<anyhow::Error>)) -> Self {
+            Self {
+                state: Arc::new(WithMisconfiguration::from(error)),
+                config: state.config,
+                tracing_reload_handles: state.tracing_reload_handles,
+            }
+        }
+    }
+
+    impl<S: FrontendRunningState> From<FrontendRunning<S>> for FrontendUndergoingFactoryReset {
+        fn from(state: FrontendRunning<S>) -> Self {
+            Self {
+                tracing_reload_handles: state.tracing_reload_handles,
+            }
+        }
+    }
+
+    impl From<FrontendMisconfigured> for FrontendUndergoingFactoryReset {
+        fn from(state: FrontendMisconfigured) -> Self {
+            Self {
+                tracing_reload_handles: state.tracing_reload_handles,
+            }
+        }
+    }
+
+    // MARK: Boilerplate
+
+    impl_from_pair!((FrontendRunning<Operational>, error) use left);
 }
 
 pub mod backend {
@@ -337,6 +333,7 @@ pub mod backend {
             BackendStarting as Starting, BackendStopped as Stopped,
             BackendUndergoingFactoryReset as UndergoingFactoryReset,
         };
+        #[allow(unused_imports)]
         pub use super::{
             BackendRunningState as RunningState, BackendStartFailedState as StartFailedState,
             BackendStartingState as StartingState, BackendStoppedState as StoppedState,
@@ -353,7 +350,9 @@ pub mod backend {
 
     use crate::secrets_service::SecretsService;
 
-    use self::prelude::*;
+    use super::macros::*;
+
+    use self::substates::*;
 
     // MARK: Starting
 
@@ -361,6 +360,11 @@ pub mod backend {
     pub struct BackendStarting<State: BackendStoppedState = Operational> {
         pub state: Arc<State>,
     }
+
+    state_boilerplate!(
+        BackendStarting<any BackendStartingState>,
+        derive: Clone, Default
+    );
 
     pub use BackendStoppedState as BackendStartingState;
 
@@ -370,6 +374,11 @@ pub mod backend {
     pub struct BackendStopped<State: BackendStoppedState = Operational> {
         pub state: Arc<State>,
     }
+
+    state_boilerplate!(
+        BackendStopped<any BackendStoppedState>,
+        derive: Clone, Default
+    );
 
     pub trait BackendStoppedState: std::fmt::Debug {}
     impl BackendStoppedState for NotInitialized {}
@@ -382,28 +391,18 @@ pub mod backend {
         pub state: Arc<State>,
     }
 
+    state_boilerplate!(
+        BackendRunning<any BackendRunningState>,
+        derive: Clone, Default
+    );
+
     pub trait BackendRunningState: std::fmt::Debug {}
     impl BackendRunningState for Operational {}
-
-    // MARK: Stopped with error
-
-    #[derive(Debug)]
-    pub struct BackendStartFailed<State: BackendStartFailedState> {
-        pub state: Arc<State>,
-        pub error: Arc<anyhow::Error>,
-    }
-
-    pub use BackendStoppedState as BackendStartFailedState;
-
-    // MARK: Factory reset
-
-    #[derive(Debug, Clone)]
-    pub struct BackendUndergoingFactoryReset {}
 
     pub mod substates {
         use super::*;
 
-        #[derive(Debug)]
+        #[derive(Debug, Default)]
         pub struct NotInitialized {}
 
         #[derive(Debug)]
@@ -416,120 +415,83 @@ pub mod backend {
         }
     }
 
+    // MARK: Stopped with error
+
+    #[derive(Debug)]
+    pub struct BackendStartFailed<State: BackendStartFailedState> {
+        pub state: Arc<State>,
+        pub error: Arc<anyhow::Error>,
+    }
+
+    state_boilerplate!(
+        BackendStartFailed<any BackendStartFailedState>,
+        [Clone]: { state, error }
+    );
+
+    pub use BackendStoppedState as BackendStartFailedState;
+
+    // MARK: Factory reset
+
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendUndergoingFactoryReset {}
+
+    state_boilerplate!(BackendUndergoingFactoryReset);
+
     // MARK: State transitions
 
-    impl<Substate> From<Running<Substate>> for Starting<Substate>
-    where
-        Substate: RunningState + StartingState,
-    {
-        #[inline(always)]
-        fn from(Running { state, .. }: Running<Substate>) -> Self {
-            Self { state }
-        }
-    }
-
-    impl<Substate> From<Starting<Substate>> for Running<Substate>
-    where
-        Substate: StartingState + RunningState,
-    {
-        #[inline(always)]
-        fn from(Starting { state, .. }: Starting<Substate>) -> Self {
-            Self { state }
-        }
-    }
-
-    impl<Substate> From<Starting<Substate>> for Arc<Substate>
-    where
-        Substate: StartingState,
-    {
-        #[inline(always)]
-        fn from(Starting { state, .. }: Starting<Substate>) -> Self {
-            state
-        }
-    }
-
-    impl<Substate> From<StartFailed<Substate>> for Running<Substate>
-    where
-        Substate: StartFailedState + RunningState,
-    {
-        #[inline(always)]
-        fn from(StartFailed { state, .. }: StartFailed<Substate>) -> Self {
-            Self { state }
-        }
-    }
-
-    impl<Substate> From<StartFailed<Substate>> for Arc<Substate>
-    where
-        Substate: StartFailedState,
-    {
-        #[inline(always)]
-        fn from(StartFailed { state, .. }: StartFailed<Substate>) -> Self {
-            state
-        }
-    }
-
-    impl From<Stopped<NotInitialized>> for Starting<NotInitialized> {
-        #[inline(always)]
-        fn from(Stopped { state, .. }: Stopped<NotInitialized>) -> Self {
-            Self { state }
-        }
-    }
-
-    impl From<UndergoingFactoryReset> for Starting<NotInitialized> {
-        #[inline(always)]
-        fn from(_: UndergoingFactoryReset) -> Self {
-            Self {
-                state: Arc::new(NotInitialized {}),
-            }
-        }
-    }
+    impl_trivial_transition!(
+        BackendRunning<any BackendRunningState>
+        => BackendStarting<any BackendStartingState>
+    );
+    impl_trivial_transition!(
+        BackendStarting<any BackendStartingState>
+        => BackendRunning<any BackendRunningState>
+    );
+    impl_trivial_transition!(
+        BackendStartFailed<any BackendStartFailedState>
+        => BackendRunning<any BackendRunningState>
+    );
+    impl_trivial_transition!(
+        BackendUndergoingFactoryReset
+        =[default]> BackendStarting<any BackendStartingState>
+    );
+    impl_trivial_transition!(
+        BackendUndergoingFactoryReset
+        =[default]> BackendStopped<NotInitialized>
+    );
+    impl_trivial_transition!(
+        BackendStopped<NotInitialized>
+        => BackendStarting<NotInitialized>
+    );
+    impl_trivial_transition!(
+        BackendRunning<any BackendRunningState>
+        =[default]> BackendUndergoingFactoryReset
+    );
+    impl_trivial_transition!(
+        BackendStopped<any BackendStoppedState>
+        =[default]> BackendUndergoingFactoryReset
+    );
+    impl_trivial_transition!(
+        BackendStartFailed<any BackendStartFailedState>
+        =[default]> BackendUndergoingFactoryReset
+    );
 
     // MARK: Boilerplate
 
-    state_boilerplate!(Running, RunningState);
-    state_boilerplate!(Stopped, StoppedState);
+    impl_from_pair!((BackendRunning, error) use left);
+    impl_from_pair!((BackendStopped<NotInitialized>, error) use left);
+    impl_from_pair!((BackendUndergoingFactoryReset => BackendStopped<NotInitialized>, ()) use left);
 
-    impl<State: BackendStoppedState> Clone for BackendStarting<State> {
+    impl<S1, S2> From<(S1, &Arc<anyhow::Error>)> for BackendStartFailed<S2>
+    where
+        S1: Into<Arc<S2>>,
+        S2: BackendStartFailedState,
+    {
         #[inline(always)]
-        fn clone(&self) -> Self {
-            // NOTE: `#[derive(Clone)]` doesn’t work here,
-            //   we have to do it manually :/
+        fn from((state, error): (S1, &Arc<anyhow::Error>)) -> Self {
             Self {
-                state: Arc::clone(&self.state),
-            }
-        }
-    }
-
-    impl<State: BackendRunningState> Clone for BackendRunning<State> {
-        #[inline(always)]
-        fn clone(&self) -> Self {
-            // NOTE: `#[derive(Clone)]` doesn’t work here,
-            //   we have to do it manually :/
-            Self {
-                state: Arc::clone(&self.state),
-            }
-        }
-    }
-
-    impl<State: BackendStartFailedState> Clone for BackendStartFailed<State> {
-        #[inline(always)]
-        fn clone(&self) -> Self {
-            // NOTE: `#[derive(Clone)]` doesn’t work here,
-            //   we have to do it manually :/
-            Self {
-                state: Arc::clone(&self.state),
-                error: Arc::clone(&self.error),
-            }
-        }
-    }
-
-    impl<State: BackendStoppedState> Clone for BackendStopped<State> {
-        #[inline(always)]
-        fn clone(&self) -> Self {
-            // NOTE: `#[derive(Clone)]` doesn’t work here,
-            //   we have to do it manually :/
-            Self {
-                state: Arc::clone(&self.state),
+                state: state.into(),
+                error: Arc::clone(error),
             }
         }
     }
@@ -544,8 +506,8 @@ impl<F1, B1> AppState<F1, B1> {
     #[inline]
     pub fn with_auto_transition<F2, B2>(self) -> AppState<F2, B2>
     where
-        F2: From<F1>,
-        B2: From<B1>,
+        F1: Into<F2>,
+        B1: Into<B2>,
         AppState<F2, B2>: AppStateTrait,
         F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
@@ -563,11 +525,16 @@ impl<F1, B1> AppState<F1, B1> {
     /// [`AppContext::set_state`]. It takes care of cloning
     /// `app_context` which is required by the borrow checker.
     ///
-    /// If you don’t need the result, avoid a clone by using
-    /// [`transition_with`](Self::transition_with) instead.
+    /// PERF(RemiBardon): This does an unnecessary `clone` if the resulting
+    ///   state isn’t used (because of `new_state` instead of `set_state`).
+    ///   If this becomes an issue, we could add default values to the generic
+    ///   types so that the function would return `AppState<(), ()>` if the
+    ///   state ends up not being used (i.e. type inference would fail).
+    ///   It might be a little tricky to separate the two scenarios to avoid
+    ///   the `clone` but I’m sure there is a way.
     #[must_use]
     #[inline(always)]
-    pub fn with_transition<F2, B2>(
+    fn with_transition<F2, B2>(
         self,
         transition: impl FnOnce(Self) -> AppState<F2, B2>,
     ) -> AppState<F2, B2>
@@ -579,18 +546,306 @@ impl<F1, B1> AppState<F1, B1> {
         let app_context = self.context().expect(STATIC_APP_CONTEXT);
         app_context.new_state(transition(self))
     }
+}
 
-    /// This is a helper for [`AppContext::new_state`]. Just like
-    /// [`with_transition`](Self::with_transition), it takes care of cloning
-    /// `app_context` which is required by the borrow checker.
-    #[inline(always)]
-    pub fn transition_with<F2, B2>(self, transition: impl FnOnce(Self) -> AppState<F2, B2>)
-    where
-        AppState<F2, B2>: AppStateTrait,
-        F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-    {
-        let app_context = self.context().expect(STATIC_APP_CONTEXT);
-        app_context.set_state(transition(self))
+/// Similar to [`core::convert::From`].
+pub trait TransitionFrom<T, Data> {
+    fn transition_from(state: T, data: Data) -> Self;
+}
+
+/// Similar to [`core::convert::Into`].
+pub trait TransitionWith<T, Data> {
+    fn transition_with(self, data: Data) -> T;
+}
+
+// `TransitionFrom` implies `TransitionWith`.
+impl<T, U, Data> TransitionWith<U, Data> for T
+where
+    U: TransitionFrom<T, Data>,
+{
+    #[inline]
+    fn transition_with(self, data: Data) -> U {
+        TransitionFrom::transition_from(self, data)
     }
+}
+
+// `AppState` transition.
+impl<F, F2, FData, B, B2, BData> TransitionFrom<AppState<F, B>, (FData, BData)> for AppState<F2, B2>
+where
+    (F, FData): Into<F2>,
+    (B, BData): Into<B2>,
+    AppState<F2, B2>: AppStateTrait,
+    F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+    B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+{
+    #[inline]
+    fn transition_from(state: AppState<F, B>, (f_data, b_data): (FData, BData)) -> Self {
+        state.with_transition::<F2, B2>(|state| AppState {
+            app_context: state.app_context,
+            frontend: (state.frontend, f_data).into(),
+            backend: (state.backend, b_data).into(),
+        })
+    }
+}
+
+// MARK: Fail states
+
+/// [`FailState`] is essentially an equivalent of `(State, Error)` which
+/// provides functionality for better ergonomics. Thanks to it, we can have
+/// “fluent” call sites which follow the concepts of functional programming.
+pub struct FailState<F, B> {
+    #[allow(dead_code)]
+    pub state: AppState<F, B>,
+
+    pub error: Arc<anyhow::Error>,
+}
+
+impl<F, B> AppState<F, B> {
+    pub fn with_error(self, error: Arc<anyhow::Error>) -> FailState<F, B> {
+        FailState { state: self, error }
+    }
+}
+
+// `AppState` + `Arc<anyhow::Error>` to `AppState` transition.
+impl<F, F2, B, B2> TransitionFrom<AppState<F, B>, Arc<anyhow::Error>> for AppState<F2, B2>
+where
+    AppState<F2, B2>:
+        for<'a> TransitionFrom<AppState<F, B>, (&'a Arc<anyhow::Error>, &'a Arc<anyhow::Error>)>,
+{
+    #[inline]
+    fn transition_from(state: AppState<F, B>, error: Arc<anyhow::Error>) -> Self {
+        AppState::<F2, B2>::transition_from(state, (&error, &error))
+    }
+}
+
+// `AppState` + `anyhow::Error` to `AppState` transition.
+impl<F, B, B2> TransitionFrom<AppState<F, B>, anyhow::Error> for AppState<F, B2>
+where
+    AppState<F, B>: TransitionWith<Self, Arc<anyhow::Error>>,
+{
+    #[inline]
+    fn transition_from(state: AppState<F, B>, error: anyhow::Error) -> Self {
+        TransitionWith::transition_with(state, Arc::new(error))
+    }
+}
+
+// `AppState` + `Arc<anyhow::Error>` to `FailState` transition.
+impl<F, B> AppState<F, B> {
+    #[inline]
+    pub fn transition_failed<F2, B2>(self, error: anyhow::Error) -> FailState<F2, B2>
+    where
+        Self: for<'a> TransitionWith<
+                AppState<F2, B2>,
+                (&'a Arc<anyhow::Error>, &'a Arc<anyhow::Error>),
+            >,
+    {
+        let error = Arc::new(error);
+        TransitionWith::transition_with(self, (&error, &error)).with_error(error)
+    }
+}
+
+/// There is a lot of repetitive things we have to do to have ergonomic
+/// transitions. This is where the heavy lifting is done.
+mod macros {
+    macro_rules! state_boilerplate {
+        (
+            $state:ident<any $substate_trait:ident>
+            $(, [Clone]: { $($clone_field:ident),+ })?
+            $(, derive: $($trivial_impl:ident),+)?
+        ) => {
+            // `S { state } -> &state` (auto)
+            impl<S: $substate_trait> std::ops::Deref for $state<S> {
+                type Target = S;
+
+                #[inline(always)]
+                fn deref(&self) -> &Self::Target {
+                    &self.state
+                }
+            }
+
+            // `S { state } -> &state`
+            impl<S: $substate_trait> AsRef<S> for $state<S> {
+                #[inline(always)]
+                fn as_ref(&self) -> &S {
+                    &self.state
+                }
+            }
+
+            // `S { state } -> state`
+            impl<S: $substate_trait> From<$state<S>> for Arc<S> {
+                #[inline(always)]
+                fn from($state { state, .. }: $state<S>) -> Self {
+                    state
+                }
+            }
+
+            // `(S, _) -> S`
+            impl<S: $substate_trait> From<($state<S>, ())> for $state<S> {
+                #[inline(always)]
+                fn from((state, _): ($state<S>, ())) -> Self {
+                    state
+                }
+            }
+
+            $(state_boilerplate!(__ [Clone]: $state<any $substate_trait> { $($clone_field)+ });)?
+
+            $($(state_boilerplate!(__ $trivial_impl: $state<any $substate_trait>);)+)?
+        };
+
+        (
+            $state:ty
+            $(, [Clone]: { $($clone_field:ident),+ })?
+            $(, derive: $($trivial_impl:ident),+)?
+        ) => {
+            // `(S, _) -> S`, `(S1, _) -> S2`
+            impl From<($state, ())> for $state {
+                #[inline(always)]
+                fn from((state, _): ($state, ())) -> Self {
+                    state.into()
+                }
+            }
+
+            $(state_boilerplate!(__ [Clone]: $state { $($clone_field)+ });)?
+
+            $($(state_boilerplate!(__ $trivial_impl: $state);)+)?
+        };
+
+        (__ Default: $state:ident<any $substate_trait:ident>) => {
+            impl<S: $substate_trait + Default> Default for $state<S> {
+                #[inline(always)]
+                fn default() -> Self {
+                    Self {
+                        state: Arc::default(),
+                    }
+                }
+            }
+        };
+
+        (__ Clone: $state:ident<any $substate_trait:ident>) => {
+            state_boilerplate!(__ [Clone]: $state<any $substate_trait> { state });
+        };
+
+        (__ [Clone]: $state:ident<any $substate_trait:ident> { $($clone_field:ident)+ }) => {
+            impl<S: $substate_trait> Clone for $state<S> {
+                #[inline(always)]
+                fn clone(&self) -> Self {
+                    // NOTE: `#[derive(Clone)]` doesn’t work here,
+                    //   we have to do it manually :/
+                    Self {
+                        $($clone_field: Arc::clone(&self.$clone_field),)+
+                    }
+                }
+            }
+        };
+    }
+    pub(super) use state_boilerplate;
+
+    macro_rules! impl_trivial_transition {
+        // Generic to generic.
+        ($t1:ident<any $sub_t1_trait:ident> => $t2:ident<any $sub_t2_trait:ident>) => {
+            impl<Substate> From<$t1<Substate>> for $t2<Substate>
+            where
+                Substate: $sub_t1_trait + $sub_t2_trait,
+            {
+                #[inline(always)]
+                fn from($t1 { state, .. }: $t1<Substate>) -> Self {
+                    Self { state }
+                }
+            }
+        };
+
+        // Generic to concrete using Default.
+        (
+            $t1:ident<any $sub_t1_trait:ident>
+            =[default]>
+            $t2:path
+        ) => {
+            impl<S: $sub_t1_trait> From<$t1<S>> for $t2
+            where
+                Self: Default,
+            {
+                #[inline(always)]
+                fn from(_: $t1<S>) -> Self {
+                    Self::default()
+                }
+            }
+        };
+
+        // Concrete to generic using Default.
+        (
+            $t1:path
+            =[default]>
+            $t2:ident<any $sub_t2_trait:ident>
+        ) => {
+            impl<S: $sub_t2_trait> From<$t1> for $t2<S>
+            where
+                Self: Default,
+            {
+                #[inline(always)]
+                fn from(_: $t1) -> Self {
+                    Self::default()
+                }
+            }
+        };
+
+        // Concrete to concrete.
+        ($t1:path => $t2:path) => {
+            impl From<$t1> for $t2 {
+                #[inline(always)]
+                fn from($t1 { state, .. }: $t1) -> Self {
+                    Self { state }
+                }
+            }
+        };
+
+        // Concrete to concrete using Default.
+        ($t1:path =[default]> $t2:path) => {
+            impl From<$t1> for $t2
+            where
+                Self: Default,
+            {
+                #[inline(always)]
+                fn from(_: $t1) -> Self {
+                    Self::default()
+                }
+            }
+        };
+    }
+    pub(super) use impl_trivial_transition;
+
+    macro_rules! impl_from_pair {
+        // Use left, discard error.
+        (($left:ty, error) use left) => {
+            impl<'a> From<($left, &'a Arc<anyhow::Error>)> for $left {
+                #[inline(always)]
+                fn from((left, _): ($left, &'a Arc<anyhow::Error>)) -> Self {
+                    left
+                }
+            }
+        };
+
+        // Use left, discard right.
+        (($left:ty, $right:ty) use left) => {
+            impl From<($left, $right)> for $left {
+                #[inline(always)]
+                fn from((left, _): ($left, $right)) -> Self {
+                    left
+                }
+            }
+        };
+
+        // Map left, discard right.
+        (($other:ty => $left:ty, $right:ty) use left) => {
+            impl From<($other, $right)> for $left
+            where
+                $other: Into<$left>,
+            {
+                #[inline(always)]
+                fn from((left, _): ($other, $right)) -> Self {
+                    left.into()
+                }
+            }
+        };
+    }
+    pub(super) use impl_from_pair;
 }

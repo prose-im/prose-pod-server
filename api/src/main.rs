@@ -38,8 +38,6 @@ async fn main() -> anyhow::Result<()> {
     //   an error every time prosodyctl is invoked (status included).
     //   Running shells don’t stop though, and c2s seems to still work.)
     //   -> Report SERVICE_UNAVAILABLE, but keep Prosody running.
-    let todo = "Check if we can get rid of with_transition and \
-        switch call sites to a functional programming style";
 
     // TODO: Allow logging at startup for debugging purposes.
     let app_config = AppConfig::from_default_figment()?;

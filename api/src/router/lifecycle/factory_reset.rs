@@ -22,7 +22,9 @@ pub(in crate::router) async fn factory_reset(
 ) -> Result<StatusCode, Error> {
     match app_state.do_factory_reset().await {
         Ok(_new_state) => Ok(StatusCode::RESET_CONTENT),
-        Err((_new_state, error)) => Err(errors::factory_reset_failed(&error)),
+        Err(Either::E1(FailState { error, .. })) | Err(Either::E2(FailState { error, .. })) => {
+            Err(errors::factory_reset_failed(&error))
+        }
     }
 }
 
@@ -74,34 +76,26 @@ impl<F, B> AppState<F, B> {
             AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
             AppState<f::Running, b::Running>,
         >,
-        (
-            Either<
-                AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
-                AppState<f::Running, b::StartFailed<b::NotInitialized>>,
-            >,
-            Arc<anyhow::Error>,
-        ),
+        Either<
+            FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
+            FailState<f::Running, b::StartFailed<b::NotInitialized>>,
+        >,
     >
     where
-        F: frontend::State,
-        B: Clone + AsRef<b::Operational>,
+        F: Into<f::UndergoingFactoryReset>,
+        B: Into<b::UndergoingFactoryReset> + AsRef<b::Operational> + Clone,
     {
         tracing::info!("Performing factory reset…");
         let start = Instant::now();
 
         let backend = self.backend.clone();
 
-        let app_state = self.with_transition(|state| {
-            state
-                .with_frontend_transition(|state| f::UndergoingFactoryReset {
-                    tracing_reload_handles: Arc::clone(state.tracing_reload_handles()),
-                })
-                .with_backend(b::UndergoingFactoryReset {})
-        });
+        let app_state: AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset> =
+            self.with_auto_transition();
 
         if let Err(error) = Self::factory_reset(backend).await {
             tracing::error!("Factory reset failed: {error:?}");
-            return Err((Either::E1(app_state), Arc::new(error)));
+            return Err(Either::E1(app_state.with_error(Arc::new(error))));
         }
 
         // Transition app to “Starting”.
@@ -118,9 +112,12 @@ impl<F, B> AppState<F, B> {
                 match new_state.do_bootstrapping().await {
                     Ok(new_state) => Ok(Either::E2(new_state)),
 
-                    Err((new_state, error)) => {
-                        tracing::debug!("Bootstrapping failed after factory reset: {error:?}");
-                        Err((Either::E2(new_state), error))
+                    Err(fail_state) => {
+                        tracing::debug!(
+                            "Bootstrapping failed after factory reset: {error:?}",
+                            error = fail_state.error
+                        );
+                        Err(Either::E2(fail_state))
                     }
                 }
             }
@@ -130,16 +127,8 @@ impl<F, B> AppState<F, B> {
                 // Log debug info.
                 tracing::warn!("{error:?}");
 
-                let new_state = new_state.with_transition(|state| {
-                    state
-                        .with_frontend_transition(|state| f::Misconfigured {
-                            error: Arc::clone(&error),
-                            tracing_reload_handles: Arc::clone(&state.tracing_reload_handles),
-                        })
-                        .with_backend(b::Stopped {
-                            state: Arc::new(b::NotInitialized {}),
-                        })
-                });
+                let new_state: AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> =
+                    new_state.transition_with((&error, ()));
 
                 tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
                 // NOTE: Do not return a failure as this is expected behavior.

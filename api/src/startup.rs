@@ -144,7 +144,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
 
         match Self::bootstrap(&self).await {
             Ok(backend) => {
-                let new_state = self.with_transition(|state| state.with_backend(backend));
+                let new_state = self.with_backend(backend).with_auto_transition();
 
                 tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
                 Ok(new_state)
@@ -167,10 +167,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
         self,
     ) -> Result<
         AppState<f::Running, b::Running>,
-        (
-            AppState<f::Running, b::StartFailed<b::NotInitialized>>,
-            Arc<anyhow::Error>,
-        ),
+        FailState<f::Running, b::StartFailed<b::NotInitialized>>,
     >
     where
         BackendState: Into<Arc<b::NotInitialized>>,
@@ -179,20 +176,10 @@ impl<BackendState> AppState<f::Running, BackendState> {
             Ok(new_state) => Ok(new_state),
 
             Err((app_state, error)) => {
-                let error = Arc::new(error);
-
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                let new_state = app_state
-                    .with_transition::<f::Running, b::StartFailed<b::NotInitialized>>(|state| {
-                        state.with_backend_transition(|substate| b::StartFailed {
-                            state: substate.into(),
-                            error: Arc::clone(&error),
-                        })
-                    });
-
-                Err((new_state, error))
+                Err(app_state.transition_failed(error))
             }
         }
     }

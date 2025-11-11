@@ -15,16 +15,12 @@ use crate::{AppConfig, errors};
 
 // MARK: - Routes
 
-pub(in crate::router) async fn frontend_reload<FrontendSubstate>(
-    State(app_state): State<AppState<f::Running<FrontendSubstate>, b::Running>>,
-) -> Result<(), Error>
-where
-    FrontendSubstate: f::RunningState,
-    AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
-{
+pub(in crate::router) async fn frontend_reload(
+    State(app_state): State<AppState<f::Running<f::Operational>, b::Running>>,
+) -> Result<(), Error> {
     match app_state.do_reload_frontend() {
         Ok(_new_state) => Ok(()),
-        Err((_new_state, error)) => Err(errors::bad_configuration(&error)),
+        Err(FailState { error, .. }) => Err(errors::bad_configuration(&error)),
     }
 }
 
@@ -70,20 +66,12 @@ where
     ) -> Result<AppState<f::Running, B2>, (Self, anyhow::Error)>
     where
         B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B2: From<B>,
+        B: Into<B2>,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         AppState<f::Running, B2>: AppStateTrait,
     {
         match Self::reload_frontend(&self) {
-            Ok(frontend) => {
-                let new_state = self.with_transition::<f::Running, B2>(|state| {
-                    state
-                        .with_frontend(frontend)
-                        .with_backend_transition(From::from)
-                });
-
-                Ok(new_state)
-            }
+            Ok(frontend) => Ok(self.with_frontend(frontend).with_auto_transition()),
 
             Err(err) => {
                 let error = err.context("Frontend reload failed");
@@ -103,43 +91,29 @@ where
     AppState<f::Running<f::WithMisconfiguration>, B>: AppStateTrait,
 {
     /// ```txt
-    /// AppState<Running, B>
+    /// AppState<Running<F>, B>
     /// ------------------------------------------------------ (Reload frontend)
-    /// AppState<Running, B>                        if success
+    /// AppState<Running<F>, B>                     if success
     /// AppState<Running<WithMisconfiguration>, B>  if failure
     /// ```
     ///
     /// NOTE: This method **does** log errors.
     pub(crate) fn do_reload_frontend(
         self,
-    ) -> Result<
-        AppState<f::Running, B>,
-        (
-            AppState<f::Running<f::WithMisconfiguration>, B>,
-            Arc<anyhow::Error>,
-        ),
-    > {
+    ) -> Result<AppState<f::Running, B>, FailState<f::Running<f::WithMisconfiguration>, B>>
+    where
+        for<'a> (f::Running<FrontendSubstate>, &'a Arc<anyhow::Error>):
+            Into<f::Running<f::WithMisconfiguration>>,
+        for<'a> (B, &'a Arc<anyhow::Error>): Into<B>,
+    {
         match self.try_reload_frontend() {
             Ok(new_state) => Ok(new_state),
 
             Err((app_state, error)) => {
-                let error = Arc::new(error);
-
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                let new_state = app_state
-                    .with_transition::<f::Running<f::WithMisconfiguration>, B>(|state| {
-                        state.with_frontend_transition(|state| f::Running {
-                            state: Arc::new(f::WithMisconfiguration {
-                                error: Arc::clone(&error),
-                            }),
-                            config: state.config,
-                            tracing_reload_handles: state.tracing_reload_handles,
-                        })
-                    });
-
-                Err((new_state, error))
+                Err(app_state.transition_failed(error))
             }
         }
     }
