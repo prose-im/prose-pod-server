@@ -169,6 +169,73 @@ impl AppConfig {
             );
         }
 
+        // NOTE: We can’t reload logging layers because of a bug in `tracing`
+        //   (see https://github.com/tokio-rs/tracing/issues/1629). Until
+        //   `tracing` 0.4 is released, we’ll just reload the filters, and
+        //   require a restart to change the logging format. This shouldn’t
+        //   bother anyone, as there is little point in changing the format
+        //   of logs at runtime. Filters, on the other hand, might be changed
+        //   at runtime and need to be reloadable.
+        #[derive(PartialEq, Eq)]
+        struct StaticLogConfig {
+            pub format: LogFormat,
+            pub timer: LogTimer,
+            pub with_file: bool,
+            pub with_target: bool,
+            pub with_thread_ids: bool,
+            pub with_line_number: bool,
+            pub with_span_events: bool,
+            pub with_thread_names: bool,
+            pub opentelemetry_enabled: bool,
+        }
+        impl From<&LogConfig> for StaticLogConfig {
+            fn from(value: &LogConfig) -> Self {
+                let LogConfig {
+                    level: _level,
+                    format,
+                    timer,
+                    with_file,
+                    with_target,
+                    with_thread_ids,
+                    with_line_number,
+                    with_span_events,
+                    with_thread_names,
+                    opentelemetry,
+                } = value;
+                Self {
+                    format: *format,
+                    timer: *timer,
+                    with_file: *with_file,
+                    with_target: *with_target,
+                    with_thread_ids: *with_thread_ids,
+                    with_line_number: *with_line_number,
+                    with_span_events: *with_span_events,
+                    with_thread_names: *with_thread_names,
+                    opentelemetry_enabled: opentelemetry.enabled,
+                }
+            }
+        }
+        if StaticLogConfig::from(&new_config.log) != StaticLogConfig::from(&old_config.log) {
+            let static_keys = [
+                "format",
+                "timer",
+                "with_file",
+                "with_target",
+                "with_thread_ids",
+                "with_line_number",
+                "with_span_events",
+                "with_thread_names",
+                "opentelemetry.enabled",
+            ];
+            tracing::warn!(
+                "For technical reasons, logging configuration keys related to \
+                formatting (`{static_keys}`) need a restart to be applied. \
+                You need to restart the Prose Pod Server for this change to be effective. \
+                If this bothers you, feel free to contact us at <https://prose.org/contact/>.",
+                static_keys = static_keys.join("`, `")
+            );
+        }
+
         Ok(())
     }
 }

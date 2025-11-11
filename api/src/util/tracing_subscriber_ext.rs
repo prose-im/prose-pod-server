@@ -42,31 +42,16 @@ pub fn init_tracing(
     tracing::info!("Init logging & tracing.");
 
     let (otel_layer, otel_guard) = build_otel_layer()?;
-    let otel_layer = otel_layer.with_filter(server_api_filter.clone());
 
-    let (server_api_logger, server_api_logger_handle) = {
+    let (server_api_layer, server_api_layer_handle) = {
         let layer = build_server_api_logger(log_config)?;
-        reload::Layer::new(layer)
+        reload::Layer::new(layer.with_filter(server_api_filter.clone()))
     };
-    let (server_api_filter, server_api_filter_handle) = {
-        let layer = server_api_filter.clone();
-        reload::Layer::new(layer)
-    };
-    let server_api_layer: Filtered<
-        reload::Layer<BoxedLayer<Registry>, Registry>,
-        reload::Layer<ServerApiFilter, Registry>,
-        Registry,
-    > = server_api_logger.with_filter(server_api_filter);
 
-    let (prosody_logger, prosody_logger_handle) = {
+    let (prosody_layer, prosody_layer_handle) = {
         let layer = build_prosody_logger(log_config)?;
-        reload::Layer::new(layer)
+        reload::Layer::new(layer.with_filter(ProsodyFilter::new(server_log_level)))
     };
-    let (prosody_filter, prosody_filter_handle) = {
-        let layer = ProsodyFilter::new(server_log_level);
-        reload::Layer::new(layer)
-    };
-    let prosody_layer = prosody_logger.with_filter(prosody_filter);
 
     let subscriber = tracing_subscriber::registry()
         .with(server_api_layer)
@@ -78,14 +63,8 @@ pub fn init_tracing(
     Ok((
         otel_guard,
         TracingReloadHandles {
-            server_api: ReloadableLayerHandles {
-                logger: server_api_logger_handle,
-                filter: server_api_filter_handle,
-            },
-            prosody: ReloadableLayerHandles {
-                logger: prosody_logger_handle,
-                filter: prosody_filter_handle,
-            },
+            server_api: server_api_layer_handle,
+            prosody: prosody_layer_handle,
         },
     ))
 }
@@ -266,20 +245,15 @@ impl<S> Filter<S> for ProsodyFilter {
 // MARK: - Reload
 
 pub struct TracingReloadHandles<S = Registry> {
-    server_api: ReloadableLayerHandles<S, ServerApiFilter>,
-    prosody: ReloadableLayerHandles<
-        Layered<Filtered<reload::Layer<BoxedLayer<S>, S>, reload::Layer<ServerApiFilter, S>, S>, S>,
-        ProsodyFilter,
+    server_api: reload::Handle<Filtered<BoxedLayer<S>, ServerApiFilter, S>, S>,
+    prosody: reload::Handle<
+        Filtered<
+            BoxedLayer<Layered<reload::Layer<Filtered<BoxedLayer<S>, ServerApiFilter, S>, S>, S>>,
+            ProsodyFilter,
+            Layered<reload::Layer<Filtered<BoxedLayer<S>, ServerApiFilter, S>, S>, S>,
+        >,
+        Layered<reload::Layer<Filtered<BoxedLayer<S>, ServerApiFilter, S>, S>, S>,
     >,
-}
-
-/// NOTE: We have to keep filters separated (i.e. we can’t store
-///   `reload::Handle<Layered<…>, …>`s) otherwise we get “a `Filtered`
-///   layer was used, but it had no `FilterId`; was it registered with
-///   the subscriber?” on reloads.
-struct ReloadableLayerHandles<S, F> {
-    logger: reload::Handle<BoxedLayer<S>, S>,
-    filter: reload::Handle<F, S>,
 }
 
 /// NOTE: Can be called multiple times.
@@ -295,36 +269,18 @@ pub fn update_tracing_config(
         prosody,
     } = tracing_reload_handles;
 
-    let new_server_api_logger = build_server_api_logger(log_config)?;
+    let new_server_api_filter = ServerApiFilter::new(&log_config.level);
     server_api
-        .logger
-        .modify(|layer| *layer = new_server_api_logger)
+        .modify(|layer| *layer.filter_mut() = new_server_api_filter)
         .unwrap_or_else(|err| {
             tracing::warn!("Error when updating global Server API logger: {err:?}");
         });
 
-    let new_server_api_filter = ServerApiFilter::new(&log_config.level);
-    server_api
-        .filter
-        .modify(|layer| *layer = new_server_api_filter)
-        .unwrap_or_else(|err| {
-            tracing::warn!("Error when updating global Server API filter: {err:?}");
-        });
-
-    let new_prosody_logger = build_prosody_logger(log_config)?;
-    prosody
-        .logger
-        .modify(|layer| *layer = new_prosody_logger)
-        .unwrap_or_else(|err| {
-            tracing::warn!("Error when updating global Prosody logger: {err:?}");
-        });
-
     let new_prosody_filter = ProsodyFilter::new(server_log_level);
     prosody
-        .filter
-        .modify(|layer| *layer = new_prosody_filter)
+        .modify(|layer| *layer.filter_mut() = new_prosody_filter)
         .unwrap_or_else(|err| {
-            tracing::warn!("Error when updating global Prosody filter: {err:?}");
+            tracing::warn!("Error when updating global Prosody logger: {err:?}");
         });
 
     Ok(())
@@ -376,18 +332,6 @@ impl<S> Clone for TracingReloadHandles<S> {
         Self {
             server_api: self.server_api.clone(),
             prosody: self.prosody.clone(),
-        }
-    }
-}
-
-impl<S, F> Clone for ReloadableLayerHandles<S, F> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        // NOTE: `#[derive(Clone)]` doesn’t work here,
-        //   we have to do it manually :/
-        Self {
-            logger: self.logger.clone(),
-            filter: self.filter.clone(),
         }
     }
 }
