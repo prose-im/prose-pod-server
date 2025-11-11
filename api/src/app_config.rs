@@ -34,8 +34,6 @@ pub mod defaults {
 #[repr(transparent)]
 pub struct InvalidConfiguration(figment::Error);
 
-// TODO: Remove default server values from here and use the ones defined in
-//   `prose-pod-server` to avoid discrepancies.
 fn default_config_static() -> Figment {
     use self::defaults::*;
     use figment::providers::{Format as _, Toml};
