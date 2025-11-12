@@ -1,4 +1,4 @@
-// prose-pod-server-api
+// prose-pod-server
 //
 // Copyright: 2022–2025, David Bernard <david.bernard.31@gmail.com> (via <https://github.com/davidB/tracing-opentelemetry-instrumentation-sdk>)
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>

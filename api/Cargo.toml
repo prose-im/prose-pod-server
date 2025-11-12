@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [package]
-name = "prose-pod-server-api"
+name = "prose-pod-server"
 version = "0.1.0"
 edition = "2024"
 publish = false

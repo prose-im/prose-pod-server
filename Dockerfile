@@ -5,7 +5,7 @@ ARG CARGO_CHEF_IMAGE=lukemathwalker/cargo-chef:0.1.72-rust-1.89.0-alpine
 
 
 FROM ${CARGO_CHEF_IMAGE} AS chef
-WORKDIR /usr/src/prose-pod-server-api
+WORKDIR /usr/src/prose-pod-server
 
 
 FROM chef AS api-plan
@@ -14,7 +14,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 
 FROM chef AS api-build
-COPY --from=api-plan /usr/src/prose-pod-server-api/recipe.json recipe.json
+COPY --from=api-plan /usr/src/prose-pod-server/recipe.json recipe.json
 
 ARG CARGO_PROFILE='release'
 
@@ -23,7 +23,7 @@ RUN cargo chef cook --recipe-path recipe.json --profile "${CARGO_PROFILE}"
 
 # Build the application.
 COPY api .
-RUN cargo install --path . --bin prose-pod-server-api --profile "${CARGO_PROFILE}"
+RUN cargo install --path . --bin prose-pod-server --profile "${CARGO_PROFILE}"
 
 
 
@@ -131,10 +131,10 @@ FROM prosody-run AS run
 
 WORKDIR /usr/share/prose-pod-server
 
-COPY --from=api-build /usr/local/cargo/bin/prose-pod-server-api /usr/local/bin/prose-pod-server-api
+COPY --from=api-build /usr/local/cargo/bin/prose-pod-server /usr/local/bin/prose-pod-server
 
 VOLUME /etc/prose/
 
-ENTRYPOINT ["prose-pod-server-api"]
+ENTRYPOINT ["prose-pod-server"]
 
 EXPOSE 8080/tcp
