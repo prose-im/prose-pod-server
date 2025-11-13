@@ -27,8 +27,9 @@ pub(in crate::router) async fn backend_reload(
 impl AppState<f::Running, b::Running> {
     /// ```txt
     /// AppState<Running, Running>
-    /// -------------------------- (Reload backend)
-    /// AppState<Running, Running>
+    /// -------------------------------------- (Reload backend)
+    /// AppState<Running, Running>  if success
+    /// AppState<Running, Running>  if failure
     /// ```
     ///
     /// NOTE: This method **does** log errors.

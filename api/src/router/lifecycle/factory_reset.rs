@@ -58,13 +58,13 @@ impl<F, B> AppState<F, B> {
     /// ```txt
     /// AppState<_, _>
     /// -------------------------------------------------------- (Factory reset)
-    /// AppState<Misconfigured, Stopped<NotInitialized>>
+    /// AppState<Misconfigured, Stopped>
     ///   if success
     /// AppState<Running, Running>
     ///   if success and minimal config in env
     /// AppState<UndergoingFactoryReset, UndergoingFactoryReset>
     ///   if failure
-    /// AppState<f::Running, b::StartFailed>
+    /// AppState<Running, StartFailed>
     ///   if failure and minimal config in env
     /// ```
     ///

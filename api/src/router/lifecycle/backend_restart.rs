@@ -77,12 +77,13 @@ pub(in crate::router) async fn backend_restart_retry(
 
 // MARK: - State transitions
 
-impl AppState<f::Running, b::Running> {
+impl<B> AppState<f::Running, B> {
     /// ```txt
-    /// AppState<Running, Running>
-    /// -------------------------------------------- (Restart backend)
+    /// AppState<Running, B>  B ∈ { Running, Restarting }
+    /// ------------------------------------------------- (Restart backend)
     /// AppState<Running, Running>        if success
-    /// AppState<Running, RestartFailed>  if failure
+    /// AppState<Running, Running>        if stop failed
+    /// AppState<Running, RestartFailed>  if start failed
     /// ```
     ///
     /// NOTE: This method **does** log errors.
@@ -91,66 +92,11 @@ impl AppState<f::Running, b::Running> {
     ) -> Result<
         AppState<f::Running, b::Running>,
         Either<FailState<f::Running, b::Running>, FailState<f::Running, b::RestartFailed>>,
-    > {
-        let backend_state = Arc::clone(&self.backend.state);
-        let mut prosody = backend_state.prosody.write().await;
-
-        match prosody.stop().await {
-            Ok(()) => {
-                let app_state = self.with_auto_transition::<_, b::Restarting>();
-
-                match prosody.start().await {
-                    Ok(()) => Ok(app_state.with_auto_transition()),
-
-                    Err(err) => {
-                        let error = err
-                            .context("Could not start Prosody")
-                            .context("Backend restart failed");
-
-                        // Log debug info.
-                        tracing::error!("{error:?}");
-
-                        Err(Either::E2(app_state.transition_failed(error)))
-                    }
-                }
-            }
-
-            Err(err) => {
-                let error = err
-                    .context("Could not stop Prosody")
-                    .context("Backend restart failed");
-                let error = Arc::new(error);
-
-                // Log debug info.
-                tracing::warn!("{error:?}");
-
-                // Do not transition state if the backend failed to stop. It means
-                // it’s still running. There could be some edge cases where it’s in
-                // fact an internal error that is thrown after the backend has stopped
-                // but in that case we’d have to fix that code so it doesn’t happen.
-
-                Err(Either::E1(self.with_error(error)))
-            }
-        }
-    }
-}
-
-impl AppState<f::Running, b::Restarting> {
-    /// ```txt
-    /// AppState<Running, Restarting>
-    /// -------------------------------------------- (Retry backend restart)
-    /// AppState<Running, Running>        if success
-    /// AppState<Running, RestartFailed>  if failure
-    /// ```
-    ///
-    /// NOTE: This method **does** log errors.
-    pub(crate) async fn do_restart_backend<'a>(
-        self,
-    ) -> Result<
-        AppState<f::Running, b::Running>,
-        Either<FailState<f::Running, b::Running>, FailState<f::Running, b::RestartFailed>>,
-    > {
-        let backend_state = Arc::clone(&self.backend.state);
+    >
+    where
+        B: AsRef<Arc<b::Operational>> + Into<b::Restarting> + Into<b::Running>,
+    {
+        let backend_state = Arc::clone(self.backend.as_ref());
         let mut prosody = backend_state.prosody.write().await;
 
         if prosody.is_running().await {
@@ -168,14 +114,14 @@ impl AppState<f::Running, b::Restarting> {
                 // fact an internal error that is thrown after the backend has stopped
                 // but in that case we’d have to fix that code so it doesn’t happen.
 
-                return Err(Either::E1(self.with_auto_transition().with_error(error)));
+                return Err(Either::E1(self.set_backend_running().with_error(error)));
             }
         }
 
-        let app_state = self.with_auto_transition::<_, b::Restarting>();
+        let app_state = self.set_backend_restarting();
 
         match prosody.start().await {
-            Ok(()) => Ok(app_state.with_auto_transition()),
+            Ok(()) => Ok(app_state.set_backend_running()),
 
             Err(err) => {
                 let error = err
@@ -189,15 +135,28 @@ impl AppState<f::Running, b::Restarting> {
             }
         }
     }
-}
 
-impl AppState<f::Running, b::RestartFailed> {
     /// ```txt
-    /// AppState<Running, RestartFailed>
-    /// -------------------------------- (Set backend retrying restart)
+    /// AppState<Running, B>  B ∈ { Running, RestartFailed }
+    /// ---------------------------------------------------- (Set backend restarting)
     /// AppState<Running, Restarting>
     /// ```
-    pub(crate) fn set_backend_restarting<'a>(self) -> AppState<f::Running, b::Restarting> {
+    pub(crate) fn set_backend_restarting<'a>(self) -> AppState<f::Running, b::Restarting>
+    where
+        B: Into<b::Restarting>,
+    {
+        self.with_auto_transition()
+    }
+
+    /// ```txt
+    /// AppState<Running, B>  B ∈ { Restarting }
+    /// ---------------------------------------- (Set backend running)
+    /// AppState<Running, Running>
+    /// ```
+    pub(crate) fn set_backend_running<'a>(self) -> AppState<f::Running, b::Running>
+    where
+        B: Into<b::Running>,
+    {
         self.with_auto_transition()
     }
 }

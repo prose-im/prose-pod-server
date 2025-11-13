@@ -55,8 +55,9 @@ where
     ///
     /// ```txt
     /// AppState<F, B1>
-    /// --------------------- (Try reloading frontend)
-    /// AppState<Running, B2>
+    /// --------------------------------- (Try reloading frontend)
+    /// AppState<Running, B2>  if success
+    /// AppState<F, B1>        if failure
     /// ```
     ///
     /// NOTE: This method does **not** log errors.
@@ -85,10 +86,10 @@ where
     AppState<f::Running, B>: AppStateTrait,
 {
     /// ```txt
-    /// AppState<Running<F>, B>
-    /// ------------------------------------------------------ (Reload frontend)
-    /// AppState<Running<F>, B>                     if success
-    /// AppState<Running<WithMisconfiguration>, B>  if failure
+    /// AppState<Running, B>
+    /// ---------------------------------------------------- (Reload frontend)
+    /// AppState<Running, B>                      if success
+    /// AppState<RunningWithMisconfiguration, B>  if failure
     /// ```
     ///
     /// NOTE: This method **does** log errors.

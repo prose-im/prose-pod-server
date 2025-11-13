@@ -351,7 +351,7 @@ pub mod backend {
         pub state: Arc<Operational>,
     }
 
-    state_boilerplate!(BackendRestarting);
+    state_boilerplate!(BackendRestarting, Deref(state: Operational), AsRef(state: Arc<Operational>));
 
     // MARK: Stopped
 
@@ -367,7 +367,7 @@ pub mod backend {
         pub state: Arc<Operational>,
     }
 
-    state_boilerplate!(BackendRunning, Deref(state: Operational));
+    state_boilerplate!(BackendRunning, Deref(state: Operational), AsRef(state: Arc<Operational>));
 
     pub mod substates {
         use crate::util::sync::AutoCancelToken;
@@ -584,6 +584,7 @@ mod macros {
         (
             $state:ty
             $(, Deref($deref_field:ident: $deref_type:ty))?
+            $(, AsRef($asref_field:ident: $asref_type:ty))*
         ) => {
             // `(S, _) -> S`, `(S1, _) -> S2`
             impl From<($state, ())> for $state {
@@ -606,6 +607,12 @@ mod macros {
                     &self.$deref_field
                 }
             })?
+
+            $(impl AsRef<$asref_type> for $state {
+                fn as_ref(&self) -> &$asref_type {
+                    &self.$asref_field
+                }
+            })*
 
             impl_fail_state_from_pair!(($state, &'a Arc<anyhow::Error>) use left);
         };
