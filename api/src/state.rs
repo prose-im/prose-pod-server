@@ -207,6 +207,8 @@ pub mod frontend {
         }
     }
 
+    // MARK: Running with misconfiguration
+
     /// [`FrontendMisconfigured`] is used after a factory reset, when the
     /// frontend cannot even start properly because of bad configuration.
     ///
@@ -337,38 +339,9 @@ pub mod backend {
 
     use super::macros::*;
 
+    // MARK: Substates
+
     use self::substates::*;
-
-    // MARK: Starting
-
-    #[derive(Debug, Clone, Default)]
-    pub struct BackendStarting {}
-
-    state_boilerplate!(BackendStarting);
-
-    #[derive(Debug, Clone)]
-    pub struct BackendRestarting {
-        pub state: Arc<Operational>,
-    }
-
-    state_boilerplate!(BackendRestarting, Deref(state: Operational), AsRef(state: Arc<Operational>));
-
-    // MARK: Stopped
-
-    #[derive(Debug, Clone, Default)]
-    pub struct BackendStopped {}
-
-    state_boilerplate!(BackendStopped);
-
-    // MARK: Running
-
-    #[derive(Debug, Clone)]
-    pub struct BackendRunning {
-        pub state: Arc<Operational>,
-    }
-
-    state_boilerplate!(BackendRunning, Deref(state: Operational), AsRef(state: Arc<Operational>));
-
     pub mod substates {
         use crate::util::sync::AutoCancelToken;
 
@@ -386,7 +359,14 @@ pub mod backend {
         }
     }
 
-    // MARK: Stopped with error
+    // MARK: Starting
+
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendStarting {}
+
+    state_boilerplate!(BackendStarting);
+
+    // MARK: Start failed
 
     #[derive(Debug, Clone)]
     pub struct BackendStartFailed {
@@ -394,6 +374,26 @@ pub mod backend {
     }
 
     state_boilerplate!(BackendStartFailed);
+
+    // MARK: Running
+
+    #[derive(Debug, Clone)]
+    pub struct BackendRunning {
+        pub state: Arc<Operational>,
+    }
+
+    state_boilerplate!(BackendRunning, Deref(state: Operational), AsRef(state: Arc<Operational>));
+
+    // MARK: Restarting
+
+    #[derive(Debug, Clone)]
+    pub struct BackendRestarting {
+        pub state: Arc<Operational>,
+    }
+
+    state_boilerplate!(BackendRestarting, Deref(state: Operational), AsRef(state: Arc<Operational>));
+
+    // MARK: Restart failed
 
     #[derive(Debug, Clone)]
     pub struct BackendRestartFailed {
@@ -409,6 +409,13 @@ pub mod backend {
     pub struct BackendUndergoingFactoryReset {}
 
     state_boilerplate!(BackendUndergoingFactoryReset);
+
+    // MARK: Stopped
+
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendStopped {}
+
+    state_boilerplate!(BackendStopped);
 
     // MARK: State transitions
 
