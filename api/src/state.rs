@@ -9,7 +9,6 @@ pub(crate) mod prelude {
         BackendRunningState, BackendStartFailedState, BackendStartingState, BackendStoppedState,
     };
     pub use super::backend::{prelude as backend, prelude as b};
-    pub use super::frontend::FrontendRunningState;
     pub use super::frontend::{prelude as frontend, prelude as f};
     pub use super::{AppContext, AppState, AppStateTrait, FailState, TransitionWith as _};
 }
@@ -115,7 +114,7 @@ impl AppContext {
 /// to an [`AppContext`] to mutate the app’s router.
 #[derive(Debug, Clone)]
 pub struct AppState<
-    FrontendState = frontend::FrontendRunning<frontend::substates::Operational>,
+    FrontendState = frontend::FrontendRunning,
     BackendState = backend::BackendRunning<backend::substates::Operational>,
 > {
     app_context: Weak<AppContext>,
@@ -178,11 +177,10 @@ pub trait AppStateTrait {
 
 pub mod frontend {
     pub mod prelude {
-        pub use super::FrontendRunningState as RunningState;
         pub use super::FrontendStateTrait as State;
-        pub use super::substates::*;
         pub use super::{
             FrontendMisconfigured as Misconfigured, FrontendRunning as Running,
+            FrontendRunningWithMisconfiguration as RunningWithMisconfiguration,
             FrontendUndergoingFactoryReset as UndergoingFactoryReset,
         };
     }
@@ -193,60 +191,44 @@ pub mod frontend {
 
     use super::macros::*;
 
-    use self::substates::*;
-
     pub trait FrontendStateTrait: Into<FrontendUndergoingFactoryReset> {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles>;
     }
 
     // MARK: Running
 
-    #[derive(Debug)]
-    pub struct FrontendRunning<State: FrontendRunningState = Operational> {
-        pub state: Arc<State>,
+    #[derive(Debug, Clone)]
+    pub struct FrontendRunning {
         pub(crate) config: Arc<AppConfig>,
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
-    state_boilerplate!(
-        FrontendRunning<any FrontendRunningState>,
-        [Clone]: { state, config, tracing_reload_handles }
-    );
+    state_boilerplate!(FrontendRunning);
 
-    pub trait FrontendRunningState: std::fmt::Debug {}
-    impl FrontendRunningState for Operational {}
-    impl FrontendRunningState for WithMisconfiguration {}
-
-    pub mod substates {
-        use std::sync::Arc;
-
-        #[derive(Debug)]
-        pub struct Operational {}
-
-        /// [`FrontendMisconfigured`](super::FrontendMisconfigured) is used
-        /// after a factory reset, when the frontend cannot even start
-        /// properly because of bad configuration.
-        ///
-        /// `FrontendRunning<WithMisconfiguration>`, on the other end, is
-        /// used to signal that the configuration on disk is incorrect, but
-        /// it wasn’t applied so the frontend is still running fine. This
-        /// is useful when reloading the app with `SIGHUP`, when no status
-        /// or exit code can indicate something is wrong.
-        #[derive(Debug)]
-        pub struct WithMisconfiguration {
-            pub error: Arc<anyhow::Error>,
-        }
-
-        impl<'a> From<&'a Arc<anyhow::Error>> for WithMisconfiguration {
-            fn from(error: &'a Arc<anyhow::Error>) -> Self {
-                Self {
-                    error: Arc::clone(error),
-                }
-            }
+    impl FrontendStateTrait for FrontendRunning {
+        fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
+            &self.tracing_reload_handles
         }
     }
 
-    impl<S: FrontendRunningState> FrontendStateTrait for FrontendRunning<S> {
+    /// [`FrontendMisconfigured`] is used after a factory reset, when the
+    /// frontend cannot even start properly because of bad configuration.
+    ///
+    /// `FrontendRunningWithMisconfiguration`, on the other end, is
+    /// used to signal that the configuration on disk is incorrect, but
+    /// it wasn’t applied so the frontend is still running fine. This
+    /// is useful when reloading the app with `SIGHUP`, when no status
+    /// or exit code can indicate something went wrong.
+    #[derive(Debug, Clone)]
+    pub struct FrontendRunningWithMisconfiguration {
+        pub(crate) config: Arc<AppConfig>,
+        pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
+        pub error: Arc<anyhow::Error>,
+    }
+
+    state_boilerplate!(FrontendRunningWithMisconfiguration);
+
+    impl FrontendStateTrait for FrontendRunningWithMisconfiguration {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
         }
@@ -292,20 +274,35 @@ pub mod frontend {
         }
     }
 
-    impl<S: FrontendRunningState> From<(FrontendRunning<S>, &Arc<anyhow::Error>)>
-        for FrontendRunning<WithMisconfiguration>
-    {
-        fn from((state, error): (FrontendRunning<S>, &Arc<anyhow::Error>)) -> Self {
+    impl<'a> From<(FrontendRunning, &'a Arc<anyhow::Error>)> for FrontendRunningWithMisconfiguration {
+        fn from((state, error): (FrontendRunning, &'a Arc<anyhow::Error>)) -> Self {
             Self {
-                state: Arc::new(WithMisconfiguration::from(error)),
                 config: state.config,
+                tracing_reload_handles: state.tracing_reload_handles,
+                error: Arc::clone(error),
+            }
+        }
+    }
+
+    impl From<FrontendRunningWithMisconfiguration> for FrontendRunning {
+        fn from(value: FrontendRunningWithMisconfiguration) -> Self {
+            Self {
+                config: value.config,
+                tracing_reload_handles: value.tracing_reload_handles,
+            }
+        }
+    }
+
+    impl From<FrontendRunning> for FrontendUndergoingFactoryReset {
+        fn from(state: FrontendRunning) -> Self {
+            Self {
                 tracing_reload_handles: state.tracing_reload_handles,
             }
         }
     }
 
-    impl<S: FrontendRunningState> From<FrontendRunning<S>> for FrontendUndergoingFactoryReset {
-        fn from(state: FrontendRunning<S>) -> Self {
+    impl From<FrontendRunningWithMisconfiguration> for FrontendUndergoingFactoryReset {
+        fn from(state: FrontendRunningWithMisconfiguration) -> Self {
             Self {
                 tracing_reload_handles: state.tracing_reload_handles,
             }
@@ -322,7 +319,8 @@ pub mod frontend {
 
     // MARK: Boilerplate
 
-    impl_from_pair!((FrontendRunning<Operational>, error) use left);
+    impl_from_pair!((FrontendRunning, error) use left);
+    impl_from_pair!((FrontendRunningWithMisconfiguration, error) use left);
 }
 
 pub mod backend {

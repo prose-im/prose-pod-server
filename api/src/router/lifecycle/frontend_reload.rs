@@ -16,7 +16,7 @@ use crate::{AppConfig, errors};
 // MARK: - Routes
 
 pub(in crate::router) async fn frontend_reload(
-    State(app_state): State<AppState<f::Running<f::Operational>, b::Running>>,
+    State(app_state): State<AppState<f::Running, b::Running>>,
 ) -> Result<(), Error> {
     match app_state.do_reload_frontend() {
         Ok(_new_state) => Ok(()),
@@ -28,8 +28,8 @@ pub(in crate::router) async fn frontend_reload(
 
 impl<F, B> AppState<F, B>
 where
-    AppState<F, B>: AppStateTrait,
     F: frontend::State,
+    AppState<F, B>: AppStateTrait,
 {
     /// NOTE: This method does **not** log errors.
     fn reload_frontend(app_state: &Self) -> Result<f::Running, anyhow::Error> {
@@ -46,7 +46,6 @@ where
         .context("Could not update tracing config")?;
 
         Ok(f::Running {
-            state: Arc::new(f::Operational {}),
             config: Arc::new(app_config),
             tracing_reload_handles: Arc::clone(app_state.frontend.tracing_reload_handles()),
         })
@@ -65,7 +64,6 @@ where
         self,
     ) -> Result<AppState<f::Running, B2>, (Self, anyhow::Error)>
     where
-        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         B: Into<B2>,
         B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         AppState<f::Running, B2>: AppStateTrait,
@@ -82,13 +80,10 @@ where
     }
 }
 
-impl<FrontendSubstate, B> AppState<f::Running<FrontendSubstate>, B>
+impl<B> AppState<f::Running, B>
 where
-    FrontendSubstate: f::RunningState,
-    B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-    AppState<f::Running<FrontendSubstate>, B>: AppStateTrait,
     AppState<f::Running, B>: AppStateTrait,
-    AppState<f::Running<f::WithMisconfiguration>, B>: AppStateTrait,
+    AppState<f::RunningWithMisconfiguration, B>: AppStateTrait,
 {
     /// ```txt
     /// AppState<Running<F>, B>
@@ -100,10 +95,9 @@ where
     /// NOTE: This method **does** log errors.
     pub(crate) fn do_reload_frontend(
         self,
-    ) -> Result<AppState<f::Running, B>, FailState<f::Running<f::WithMisconfiguration>, B>>
+    ) -> Result<AppState<f::Running, B>, FailState<f::RunningWithMisconfiguration, B>>
     where
-        for<'a> (f::Running<FrontendSubstate>, &'a Arc<anyhow::Error>):
-            Into<f::Running<f::WithMisconfiguration>>,
+        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         for<'a> (B, &'a Arc<anyhow::Error>): Into<B>,
     {
         match self.try_reload_frontend() {

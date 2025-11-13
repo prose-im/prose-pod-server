@@ -176,7 +176,7 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
 ///   (`prosodyctl status` included). Running shells don’t stop though, and c2s
 ///   seems to still work. The Pod Server API should do the same, and report
 ///   `SERVICE_UNAVAILABLE` when requesting the frontend health.
-impl AppStateTrait for AppState<f::Running<f::WithMisconfiguration>, b::Running> {
+impl AppStateTrait for AppState<f::RunningWithMisconfiguration, b::Running> {
     fn state_name() -> &'static str {
         "Running with misconfiguration"
     }

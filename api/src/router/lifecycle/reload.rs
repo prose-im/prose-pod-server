@@ -11,12 +11,12 @@ use crate::state::{FailState, prelude::*};
 use crate::util::NoContext as _;
 use crate::util::either::Either;
 
-pub(in crate::router) async fn reload<FrontendSubstate>(
-    State(app_state): State<AppState<f::Running<FrontendSubstate>, b::Running>>,
+pub(in crate::router) async fn reload<F>(
+    State(app_state): State<AppState<F, b::Running>>,
 ) -> Result<(), Error>
 where
-    FrontendSubstate: FrontendRunningState,
-    AppState<f::Running<FrontendSubstate>, b::Running>: AppStateTrait,
+    F: frontend::State,
+    AppState<F, b::Running>: AppStateTrait,
 {
     match app_state.try_reload_frontend() {
         Ok(new_state) => match new_state.do_reload_backend().await {

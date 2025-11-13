@@ -79,15 +79,15 @@ impl HealthTrait for backend::UndergoingFactoryReset {
 
 // MARK: Frontend running
 
-impl HealthTrait for frontend::Running<frontend::Operational> {
+impl HealthTrait for frontend::Running {
     fn health(&self) -> axum::response::Response {
         StatusCode::OK.into_response()
     }
 }
 
-impl HealthTrait for frontend::Running<frontend::WithMisconfiguration> {
+impl HealthTrait for frontend::RunningWithMisconfiguration {
     fn health(&self) -> axum::response::Response {
-        errors::bad_configuration(&self.state.error).into_response()
+        errors::bad_configuration(&self.error).into_response()
     }
 }
 

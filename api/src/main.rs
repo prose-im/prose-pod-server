@@ -81,7 +81,6 @@ async fn main_inner(
     let startup_app_state = AppState::<f::Running, b::Starting<b::NotInitialized>>::new(
         Arc::clone(&app_context),
         frontend::Running {
-            state: Arc::new(f::Operational {}),
             config: Arc::new(app_config),
             tracing_reload_handles: Arc::new(tracing_reload_handles),
         },
