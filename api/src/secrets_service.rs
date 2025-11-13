@@ -50,6 +50,7 @@ impl SecretsService {
         }
     }
 
+    #[allow(unused)]
     pub async fn get_password_opt(
         &self,
         jid: &BareJid,

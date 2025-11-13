@@ -171,10 +171,12 @@ pub mod sync {
     pub struct AutoCancelToken(pub CancellationToken);
 
     impl AutoCancelToken {
+        #[allow(unused)]
         pub fn new() -> Self {
             Self(CancellationToken::new())
         }
 
+        #[allow(unused)]
         pub fn token(&self) -> &CancellationToken {
             &self.0
         }

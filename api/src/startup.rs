@@ -32,7 +32,7 @@ const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
 // MARK: - State transitions
 
-impl<BackendState> AppState<f::Running, BackendState> {
+impl AppState<f::Running, b::Starting> {
     /// Try bootstrapping the backend, but do not transition if an error occurs.
     /// See [docs/bootstrapping.md](../docs/bootstrapping.md) for information
     /// about bootstrapping.
@@ -166,13 +166,7 @@ impl<BackendState> AppState<f::Running, BackendState> {
     /// NOTE: This method **does** log errors.
     pub(crate) async fn do_bootstrapping(
         self,
-    ) -> Result<
-        AppState<f::Running, b::Running>,
-        FailState<f::Running, b::StartFailed<b::NotInitialized>>,
-    >
-    where
-        BackendState: Into<Arc<b::NotInitialized>>,
-    {
+    ) -> Result<AppState<f::Running, b::Running>, FailState<f::Running, b::StartFailed>> {
         match self.try_bootstrapping().await {
             Ok(new_state) => Ok(new_state),
 

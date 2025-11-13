@@ -23,7 +23,7 @@ pub(crate) trait HealthTrait {
 
 // MARK: Backend running
 
-impl HealthTrait for backend::Running<backend::Operational> {
+impl HealthTrait for backend::Running {
     fn health(&self) -> axum::response::Response {
         StatusCode::OK.into_response()
     }
@@ -31,7 +31,7 @@ impl HealthTrait for backend::Running<backend::Operational> {
 
 // MARK: Backend stopped
 
-impl<S: BackendStoppedState> HealthTrait for backend::Stopped<S> {
+impl HealthTrait for backend::Stopped {
     fn health(&self) -> axum::response::Response {
         errors::service_unavailable(
             "SERVER_STOPPED",
@@ -42,7 +42,7 @@ impl<S: BackendStoppedState> HealthTrait for backend::Stopped<S> {
     }
 }
 
-impl<S: BackendStartingState> HealthTrait for backend::Starting<S> {
+impl HealthTrait for backend::Starting {
     fn health(&self) -> axum::response::Response {
         errors::too_early(
             "SERVER_STARTING",
@@ -54,7 +54,25 @@ impl<S: BackendStartingState> HealthTrait for backend::Starting<S> {
     }
 }
 
-impl<S: BackendStartFailedState> HealthTrait for backend::StartFailed<S> {
+impl HealthTrait for backend::StartFailed {
+    fn health(&self) -> axum::response::Response {
+        errors::start_failed(&self.error).into_response()
+    }
+}
+
+impl HealthTrait for backend::Restarting {
+    fn health(&self) -> axum::response::Response {
+        errors::too_early(
+            "SERVER_RESTARTING",
+            "A moment please",
+            "Your Prose Server is restarting.",
+        )
+        .into_response()
+        .retry_after(1)
+    }
+}
+
+impl HealthTrait for backend::RestartFailed {
     fn health(&self) -> axum::response::Response {
         errors::restart_failed(&self.error).into_response()
     }

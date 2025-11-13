@@ -83,7 +83,6 @@ where
 impl<B> AppState<f::Running, B>
 where
     AppState<f::Running, B>: AppStateTrait,
-    AppState<f::RunningWithMisconfiguration, B>: AppStateTrait,
 {
     /// ```txt
     /// AppState<Running<F>, B>
@@ -99,6 +98,7 @@ where
     where
         B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
         for<'a> (B, &'a Arc<anyhow::Error>): Into<B>,
+        AppState<f::RunningWithMisconfiguration, B>: AppStateTrait,
     {
         match self.try_reload_frontend() {
             Ok(new_state) => Ok(new_state),

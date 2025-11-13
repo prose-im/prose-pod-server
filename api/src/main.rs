@@ -78,15 +78,13 @@ async fn main_inner(
     let address = app_config.server_api.address();
     let listener = TcpListener::bind(address).await?;
 
-    let startup_app_state = AppState::<f::Running, b::Starting<b::NotInitialized>>::new(
+    let startup_app_state = AppState::<f::Running, b::Starting>::new(
         Arc::clone(&app_context),
         frontend::Running {
             config: Arc::new(app_config),
             tracing_reload_handles: Arc::new(tracing_reload_handles),
         },
-        backend::Starting {
-            state: Arc::new(b::NotInitialized {}),
-        },
+        backend::Starting {},
     );
 
     // Serve a minimal HTTP API while the startup actions run.
@@ -139,9 +137,7 @@ async fn main_inner(
     main_res.unwrap_or(Err(anyhow::Error::msg("No task ran.")))
 }
 
-async fn startup(
-    app_state: AppState<f::Running, b::Starting<b::NotInitialized>>,
-) -> Result<(), anyhow::Error> {
+async fn startup(app_state: AppState<f::Running, b::Starting>) -> Result<(), anyhow::Error> {
     tracing::info!("Running startup actions…");
     let start = Instant::now();
 

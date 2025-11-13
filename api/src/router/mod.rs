@@ -93,7 +93,7 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
 }
 
 /// **Starting** (during a startup and after a factory reset).
-impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
+impl AppStateTrait for AppState<f::Running, b::Starting> {
     fn state_name() -> &'static str {
         "Starting"
     }
@@ -104,7 +104,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
             //   an internal error happened and we ended up stuck in this state.
             .route(
                 "/lifecycle/backend-restart",
-                post(lifecycle::backend_init_retry),
+                post(lifecycle::backend_start_again),
             )
             .fallback(backend_health)
             .with_state(self)
@@ -120,7 +120,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting<b::NotInitialized>> {
 }
 
 /// **Restarting** (during a restart).
-impl AppStateTrait for AppState<f::Running, b::Starting> {
+impl AppStateTrait for AppState<f::Running, b::Restarting> {
     fn state_name() -> &'static str {
         "Restarting"
     }
@@ -129,7 +129,10 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
         Router::<Self>::new()
             // NOTE: Keep `/lifecycle/backend-restart` available just in case
             //   an internal error happened and we ended up stuck in this state.
-            .route("/lifecycle/backend-restart", post(lifecycle::backend_start))
+            .route(
+                "/lifecycle/backend-restart",
+                post(lifecycle::backend_restart_again),
+            )
             .fallback(backend_health)
             .with_state(self)
     }
@@ -144,7 +147,7 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
 }
 
 /// **Restart failed**.
-impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
+impl AppStateTrait for AppState<f::Running, b::RestartFailed> {
     fn state_name() -> &'static str {
         "Restart failed"
     }
@@ -153,7 +156,7 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed<b::Operational>> {
         Router::<Self>::new()
             .route(
                 "/lifecycle/backend-restart",
-                post(lifecycle::backend_start_retry),
+                post(lifecycle::backend_restart_retry),
             )
             .fallback(backend_health)
             .with_state(self)
@@ -217,7 +220,7 @@ impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryR
 }
 
 /// **Configuration needed** (after a factory reset).
-impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
+impl AppStateTrait for AppState<f::Misconfigured, b::Stopped> {
     fn state_name() -> &'static str {
         "Configuration needed"
     }
@@ -238,17 +241,17 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>
     }
 }
 
-/// **Bootstrapping failed**.
-impl AppStateTrait for AppState<f::Running, b::StartFailed<b::NotInitialized>> {
+/// **Start failed**.
+impl AppStateTrait for AppState<f::Running, b::StartFailed> {
     fn state_name() -> &'static str {
-        "Bootstrapping failed"
+        "Start failed"
     }
 
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
             .route(
                 "/lifecycle/backend-restart",
-                post(lifecycle::backend_init_retry),
+                post(lifecycle::backend_start_retry),
             )
             .fallback(backend_health)
             .with_state(self)

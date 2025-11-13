@@ -50,7 +50,7 @@ impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     }
 }
 
-impl<FrontendState> FromRequestParts<AppState<FrontendState, backend::Running<b::Operational>>>
+impl<FrontendState> FromRequestParts<AppState<FrontendState, backend::Running>>
     for crate::models::CallerInfo
 where
     FrontendState: Send + Sync,

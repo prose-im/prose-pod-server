@@ -4,10 +4,6 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub(crate) mod prelude {
-    #[allow(unused_imports)]
-    pub use super::backend::{
-        BackendRunningState, BackendStartFailedState, BackendStartingState, BackendStoppedState,
-    };
     pub use super::backend::{prelude as backend, prelude as b};
     pub use super::frontend::{prelude as frontend, prelude as f};
     pub use super::{AppContext, AppState, AppStateTrait, FailState, TransitionWith as _};
@@ -115,7 +111,7 @@ impl AppContext {
 #[derive(Debug, Clone)]
 pub struct AppState<
     FrontendState = frontend::FrontendRunning,
-    BackendState = backend::BackendRunning<backend::substates::Operational>,
+    BackendState = backend::BackendRunning,
 > {
     app_context: Weak<AppContext>,
     pub frontend: FrontendState,
@@ -316,25 +312,16 @@ pub mod frontend {
             }
         }
     }
-
-    // MARK: Boilerplate
-
-    impl_from_pair!((FrontendRunning, error) use left);
-    impl_from_pair!((FrontendRunningWithMisconfiguration, error) use left);
 }
 
 pub mod backend {
     pub mod prelude {
         pub use super::substates::*;
         pub use super::{
+            BackendRestartFailed as RestartFailed, BackendRestarting as Restarting,
             BackendRunning as Running, BackendStartFailed as StartFailed,
             BackendStarting as Starting, BackendStopped as Stopped,
             BackendUndergoingFactoryReset as UndergoingFactoryReset,
-        };
-        #[allow(unused_imports)]
-        pub use super::{
-            BackendRunningState as RunningState, BackendStartFailedState as StartFailedState,
-            BackendStartingState as StartingState, BackendStoppedState as StoppedState,
         };
     }
 
@@ -354,56 +341,38 @@ pub mod backend {
 
     // MARK: Starting
 
-    #[derive(Debug)]
-    pub struct BackendStarting<State: BackendStoppedState = Operational> {
-        pub state: Arc<State>,
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendStarting {}
+
+    state_boilerplate!(BackendStarting);
+
+    #[derive(Debug, Clone)]
+    pub struct BackendRestarting {
+        pub state: Arc<Operational>,
     }
 
-    state_boilerplate!(
-        BackendStarting<any BackendStartingState>,
-        derive: Clone, Default
-    );
-
-    pub use BackendStoppedState as BackendStartingState;
+    state_boilerplate!(BackendRestarting);
 
     // MARK: Stopped
 
-    #[derive(Debug)]
-    pub struct BackendStopped<State: BackendStoppedState = Operational> {
-        pub state: Arc<State>,
-    }
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendStopped {}
 
-    state_boilerplate!(
-        BackendStopped<any BackendStoppedState>,
-        derive: Clone, Default
-    );
-
-    pub trait BackendStoppedState: std::fmt::Debug {}
-    impl BackendStoppedState for NotInitialized {}
-    impl BackendStoppedState for Operational {}
+    state_boilerplate!(BackendStopped);
 
     // MARK: Running
 
-    #[derive(Debug)]
-    pub struct BackendRunning<State: BackendRunningState = Operational> {
-        pub state: Arc<State>,
+    #[derive(Debug, Clone)]
+    pub struct BackendRunning {
+        pub state: Arc<Operational>,
     }
 
-    state_boilerplate!(
-        BackendRunning<any BackendRunningState>,
-        derive: Clone, Default
-    );
-
-    pub trait BackendRunningState: std::fmt::Debug {}
-    impl BackendRunningState for Operational {}
+    state_boilerplate!(BackendRunning, Deref(state: Operational));
 
     pub mod substates {
         use crate::util::sync::AutoCancelToken;
 
         use super::*;
-
-        #[derive(Debug, Default)]
-        pub struct NotInitialized {}
 
         #[derive(Debug)]
         pub struct Operational {
@@ -412,24 +381,27 @@ pub mod backend {
             pub prosody_rest: ProsodyRest,
             pub oauth2_client: Arc<ProsodyOAuth2>,
             pub secrets_service: SecretsService,
+            #[allow(dead_code)]
             pub cancellation_token: AutoCancelToken,
         }
     }
 
     // MARK: Stopped with error
 
-    #[derive(Debug)]
-    pub struct BackendStartFailed<State: BackendStartFailedState> {
-        pub state: Arc<State>,
+    #[derive(Debug, Clone)]
+    pub struct BackendStartFailed {
         pub error: Arc<anyhow::Error>,
     }
 
-    state_boilerplate!(
-        BackendStartFailed<any BackendStartFailedState>,
-        [Clone]: { state, error }
-    );
+    state_boilerplate!(BackendStartFailed);
 
-    pub use BackendStoppedState as BackendStartFailedState;
+    #[derive(Debug, Clone)]
+    pub struct BackendRestartFailed {
+        pub state: Arc<Operational>,
+        pub error: Arc<anyhow::Error>,
+    }
+
+    state_boilerplate!(BackendRestartFailed);
 
     // MARK: Factory reset
 
@@ -440,62 +412,22 @@ pub mod backend {
 
     // MARK: State transitions
 
-    impl_trivial_transition!(
-        BackendRunning<any BackendRunningState>
-        => BackendStarting<any BackendStartingState>
-    );
-    impl_trivial_transition!(
-        BackendStarting<any BackendStartingState>
-        => BackendRunning<any BackendRunningState>
-    );
-    impl_trivial_transition!(
-        BackendStartFailed<any BackendStartFailedState>
-        => BackendRunning<any BackendRunningState>
-    );
-    impl_trivial_transition!(
-        BackendUndergoingFactoryReset
-        =[default]> BackendStarting<any BackendStartingState>
-    );
-    impl_trivial_transition!(
-        BackendUndergoingFactoryReset
-        =[default]> BackendStopped<NotInitialized>
-    );
-    impl_trivial_transition!(
-        BackendStopped<NotInitialized>
-        => BackendStarting<NotInitialized>
-    );
-    impl_trivial_transition!(
-        BackendRunning<any BackendRunningState>
-        =[default]> BackendUndergoingFactoryReset
-    );
-    impl_trivial_transition!(
-        BackendStopped<any BackendStoppedState>
-        =[default]> BackendUndergoingFactoryReset
-    );
-    impl_trivial_transition!(
-        BackendStartFailed<any BackendStartFailedState>
-        =[default]> BackendUndergoingFactoryReset
-    );
+    impl_fail_state_from_pair!((BackendStarting => BackendStartFailed, &'a Arc<anyhow::Error>) use error);
 
-    // MARK: Boilerplate
+    impl_trivial_transition!(BackendRunning => BackendRestarting);
+    impl_trivial_transition!(BackendRunning => default BackendUndergoingFactoryReset);
 
-    impl_from_pair!((BackendRunning, error) use left);
-    impl_from_pair!((BackendStopped<NotInitialized>, error) use left);
-    impl_from_pair!((BackendUndergoingFactoryReset => BackendStopped<NotInitialized>, ()) use left);
+    impl_trivial_transition!(BackendRestarting => BackendRunning);
+    impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a Arc<anyhow::Error>) use both);
 
-    impl<S1, S2> From<(S1, &Arc<anyhow::Error>)> for BackendStartFailed<S2>
-    where
-        S1: Into<Arc<S2>>,
-        S2: BackendStartFailedState,
-    {
-        #[inline(always)]
-        fn from((state, error): (S1, &Arc<anyhow::Error>)) -> Self {
-            Self {
-                state: state.into(),
-                error: Arc::clone(error),
-            }
-        }
-    }
+    impl_trivial_transition!(BackendRestartFailed => BackendRestarting);
+
+    impl_trivial_transition!(BackendStopped => default BackendStarting);
+
+    impl_trivial_transition!(BackendStartFailed => default BackendStarting);
+
+    impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStopped);
+    impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStarting);
 }
 
 // MARK: App state transitions
@@ -650,53 +582,8 @@ impl<F, B> AppState<F, B> {
 mod macros {
     macro_rules! state_boilerplate {
         (
-            $state:ident<any $substate_trait:ident>
-            $(, [Clone]: { $($clone_field:ident),+ })?
-            $(, derive: $($trivial_impl:ident),+)?
-        ) => {
-            // `S { state } -> &state` (auto)
-            impl<S: $substate_trait> std::ops::Deref for $state<S> {
-                type Target = S;
-
-                #[inline(always)]
-                fn deref(&self) -> &Self::Target {
-                    &self.state
-                }
-            }
-
-            // `S { state } -> &state`
-            impl<S: $substate_trait> AsRef<S> for $state<S> {
-                #[inline(always)]
-                fn as_ref(&self) -> &S {
-                    &self.state
-                }
-            }
-
-            // `S { state } -> state`
-            impl<S: $substate_trait> From<$state<S>> for Arc<S> {
-                #[inline(always)]
-                fn from($state { state, .. }: $state<S>) -> Self {
-                    state
-                }
-            }
-
-            // `(S, _) -> S`
-            impl<S: $substate_trait> From<($state<S>, ())> for $state<S> {
-                #[inline(always)]
-                fn from((state, _): ($state<S>, ())) -> Self {
-                    state
-                }
-            }
-
-            $(state_boilerplate!(__ [Clone]: $state<any $substate_trait> { $($clone_field)+ });)?
-
-            $($(state_boilerplate!(__ $trivial_impl: $state<any $substate_trait>);)+)?
-        };
-
-        (
             $state:ty
-            $(, [Clone]: { $($clone_field:ident),+ })?
-            $(, derive: $($trivial_impl:ident),+)?
+            $(, Deref($deref_field:ident: $deref_type:ty))?
         ) => {
             // `(S, _) -> S`, `(S1, _) -> S2`
             impl From<($state, ())> for $state {
@@ -706,90 +593,27 @@ mod macros {
                 }
             }
 
-            $(state_boilerplate!(__ [Clone]: $state { $($clone_field)+ });)?
+            $(impl std::ops::Deref for $state {
+                type Target = $deref_type;
 
-            $($(state_boilerplate!(__ $trivial_impl: $state);)+)?
-        };
-
-        (__ Default: $state:ident<any $substate_trait:ident>) => {
-            impl<S: $substate_trait + Default> Default for $state<S> {
-                #[inline(always)]
-                fn default() -> Self {
-                    Self {
-                        state: Arc::default(),
-                    }
+                fn deref(&self) -> &Self::Target {
+                    &self.$deref_field
                 }
             }
-        };
 
-        (__ Clone: $state:ident<any $substate_trait:ident>) => {
-            state_boilerplate!(__ [Clone]: $state<any $substate_trait> { state });
-        };
-
-        (__ [Clone]: $state:ident<any $substate_trait:ident> { $($clone_field:ident)+ }) => {
-            impl<S: $substate_trait> Clone for $state<S> {
-                #[inline(always)]
-                fn clone(&self) -> Self {
-                    // NOTE: `#[derive(Clone)]` doesn’t work here,
-                    //   we have to do it manually :/
-                    Self {
-                        $($clone_field: Arc::clone(&self.$clone_field),)+
-                    }
+            impl AsRef<$deref_type> for $state {
+                fn as_ref(&self) -> &$deref_type {
+                    &self.$deref_field
                 }
-            }
+            })?
+
+            impl_fail_state_from_pair!(($state, &'a Arc<anyhow::Error>) use left);
         };
     }
     pub(super) use state_boilerplate;
 
     macro_rules! impl_trivial_transition {
-        // Generic to generic.
-        ($t1:ident<any $sub_t1_trait:ident> => $t2:ident<any $sub_t2_trait:ident>) => {
-            impl<Substate> From<$t1<Substate>> for $t2<Substate>
-            where
-                Substate: $sub_t1_trait + $sub_t2_trait,
-            {
-                #[inline(always)]
-                fn from($t1 { state, .. }: $t1<Substate>) -> Self {
-                    Self { state }
-                }
-            }
-        };
-
-        // Generic to concrete using Default.
-        (
-            $t1:ident<any $sub_t1_trait:ident>
-            =[default]>
-            $t2:path
-        ) => {
-            impl<S: $sub_t1_trait> From<$t1<S>> for $t2
-            where
-                Self: Default,
-            {
-                #[inline(always)]
-                fn from(_: $t1<S>) -> Self {
-                    Self::default()
-                }
-            }
-        };
-
-        // Concrete to generic using Default.
-        (
-            $t1:path
-            =[default]>
-            $t2:ident<any $sub_t2_trait:ident>
-        ) => {
-            impl<S: $sub_t2_trait> From<$t1> for $t2<S>
-            where
-                Self: Default,
-            {
-                #[inline(always)]
-                fn from(_: $t1) -> Self {
-                    Self::default()
-                }
-            }
-        };
-
-        // Concrete to concrete.
+        // Transition if same internal states.
         ($t1:path => $t2:path) => {
             impl From<$t1> for $t2 {
                 #[inline(always)]
@@ -799,8 +623,8 @@ mod macros {
             }
         };
 
-        // Concrete to concrete using Default.
-        ($t1:path =[default]> $t2:path) => {
+        // Transition using `Default`.
+        ($t1:path => default $t2:path) => {
             impl From<$t1> for $t2
             where
                 Self: Default,
@@ -810,27 +634,31 @@ mod macros {
                     Self::default()
                 }
             }
+
+            impl_fail_state_from_pair!(($t1 => $t2, ()) use left);
         };
     }
     pub(super) use impl_trivial_transition;
 
-    macro_rules! impl_from_pair {
-        // Use left, discard error.
-        (($left:ty, error) use left) => {
-            impl<'a> From<($left, &'a Arc<anyhow::Error>)> for $left {
+    macro_rules! impl_fail_state_from_pair {
+        // Use left, discard right.
+        (($left:ty, $(&$lifetime:lifetime)? $right:path) use left) => {
+            impl$(<$lifetime>)? From<($left, $(&$lifetime)? $right)> for $left {
                 #[inline(always)]
-                fn from((left, _): ($left, &'a Arc<anyhow::Error>)) -> Self {
+                fn from((left, _): ($left, $(&$lifetime)? $right)) -> Self {
                     left
                 }
             }
         };
 
-        // Use left, discard right.
-        (($left:ty, $right:ty) use left) => {
-            impl From<($left, $right)> for $left {
+        // Use error, discard left.
+        (($left:ty, $(&$lifetime:lifetime)? $right:path) use error) => {
+            impl$(<$lifetime>)? From<($left, $(&$lifetime)? $right)> for $left {
                 #[inline(always)]
-                fn from((left, _): ($left, $right)) -> Self {
-                    left
+                fn from((_, error): ($left, $(&$lifetime)? $right)) -> Self {
+                    Self {
+                        error: Arc::clone(error),
+                    }
                 }
             }
         };
@@ -847,6 +675,31 @@ mod macros {
                 }
             }
         };
+
+        // Map left, use state and error.
+        (($other:ty => $left:ty, $(&$lifetime:lifetime)? $right:path) use both) => {
+            impl$(<$lifetime>)? From<($other, $(&$lifetime)? $right)> for $left {
+                #[inline(always)]
+                fn from((left, error): ($other, $(&$lifetime)? $right)) -> Self {
+                    Self {
+                        state: left.state,
+                        error: Arc::clone(error),
+                    }
+                }
+            }
+        };
+
+        // Map left, use error.
+        (($other:ty => $left:ty, $(&$lifetime:lifetime)? $right:path) use error) => {
+            impl$(<$lifetime>)? From<($other, $(&$lifetime)? $right)> for $left {
+                #[inline(always)]
+                fn from((_, error): ($other, $(&$lifetime)? $right)) -> Self {
+                    Self {
+                        error: Arc::clone(error),
+                    }
+                }
+            }
+        };
     }
-    pub(super) use impl_from_pair;
+    pub(super) use impl_fail_state_from_pair;
 }

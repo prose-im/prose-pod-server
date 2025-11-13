@@ -100,12 +100,12 @@ impl<F, B> AppState<F, B> {
         self,
     ) -> Result<
         Either<
-            AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
+            AppState<f::Misconfigured, b::Stopped>,
             AppState<f::Running, b::Running>,
         >,
         Either<
             FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
-            FailState<f::Running, b::StartFailed<b::NotInitialized>>,
+            FailState<f::Running, b::StartFailed>,
         >,
     >
     where
@@ -137,12 +137,12 @@ elmost everything the implementation will do:
 1. ```rust
    Result<
        Either<
-           AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
+           AppState<f::Misconfigured, b::Stopped>,
            AppState<f::Running, b::Running>,
        >,
        Either<
            FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
-           FailState<f::Running, b::StartFailed<b::NotInitialized>>,
+           FailState<f::Running, b::StartFailed>,
        >,
    >
    ```

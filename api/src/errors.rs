@@ -208,6 +208,17 @@ pub fn bad_configuration(error: &anyhow::Error) -> Error {
 
 #[must_use]
 #[inline]
+pub fn start_failed(error: &anyhow::Error) -> Error {
+    self::internal_server_error(
+        error,
+        "START_FAILED",
+        "Something went wrong while starting your Prose Server. \
+        Contact an administrator to fix this.",
+    )
+}
+
+#[must_use]
+#[inline]
 pub fn restart_failed(error: &anyhow::Error) -> Error {
     self::internal_server_error(
         error,

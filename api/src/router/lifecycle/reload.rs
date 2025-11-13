@@ -33,17 +33,14 @@ where
     }
 }
 
-impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
+impl AppState<f::Misconfigured, b::Stopped> {
     pub async fn do_init_config(
         self,
     ) -> Result<
         AppState<f::Running, b::Running>,
-        Either<
-            FailState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
-            FailState<f::Running, b::StartFailed<b::NotInitialized>>,
-        >,
+        Either<FailState<f::Misconfigured, b::Stopped>, FailState<f::Running, b::StartFailed>>,
     > {
-        match self.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
+        match self.try_reload_frontend::<b::Starting>() {
             Ok(app_state) => app_state.do_bootstrapping().await.map_err(Either::E2),
 
             // Transition state if the reload failed.
@@ -59,12 +56,12 @@ impl AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> {
 }
 
 pub(in crate::router) async fn init_config(
-    State(app_state): State<AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>>,
+    State(app_state): State<AppState<f::Misconfigured, b::Stopped>>,
 ) -> Result<(), Error> {
     match app_state.do_init_config().await {
         Ok(_new_state) => Ok(()),
         Err(Either::E1(FailState { error, .. })) => Err(errors::bad_configuration(&error)),
-        Err(Either::E2(FailState { error, .. })) => Err(errors::restart_failed(&error)),
+        Err(Either::E2(FailState { error, .. })) => Err(errors::start_failed(&error)),
     }
 }
 

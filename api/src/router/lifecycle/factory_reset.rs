@@ -64,7 +64,7 @@ impl<F, B> AppState<F, B> {
     ///   if success and minimal config in env
     /// AppState<UndergoingFactoryReset, UndergoingFactoryReset>
     ///   if failure
-    /// AppState<f::Running, b::StartFailed<b::NotInitialized>>
+    /// AppState<f::Running, b::StartFailed>
     ///   if failure and minimal config in env
     /// ```
     ///
@@ -72,13 +72,10 @@ impl<F, B> AppState<F, B> {
     pub(crate) async fn do_factory_reset(
         self,
     ) -> Result<
-        Either<
-            AppState<f::Misconfigured, b::Stopped<b::NotInitialized>>,
-            AppState<f::Running, b::Running>,
-        >,
+        Either<AppState<f::Misconfigured, b::Stopped>, AppState<f::Running, b::Running>>,
         Either<
             FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
-            FailState<f::Running, b::StartFailed<b::NotInitialized>>,
+            FailState<f::Running, b::StartFailed>,
         >,
     >
     where
@@ -99,7 +96,7 @@ impl<F, B> AppState<F, B> {
         }
 
         // Transition app to “Starting”.
-        match app_state.try_reload_frontend::<b::Starting<b::NotInitialized>>() {
+        match app_state.try_reload_frontend::<b::Starting>() {
             Ok(new_state) => {
                 // NOTE: After a factory reset, the default configuration is,
                 //   at least, missing the Server domain. However, in some cases
@@ -127,7 +124,7 @@ impl<F, B> AppState<F, B> {
                 // Log debug info.
                 tracing::warn!("{error:?}");
 
-                let new_state: AppState<f::Misconfigured, b::Stopped<b::NotInitialized>> =
+                let new_state: AppState<f::Misconfigured, b::Stopped> =
                     new_state.transition_with((&error, ()));
 
                 tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
