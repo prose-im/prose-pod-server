@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use prosody_rest::prose_xmpp::stanza::VCard4;
 use serde::{Deserialize, Serialize};
 
-use crate::errors::{invalid_avatar, prelude::*};
+use crate::errors::prelude::*;
 use crate::models::{Avatar, BareJid, CallerInfo, Color};
 use crate::responders;
 use crate::state::prelude::*;
@@ -352,9 +352,7 @@ async fn service_account_avatar(
         .context("Could not get service account avatar")
         .no_context()?
     {
-        Some(avatar_data) => Ok(Some(
-            Avatar::try_from(avatar_data).map_err(|e| invalid_avatar(&e.to_string()))?,
-        )),
+        Some(avatar_data) => Ok(Some(Avatar::try_from(avatar_data)?)),
         None => Ok(None),
     }
 }

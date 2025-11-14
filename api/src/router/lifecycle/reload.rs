@@ -5,30 +5,24 @@
 
 use axum::extract::State;
 
-use crate::errors;
 use crate::responders::Error;
-use crate::state::{FailState, prelude::*};
+use crate::state::prelude::*;
 use crate::util::either::Either;
 
 pub(in crate::router) async fn reload<F>(
     State(app_state): State<AppState<F, b::Running>>,
 ) -> Result<(), Error>
 where
-    F: frontend::State,
+    F: frontend::State + crate::router::HealthTrait + Send + Sync + 'static + Clone,
+    for<'a> (F, &'a Error): Into<F>,
     AppState<F, b::Running>: AppStateTrait,
 {
-    match app_state.try_reload_frontend() {
+    match app_state.do_reload_frontend() {
         Ok(new_state) => match new_state.do_reload_backend().await {
             Ok(_new_state) => Ok(()),
             Err(FailState { error, .. }) => Err(error),
         },
-
-        Err((_, error)) => {
-            // Log debug info.
-            tracing::error!("{error:?}");
-
-            Err(errors::bad_configuration(&error))
-        }
+        Err(FailState { error, .. }) => Err(error),
     }
 }
 
@@ -39,20 +33,15 @@ impl AppState<f::Misconfigured, b::Stopped> {
         AppState<f::Running, b::Running>,
         Either<FailState<f::Misconfigured, b::Stopped>, FailState<f::Running, b::StartFailed>>,
     > {
-        match self.try_reload_frontend::<b::Starting>() {
-            Ok(app_state) => app_state.do_bootstrapping().await.map_err(Either::E2),
+        let app_state = self
+            .do_reload_frontend::<f::Misconfigured, b::Stopped, b::Starting>()
+            .map_err(Either::E1)?;
 
-            // Transition state if the reload failed.
-            Err((app_state, error)) => {
-                // Log debug info.
-                tracing::error!("{error:?}");
-
-                // Update stored error (for better health diagnostics).
-                Err(Either::E1(
-                    app_state.transition_failed(errors::start_failed(&error)),
-                ))
-            }
-        }
+        app_state
+            .set_backend_starting()
+            .do_bootstrapping()
+            .await
+            .map_err(Either::E2)
     }
 }
 

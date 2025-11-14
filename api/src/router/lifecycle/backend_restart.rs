@@ -113,9 +113,14 @@ impl<B> AppState<f::Running, B> {
                 // have to fix that code so it doesn’t happen.
                 let new_state = self.set_backend_running();
 
-                return Err(Either::E1(
-                    new_state.with_error(errors::restart_failed(&error)),
-                ));
+                return Err(Either::E1(new_state.with_error(
+                    errors::internal_server_error(
+                        &error,
+                        "RESTART_FAILED",
+                        "Something went wrong while restarting your Prose Server. \
+                        Contact an administrator to fix this.",
+                    ),
+                )));
             }
         }
 
@@ -132,9 +137,14 @@ impl<B> AppState<f::Running, B> {
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(Either::E2(
-                    app_state.transition_failed(errors::restart_failed(&error)),
-                ))
+                Err(Either::E2(app_state.transition_failed(
+                    errors::internal_server_error(
+                        &error,
+                        "RESTART_FAILED",
+                        "Something went wrong while restarting your Prose Server. \
+                        Contact an administrator to fix this.",
+                    ),
+                )))
             }
         }
     }
@@ -147,6 +157,19 @@ impl<B> AppState<f::Running, B> {
     pub(crate) fn set_backend_restarting<'a>(self) -> AppState<f::Running, b::Restarting>
     where
         B: Into<b::Restarting>,
+    {
+        self.with_auto_transition()
+    }
+
+    /// ```txt
+    /// AppState<Running, B>
+    ///   B ∈ { Stopped, StartFailed, UndergoingFactoryReset }
+    /// ------------------------------------------------------ (Set backend starting)
+    /// AppState<Running, Starting>
+    /// ```
+    pub(crate) fn set_backend_starting<'a>(self) -> AppState<f::Running, b::Starting>
+    where
+        B: Into<b::Starting>,
     {
         self.with_auto_transition()
     }

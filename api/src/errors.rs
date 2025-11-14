@@ -17,8 +17,8 @@ use prelude::*;
 //   code. It’d be better if it was domain-specific or even better if errors
 //   were created inline. However I don’t like having to import the `StatusCode`
 //   type everywhere just for this, hence the helpers. Once
-//   [Make `StatusCode::from_u16` const by coolreader18 · Pull Request #761 · hyperium/http](https://github.com/hyperium/http/pull/761)
-//   gets merged, we will have the opportunity to pass an integer directly,
+//   [hyperium/http#761 “Make `StatusCode::from_u16` const”](https://github.com/hyperium/http/pull/761)
+//   gets released, we will have the opportunity to pass an integer directly,
 //   without having to construct a non-`const` `StatusCode` at runtime.
 //   We could also use macros to pass the identifier directly, but they
 //   would be accessible via `crate::` and not `crate::errors::` which
@@ -183,59 +183,6 @@ pub fn validation_error(
         StatusCode::BAD_REQUEST,
         message,
         description,
-    )
-}
-
-// MARK: - Conversions
-
-#[must_use]
-#[inline]
-pub fn invalid_avatar(description: impl AsRef<str>) -> Error {
-    self::validation_error("INVALID_AVATAR", "Invalid avatar", description)
-}
-
-#[must_use]
-#[inline]
-pub fn bad_configuration(error: &anyhow::Error) -> Error {
-    self::service_unavailable_err(
-        error,
-        "BAD_CONFIGURATION",
-        "Bad configuration",
-        "Your Prose Server configuration is incorrect. \
-        Contact an administrator to fix this.",
-    )
-}
-
-#[must_use]
-#[inline]
-pub fn start_failed(error: &anyhow::Error) -> Error {
-    self::internal_server_error(
-        error,
-        "START_FAILED",
-        "Something went wrong while starting your Prose Server. \
-        Contact an administrator to fix this.",
-    )
-}
-
-#[must_use]
-#[inline]
-pub fn restart_failed(error: &anyhow::Error) -> Error {
-    self::internal_server_error(
-        error,
-        "RESTART_FAILED",
-        "Something went wrong while restarting your Prose Server. \
-        Contact an administrator to fix this.",
-    )
-}
-
-#[must_use]
-#[inline]
-pub fn factory_reset_failed(error: &anyhow::Error) -> Error {
-    self::internal_server_error(
-        error,
-        "FACTORY_RESET_FAILED",
-        "Something went wrong while resetting your Prose Server. \
-        Contact an administrator to fix this.",
     )
 }
 

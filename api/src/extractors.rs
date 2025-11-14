@@ -10,9 +10,9 @@ mod prelude {
         http::request,
     };
 
-    pub(crate) use crate::responders;
     pub(crate) use crate::state::prelude::*;
     pub(crate) use crate::util::{Context as _, NoContext as _};
+    pub(crate) use crate::{errors, responders};
 }
 
 use crate::{extractors::prelude::*, util::PROSODY_JIDS_ARE_VALID};
@@ -185,6 +185,15 @@ impl<State: Send + Sync> FromRequest<State> for crate::models::Avatar {
 
 impl axum::response::IntoResponse for AvatarFromRequestError {
     fn into_response(self) -> axum::response::Response {
-        crate::errors::invalid_avatar(&self.to_string()).into_response()
+        match self {
+            Self::InvalidAvatar(error) => responders::Error::from(error),
+            err @ (Self::UnsupportedMediaType
+            | Self::InvalidBytes(_)
+            | Self::InvalidString(_)
+            | Self::InvalidJson(_)) => {
+                errors::validation_error("INVALID_AVATAR", "Invalid avatar", err.to_string())
+            }
+        }
+        .into_response()
     }
 }

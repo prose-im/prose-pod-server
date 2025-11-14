@@ -23,3 +23,8 @@
   - This way we can have the Prose Pod API write in the configuration file and
     reload sub-configurations. Also decouples things more and paves the way for
     modules/plugins.
+
+- Add a unique ID to errors
+
+- `ToFailState` instead of `From<(T, error)>` then remove need for explicit generics in `do_reload_frontend::<_>()`
+  - Might not be possible because some transitions are Y-shaped.

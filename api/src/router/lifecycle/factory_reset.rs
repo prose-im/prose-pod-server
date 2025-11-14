@@ -90,13 +90,18 @@ impl<F, B> AppState<F, B> {
 
         if let Err(error) = Self::factory_reset(backend).await {
             tracing::error!("Factory reset failed: {error:?}");
-            return Err(Either::E1(
-                app_state.with_error(errors::factory_reset_failed(&error)),
-            ));
+            return Err(Either::E1(app_state.with_error(
+                errors::internal_server_error(
+                    &error,
+                    "FACTORY_RESET_FAILED",
+                    "Something went wrong while resetting your Prose Server. \
+                    Contact an administrator to fix this.",
+                ),
+            )));
         }
 
         // Transition app to “Starting”.
-        match app_state.try_reload_frontend::<b::Starting>() {
+        match app_state.try_reload_frontend() {
             Ok(new_state) => {
                 // NOTE: After a factory reset, the default configuration is,
                 //   at least, missing the Server domain. However, in some cases
@@ -125,7 +130,16 @@ impl<F, B> AppState<F, B> {
                 tracing::warn!("{error:?}");
 
                 let new_state: AppState<f::Misconfigured, b::Stopped> =
-                    new_state.transition_with((&errors::bad_configuration(&error), ()));
+                    new_state.transition_with((
+                        &errors::service_unavailable_err(
+                            &error,
+                            "BAD_CONFIGURATION",
+                            "Bad configuration",
+                            "Your Prose Server configuration is incorrect. \
+                        Contact an administrator to fix this.",
+                        ),
+                        (),
+                    ));
 
                 tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
                 // NOTE: Do not return a failure as this is expected behavior.

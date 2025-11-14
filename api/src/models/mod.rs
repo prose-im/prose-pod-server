@@ -156,6 +156,12 @@ pub mod avatar {
         }
     }
 
+    impl From<AvatarDecodeError> for crate::responders::Error {
+        fn from(error: AvatarDecodeError) -> Self {
+            crate::errors::validation_error("INVALID_AVATAR", "Invalid avatar", error.to_string())
+        }
+    }
+
     impl Avatar {
         pub fn try_from_bytes(bytes: Box<[u8]>) -> Result<Self, AvatarDecodeError> {
             if bytes.len() > AVATAR_MAX_LENGTH_BYTES {

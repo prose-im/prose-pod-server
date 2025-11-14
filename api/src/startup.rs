@@ -174,7 +174,12 @@ impl AppState<f::Running, b::Starting> {
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(app_state.transition_failed(errors::start_failed(&error)))
+                Err(app_state.transition_failed(errors::internal_server_error(
+                    &error,
+                    "START_FAILED",
+                    "Something went wrong while starting your Prose Server. \
+                    Contact an administrator to fix this.",
+                )))
             }
         }
     }

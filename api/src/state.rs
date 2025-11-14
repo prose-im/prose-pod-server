@@ -437,6 +437,7 @@ pub mod backend {
 
     impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStopped);
     impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStarting);
+    impl_fail_state_from_pair!((BackendUndergoingFactoryReset => BackendStopped, &'a crate::responders::Error) use left);
 }
 
 // MARK: App state transitions
@@ -655,14 +656,27 @@ mod macros {
             }
         };
 
-        // Map left, discard right.
-        (($other:ty => $left:ty, $right:ty) use left) => {
-            impl From<($other, $right)> for $left
+        // Map left, discard unit.
+        (($other:ty => $left:ty, ()) use left) => {
+            impl From<($other, ())> for $left
             where
                 $other: Into<$left>,
             {
                 #[inline(always)]
-                fn from((left, _): ($other, $right)) -> Self {
+                fn from((left, _): ($other, ())) -> Self {
+                    left.into()
+                }
+            }
+        };
+
+        // Map left, discard right.
+        (($other:ty => $left:ty, $(&$lifetime:lifetime)? $right:path) use left) => {
+            impl$(<$lifetime>)? From<($other, $(&$lifetime)? $right)> for $left
+            where
+                $other: Into<$left>,
+            {
+                #[inline(always)]
+                fn from((left, _): ($other, $(&$lifetime)? $right)) -> Self {
                     left.into()
                 }
             }

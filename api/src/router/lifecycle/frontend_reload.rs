@@ -18,7 +18,7 @@ use crate::{AppConfig, errors};
 pub(in crate::router) async fn frontend_reload(
     State(app_state): State<AppState<f::Running, b::Running>>,
 ) -> Result<(), Error> {
-    match app_state.do_reload_frontend() {
+    match app_state.do_reload_frontend::<f::RunningWithMisconfiguration, b::Running, b::Running>() {
         Ok(_new_state) => Ok(()),
         Err(FailState { error, .. }) => Err(error),
     }
@@ -81,34 +81,46 @@ where
     }
 }
 
-impl<B> AppState<f::Running, B>
+impl<F, B> AppState<F, B>
 where
-    AppState<f::Running, B>: AppStateTrait,
+    F: frontend::State,
+    AppState<F, B>: AppStateTrait,
 {
     /// ```txt
-    /// AppState<Running, B>
-    /// ---------------------------------------------------- (Reload frontend)
-    /// AppState<Running, B>                      if success
-    /// AppState<RunningWithMisconfiguration, B>  if failure
+    /// AppState<F, B>
+    /// ---------------------- (Reload frontend)
+    /// AppState<Running, B>  if success
+    /// AppState<F, B>        if failure
     /// ```
     ///
     /// NOTE: This method **does** log errors.
-    pub(crate) fn do_reload_frontend(
+    pub(crate) fn do_reload_frontend<FrontendFailure, BackendFailure, BackendSuccess>(
         self,
-    ) -> Result<AppState<f::Running, B>, FailState<f::RunningWithMisconfiguration, B>>
+    ) -> Result<AppState<f::Running, BackendSuccess>, FailState<FrontendFailure, BackendFailure>>
     where
-        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        for<'a> (B, &'a crate::responders::Error): Into<B>,
-        AppState<f::RunningWithMisconfiguration, B>: AppStateTrait,
+        BackendSuccess: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        FrontendFailure: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        BackendFailure: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        B: Into<BackendSuccess>,
+        for<'a> (F, &'a crate::responders::Error): Into<FrontendFailure>,
+        for<'a> (B, &'a crate::responders::Error): Into<BackendFailure>,
+        AppState<f::Running, BackendSuccess>: AppStateTrait,
+        AppState<FrontendFailure, BackendFailure>: AppStateTrait,
     {
         match self.try_reload_frontend() {
-            Ok(new_state) => Ok(new_state),
+            Ok(new_state) => Ok(new_state.with_auto_transition()),
 
             Err((app_state, error)) => {
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(app_state.transition_failed(errors::bad_configuration(&error)))
+                Err(app_state.transition_failed(errors::service_unavailable_err(
+                    &error,
+                    "BAD_CONFIGURATION",
+                    "Bad configuration",
+                    "Your Prose Server configuration is incorrect. \
+                    Contact an administrator to fix this.",
+                )))
             }
         }
     }
