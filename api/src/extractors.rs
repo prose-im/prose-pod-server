@@ -50,17 +50,15 @@ impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     }
 }
 
-impl<FrontendState> FromRequestParts<AppState<FrontendState, backend::Running>>
+impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
     for crate::models::CallerInfo
-where
-    FrontendState: Send + Sync,
 {
     type Rejection = responders::Error;
 
     #[tracing::instrument(name = "req::auth::caller_info", level = "trace", skip_all)]
     async fn from_request_parts(
         parts: &mut request::Parts,
-        state: &AppState<FrontendState, backend::Running>,
+        state: &AppState<F, backend::Running>,
     ) -> Result<Self, Self::Rejection> {
         use crate::models::{AuthToken, BareJid};
         use std::str::FromStr as _;

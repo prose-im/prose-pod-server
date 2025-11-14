@@ -9,11 +9,10 @@ use crate::responders::Error;
 use crate::state::prelude::*;
 use crate::util::either::Either;
 
-pub(in crate::router) async fn reload<F>(
+pub(in crate::router) async fn reload<F: frontend::State>(
     State(app_state): State<AppState<F, b::Running>>,
 ) -> Result<(), Error>
 where
-    F: frontend::State + crate::router::HealthTrait + Send + Sync + 'static + Clone,
     for<'a> (F, &'a Error): Into<F>,
     AppState<F, b::Running>: AppStateTrait,
 {

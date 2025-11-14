@@ -25,8 +25,8 @@ pub(crate) use self::health::HealthTrait;
 
 /// Base router that’s always active. Routes defined here will always be available.
 pub fn with_base_routes(
-    frontend: impl HealthTrait + Send + Sync + 'static + Clone,
-    backend: impl HealthTrait + Send + Sync + 'static + Clone,
+    frontend: impl frontend::State,
+    backend: impl backend::State,
     router: Router,
 ) -> Router {
     let backend_health_route = async move || backend.health();
@@ -271,7 +271,7 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed> {
 pub(crate) mod util {
     use axum::extract::State;
 
-    use crate::state::AppState;
+    use crate::state::prelude::*;
 
     pub async fn log_request(
         req: axum::http::Request<axum::body::Body>,
@@ -298,13 +298,13 @@ pub(crate) mod util {
         next.run(req).await
     }
 
-    pub async fn frontend_health<F: super::HealthTrait, B>(
+    pub async fn frontend_health<F: frontend::State, B: backend::State>(
         State(AppState { frontend, .. }): State<AppState<F, B>>,
     ) -> axum::response::Response {
         frontend.health()
     }
 
-    pub async fn backend_health<F, B: super::HealthTrait>(
+    pub async fn backend_health<F: frontend::State, B: backend::State>(
         State(AppState { backend, .. }): State<AppState<F, B>>,
     ) -> axum::response::Response {
         backend.health()

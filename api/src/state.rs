@@ -57,8 +57,8 @@ impl AppContext {
     fn set_state<F, B>(&self, new_state: AppState<F, B>)
     where
         AppState<F, B>: AppStateTrait,
-        F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        F: frontend::State,
+        B: backend::State,
     {
         self.prosody.swap(new_state.prosody_weak().map(Arc::new));
 
@@ -79,8 +79,8 @@ impl AppContext {
     fn new_state<F, B>(&self, new_state: AppState<F, B>) -> AppState<F, B>
     where
         AppState<F, B>: AppStateTrait,
-        F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        F: frontend::State,
+        B: backend::State,
     {
         self.set_state(new_state.clone());
         new_state
@@ -110,21 +110,21 @@ impl AppContext {
 /// to an [`AppContext`] to mutate the app’s router.
 #[derive(Debug, Clone)]
 pub struct AppState<
-    FrontendState = frontend::FrontendRunning,
-    BackendState = backend::BackendRunning,
+    FrontendState: frontend::State = frontend::FrontendRunning,
+    BackendState: backend::State = backend::BackendRunning,
 > {
     app_context: Weak<AppContext>,
     pub frontend: FrontendState,
     pub backend: BackendState,
 }
 
-impl<F, B> AppState<F, B> {
+impl<F: frontend::State, B: backend::State> AppState<F, B> {
     #[inline]
     pub fn new(app_context: Arc<AppContext>, frontend: F, backend: B) -> Self
     where
         Self: AppStateTrait,
-        F: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        F: frontend::State,
+        B: backend::State,
     {
         app_context.new_state(Self {
             app_context: Arc::downgrade(&app_context),
@@ -139,10 +139,10 @@ impl<F, B> AppState<F, B> {
     }
 }
 
-impl<F1, B1> AppState<F1, B1> {
+impl<F1: frontend::State, B1: backend::State> AppState<F1, B1> {
     #[must_use]
     #[inline]
-    pub fn with_frontend<F2>(self, frontend: F2) -> AppState<F2, B1> {
+    pub fn with_frontend<F2: frontend::State>(self, frontend: F2) -> AppState<F2, B1> {
         AppState {
             app_context: self.app_context,
             frontend,
@@ -152,7 +152,7 @@ impl<F1, B1> AppState<F1, B1> {
 
     #[must_use]
     #[inline]
-    pub fn with_backend<B2>(self, backend: B2) -> AppState<F1, B2> {
+    pub fn with_backend<B2: backend::State>(self, backend: B2) -> AppState<F1, B2> {
         AppState {
             app_context: self.app_context,
             frontend: self.frontend,
@@ -171,6 +171,16 @@ pub trait AppStateTrait {
     fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>>;
 }
 
+/// NOTE:
+///   - [`crate::router::HealthTrait`] is required by health routes
+///   - [`Send`] + [`Sync`] + `'static` is required to make the health routes
+///   - [`Clone`] is required to have aliases for health routes, and because
+///     `axum` forces a router’s state to be [`Clone`]. We need interior in
+///     [`AppState`] and using locks would make code a lot more complicated so
+///     we can just have efficient [`Clone`] implementation in states and it
+///     won’t be a problem.
+pub trait StateTrait: crate::router::HealthTrait + Send + Sync + Clone + 'static {}
+
 pub mod frontend {
     pub mod prelude {
         pub use super::FrontendStateTrait as State;
@@ -185,9 +195,11 @@ pub mod frontend {
 
     use crate::{AppConfig, util::tracing_subscriber_ext::TracingReloadHandles};
 
-    use super::macros::*;
+    use super::{StateTrait, macros::*};
 
-    pub trait FrontendStateTrait: Into<FrontendUndergoingFactoryReset> {
+    pub(super) use self::prelude::State;
+
+    pub trait FrontendStateTrait: StateTrait + Into<FrontendUndergoingFactoryReset> {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles>;
     }
 
@@ -240,6 +252,8 @@ pub mod frontend {
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
+    state_boilerplate!(FrontendMisconfigured);
+
     impl FrontendStateTrait for FrontendMisconfigured {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
@@ -262,6 +276,9 @@ pub mod frontend {
     }
 
     // MARK: State transitions
+
+    impl_fail_state_from_pair!((FrontendRunning, &'a crate::responders::Error) use left);
+    impl_fail_state_from_pair!((FrontendRunningWithMisconfiguration, &'a crate::responders::Error) use left);
 
     impl<'a, S: FrontendStateTrait> From<(S, &'a crate::responders::Error)> for FrontendMisconfigured {
         fn from((state, error): (S, &'a crate::responders::Error)) -> Self {
@@ -324,7 +341,7 @@ pub mod backend {
         pub use super::{
             BackendRestartFailed as RestartFailed, BackendRestarting as Restarting,
             BackendRunning as Running, BackendStartFailed as StartFailed,
-            BackendStarting as Starting, BackendStopped as Stopped,
+            BackendStarting as Starting, BackendStateTrait as State, BackendStopped as Stopped,
             BackendUndergoingFactoryReset as UndergoingFactoryReset,
         };
     }
@@ -339,7 +356,11 @@ pub mod backend {
 
     use crate::secrets_service::SecretsService;
 
-    use super::macros::*;
+    use super::{StateTrait, macros::*};
+
+    pub(super) use self::prelude::State;
+
+    pub trait BackendStateTrait: StateTrait {}
 
     // MARK: Substates
 
@@ -368,6 +389,8 @@ pub mod backend {
 
     state_boilerplate!(BackendStarting);
 
+    impl BackendStateTrait for BackendStarting {}
+
     // MARK: Start failed
 
     #[derive(Debug, Clone)]
@@ -376,6 +399,8 @@ pub mod backend {
     }
 
     state_boilerplate!(BackendStartFailed);
+
+    impl BackendStateTrait for BackendStartFailed {}
 
     // MARK: Running
 
@@ -386,6 +411,8 @@ pub mod backend {
 
     state_boilerplate!(BackendRunning, Deref(state: Operational), AsRef(state: Arc<Operational>));
 
+    impl BackendStateTrait for BackendRunning {}
+
     // MARK: Restarting
 
     #[derive(Debug, Clone)]
@@ -394,6 +421,8 @@ pub mod backend {
     }
 
     state_boilerplate!(BackendRestarting, Deref(state: Operational), AsRef(state: Arc<Operational>));
+
+    impl BackendStateTrait for BackendRestarting {}
 
     // MARK: Restart failed
 
@@ -405,12 +434,16 @@ pub mod backend {
 
     state_boilerplate!(BackendRestartFailed);
 
+    impl BackendStateTrait for BackendRestartFailed {}
+
     // MARK: Factory reset
 
     #[derive(Debug, Clone, Default)]
     pub struct BackendUndergoingFactoryReset {}
 
     state_boilerplate!(BackendUndergoingFactoryReset);
+
+    impl BackendStateTrait for BackendUndergoingFactoryReset {}
 
     // MARK: Stopped
 
@@ -419,12 +452,15 @@ pub mod backend {
 
     state_boilerplate!(BackendStopped);
 
+    impl BackendStateTrait for BackendStopped {}
+
     // MARK: State transitions
 
     impl_fail_state_from_pair!((BackendStarting => BackendStartFailed, &'a crate::responders::Error) use error);
 
     impl_trivial_transition!(BackendRunning => BackendRestarting);
     impl_trivial_transition!(BackendRunning => default BackendUndergoingFactoryReset);
+    impl_fail_state_from_pair!((BackendRunning, &'a crate::responders::Error) use left);
 
     impl_trivial_transition!(BackendRestarting => BackendRunning);
     impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a crate::responders::Error) use both);
@@ -432,6 +468,7 @@ pub mod backend {
     impl_trivial_transition!(BackendRestartFailed => BackendRestarting);
 
     impl_trivial_transition!(BackendStopped => default BackendStarting);
+    impl_fail_state_from_pair!((BackendStopped, &'a crate::responders::Error) use left);
 
     impl_trivial_transition!(BackendStartFailed => default BackendStarting);
 
@@ -444,7 +481,7 @@ pub mod backend {
 
 const STATIC_APP_CONTEXT: &'static str = "Static router should hold app context forever";
 
-impl<F1, B1> AppState<F1, B1> {
+impl<F1: frontend::State, B1: backend::State> AppState<F1, B1> {
     #[must_use]
     #[inline]
     pub fn with_auto_transition<F2, B2>(self) -> AppState<F2, B2>
@@ -452,8 +489,8 @@ impl<F1, B1> AppState<F1, B1> {
         F1: Into<F2>,
         B1: Into<B2>,
         AppState<F2, B2>: AppStateTrait,
-        F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        F2: frontend::State,
+        B2: backend::State,
     {
         let app_context = self.context().expect(STATIC_APP_CONTEXT);
         let new_state = AppState {
@@ -483,8 +520,8 @@ impl<F1, B1> AppState<F1, B1> {
     ) -> AppState<F2, B2>
     where
         AppState<F2, B2>: AppStateTrait,
-        F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        F2: frontend::State,
+        B2: backend::State,
     {
         let app_context = self.context().expect(STATIC_APP_CONTEXT);
         app_context.new_state(transition(self))
@@ -518,8 +555,10 @@ where
     (F, FData): Into<F2>,
     (B, BData): Into<B2>,
     AppState<F2, B2>: AppStateTrait,
-    F2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-    B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+    F: frontend::State,
+    F2: frontend::State,
+    B: backend::State,
+    B2: backend::State,
 {
     #[inline]
     fn transition_from(state: AppState<F, B>, (f_data, b_data): (FData, BData)) -> Self {
@@ -536,23 +575,26 @@ where
 /// [`FailState`] is essentially an equivalent of `(State, Error)` which
 /// provides functionality for better ergonomics. Thanks to it, we can have
 /// “fluent” call sites which follow the concepts of functional programming.
-pub struct FailState<F, B> {
+pub struct FailState<F: frontend::State, B: backend::State> {
     #[allow(dead_code)]
     pub state: AppState<F, B>,
 
     pub error: crate::responders::Error,
 }
 
-impl<F, B> AppState<F, B> {
+impl<F: frontend::State, B: backend::State> AppState<F, B> {
     pub fn with_error(self, error: crate::responders::Error) -> FailState<F, B> {
         FailState { state: self, error }
     }
 }
 
 // `AppState` + `Error` to `FailState` transition.
-impl<F, B> AppState<F, B> {
+impl<F: frontend::State, B: backend::State> AppState<F, B> {
     #[inline]
-    pub fn transition_failed<F2, B2>(self, error: crate::responders::Error) -> FailState<F2, B2>
+    pub fn transition_failed<F2: frontend::State, B2: backend::State>(
+        self,
+        error: crate::responders::Error,
+    ) -> FailState<F2, B2>
     where
         Self: for<'a> TransitionWith<
                 AppState<F2, B2>,
@@ -580,6 +622,8 @@ mod macros {
                 }
             }
 
+            impl crate::state::StateTrait for $state {}
+
             $(impl std::ops::Deref for $state {
                 type Target = $deref_type;
 
@@ -599,8 +643,6 @@ mod macros {
                     &self.$asref_field
                 }
             })*
-
-            impl_fail_state_from_pair!(($state, &'a crate::responders::Error) use left);
         };
     }
     pub(super) use state_boilerplate;

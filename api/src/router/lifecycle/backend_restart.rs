@@ -75,7 +75,7 @@ pub(in crate::router) async fn backend_restart_retry(
 
 // MARK: - State transitions
 
-impl<B> AppState<f::Running, B> {
+impl<B: backend::State> AppState<f::Running, B> {
     /// ```txt
     /// AppState<Running, B>  B ∈ { Running, Restarting }
     /// ------------------------------------------------- (Restart backend)

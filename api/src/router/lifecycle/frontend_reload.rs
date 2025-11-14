@@ -26,9 +26,8 @@ pub(in crate::router) async fn frontend_reload(
 
 // MARK: - State transitions
 
-impl<F, B> AppState<F, B>
+impl<F: frontend::State, B: backend::State> AppState<F, B>
 where
-    F: frontend::State,
     AppState<F, B>: AppStateTrait,
 {
     /// NOTE: This method does **not** log errors.
@@ -66,7 +65,7 @@ where
     ) -> Result<AppState<f::Running, B2>, (Self, anyhow::Error)>
     where
         B: Into<B2>,
-        B2: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        B2: backend::State,
         AppState<f::Running, B2>: AppStateTrait,
     {
         match Self::reload_frontend(&self) {
@@ -81,9 +80,8 @@ where
     }
 }
 
-impl<F, B> AppState<F, B>
+impl<F: frontend::State, B: backend::State> AppState<F, B>
 where
-    F: frontend::State,
     AppState<F, B>: AppStateTrait,
 {
     /// ```txt
@@ -98,9 +96,9 @@ where
         self,
     ) -> Result<AppState<f::Running, BackendSuccess>, FailState<FrontendFailure, BackendFailure>>
     where
-        BackendSuccess: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        FrontendFailure: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        BackendFailure: crate::router::HealthTrait + Send + Sync + 'static + Clone,
+        BackendSuccess: backend::State,
+        FrontendFailure: frontend::State,
+        BackendFailure: backend::State,
         B: Into<BackendSuccess>,
         for<'a> (F, &'a crate::responders::Error): Into<FrontendFailure>,
         for<'a> (B, &'a crate::responders::Error): Into<BackendFailure>,

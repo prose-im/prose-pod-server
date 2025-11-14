@@ -28,7 +28,7 @@ pub(in crate::router) async fn factory_reset(
 
 // MARK: - State transitions
 
-impl<F, B> AppState<F, B> {
+impl<F: frontend::State, B: backend::State> AppState<F, B> {
     /// NOTE: This method does **not** log errors.
     async fn factory_reset(backend: impl AsRef<b::Operational>) -> Result<(), anyhow::Error> {
         use crate::util::empty_dir;
