@@ -20,12 +20,12 @@ use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::AppConfig;
 use crate::models::{BareJid, JidDomain, JidNode, Password};
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
 use crate::state::prelude::*;
 use crate::util::unix_timestamp;
+use crate::{AppConfig, errors};
 
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
@@ -174,7 +174,7 @@ impl AppState<f::Running, b::Starting> {
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(app_state.transition_failed(error))
+                Err(app_state.transition_failed(errors::start_failed(&error)))
             }
         }
     }

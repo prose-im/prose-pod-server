@@ -56,7 +56,7 @@ impl HealthTrait for backend::Starting {
 
 impl HealthTrait for backend::StartFailed {
     fn health(&self) -> axum::response::Response {
-        errors::start_failed(&self.error).into_response()
+        self.error.clone().into_response()
     }
 }
 
@@ -74,7 +74,7 @@ impl HealthTrait for backend::Restarting {
 
 impl HealthTrait for backend::RestartFailed {
     fn health(&self) -> axum::response::Response {
-        errors::restart_failed(&self.error).into_response()
+        self.error.clone().into_response()
     }
 }
 
@@ -105,7 +105,7 @@ impl HealthTrait for frontend::Running {
 
 impl HealthTrait for frontend::RunningWithMisconfiguration {
     fn health(&self) -> axum::response::Response {
-        errors::bad_configuration(&self.error).into_response()
+        self.error.clone().into_response()
     }
 }
 
@@ -113,7 +113,7 @@ impl HealthTrait for frontend::RunningWithMisconfiguration {
 
 impl HealthTrait for frontend::Misconfigured {
     fn health(&self) -> axum::response::Response {
-        errors::bad_configuration(&self.error).into_response()
+        self.error.clone().into_response()
     }
 }
 

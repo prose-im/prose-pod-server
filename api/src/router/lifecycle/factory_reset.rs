@@ -3,8 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -23,7 +21,7 @@ pub(in crate::router) async fn factory_reset(
     match app_state.do_factory_reset().await {
         Ok(_new_state) => Ok(StatusCode::RESET_CONTENT),
         Err(Either::E1(FailState { error, .. })) | Err(Either::E2(FailState { error, .. })) => {
-            Err(errors::factory_reset_failed(&error))
+            Err(error)
         }
     }
 }
@@ -92,7 +90,9 @@ impl<F, B> AppState<F, B> {
 
         if let Err(error) = Self::factory_reset(backend).await {
             tracing::error!("Factory reset failed: {error:?}");
-            return Err(Either::E1(app_state.with_error(Arc::new(error))));
+            return Err(Either::E1(
+                app_state.with_error(errors::factory_reset_failed(&error)),
+            ));
         }
 
         // Transition app to “Starting”.
@@ -119,13 +119,13 @@ impl<F, B> AppState<F, B> {
                 }
             }
             Err((new_state, error)) => {
-                let error = Arc::new(error.context("Factory reset done, configuration needed"));
+                let error = error.context("Factory reset done, configuration needed");
 
                 // Log debug info.
                 tracing::warn!("{error:?}");
 
                 let new_state: AppState<f::Misconfigured, b::Stopped> =
-                    new_state.transition_with((&error, ()));
+                    new_state.transition_with((&errors::bad_configuration(&error), ()));
 
                 tracing::info!("Performed factory reset in {:.0?}.", start.elapsed());
                 // NOTE: Do not return a failure as this is expected behavior.

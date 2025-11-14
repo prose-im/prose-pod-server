@@ -20,7 +20,7 @@ pub(in crate::router) async fn frontend_reload(
 ) -> Result<(), Error> {
     match app_state.do_reload_frontend() {
         Ok(_new_state) => Ok(()),
-        Err(FailState { error, .. }) => Err(errors::bad_configuration(&error)),
+        Err(FailState { error, .. }) => Err(error),
     }
 }
 
@@ -98,7 +98,7 @@ where
     ) -> Result<AppState<f::Running, B>, FailState<f::RunningWithMisconfiguration, B>>
     where
         B: crate::router::HealthTrait + Send + Sync + 'static + Clone,
-        for<'a> (B, &'a Arc<anyhow::Error>): Into<B>,
+        for<'a> (B, &'a crate::responders::Error): Into<B>,
         AppState<f::RunningWithMisconfiguration, B>: AppStateTrait,
     {
         match self.try_reload_frontend() {
@@ -108,7 +108,7 @@ where
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(app_state.transition_failed(error))
+                Err(app_state.transition_failed(errors::bad_configuration(&error)))
             }
         }
     }

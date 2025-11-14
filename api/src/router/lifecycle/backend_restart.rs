@@ -19,8 +19,7 @@ pub(in crate::router) async fn backend_start_again(
 ) -> Result<(), Error> {
     match app_state.do_bootstrapping().await {
         Ok(_) => Ok(()),
-
-        Err(FailState { error, .. }) => Err(errors::start_failed(&error)),
+        Err(FailState { error, .. }) => Err(error),
     }
 }
 
@@ -30,8 +29,7 @@ pub(in crate::router) async fn backend_start_retry(
     let app_state = app_state.with_auto_transition::<_, b::Starting>();
     match app_state.do_bootstrapping().await {
         Ok(_new_state) => Ok(()),
-
-        Err(FailState { error, .. }) => Err(errors::start_failed(&error)),
+        Err(FailState { error, .. }) => Err(error),
     }
 }
 
@@ -42,7 +40,7 @@ pub(in crate::router) async fn backend_restart(
         Ok(_) => Ok(()),
 
         Err(Either::E1(FailState { error, .. }) | Either::E2(FailState { error, .. })) => {
-            Err(errors::restart_failed(&error))
+            Err(error)
         }
     }
 }
@@ -54,7 +52,7 @@ pub(in crate::router) async fn backend_restart_again(
         Ok(_new_state) => Ok(()),
 
         Err(Either::E1(FailState { error, .. }) | Either::E2(FailState { error, .. })) => {
-            Err(errors::restart_failed(&error))
+            Err(error)
         }
     }
 }
@@ -70,7 +68,7 @@ pub(in crate::router) async fn backend_restart_retry(
         Ok(_new_state) => Ok(()),
 
         Err(Either::E1(FailState { error, .. }) | Either::E2(FailState { error, .. })) => {
-            Err(errors::restart_failed(&error))
+            Err(error)
         }
     }
 }
@@ -104,17 +102,20 @@ impl<B> AppState<f::Running, B> {
                 let error = err
                     .context("Could not stop Prosody")
                     .context("Backend restart failed");
-                let error = Arc::new(error);
 
                 // Log debug info.
                 tracing::warn!("{error:?}");
 
-                // Do not transition state if the backend failed to stop. It means
-                // it’s still running. There could be some edge cases where it’s in
-                // fact an internal error that is thrown after the backend has stopped
-                // but in that case we’d have to fix that code so it doesn’t happen.
+                // Do not transition to a failure state if the backend failed
+                // to stop. It means it’s still running. There could be some
+                // edge cases where it’s in fact an internal error that is
+                // thrown after the backend has stopped but in that case we’d
+                // have to fix that code so it doesn’t happen.
+                let new_state = self.set_backend_running();
 
-                return Err(Either::E1(self.set_backend_running().with_error(error)));
+                return Err(Either::E1(
+                    new_state.with_error(errors::restart_failed(&error)),
+                ));
             }
         }
 
@@ -131,7 +132,9 @@ impl<B> AppState<f::Running, B> {
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(Either::E2(app_state.transition_failed(error)))
+                Err(Either::E2(
+                    app_state.transition_failed(errors::restart_failed(&error)),
+                ))
             }
         }
     }

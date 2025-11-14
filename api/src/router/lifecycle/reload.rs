@@ -8,7 +8,6 @@ use axum::extract::State;
 use crate::errors;
 use crate::responders::Error;
 use crate::state::{FailState, prelude::*};
-use crate::util::NoContext as _;
 use crate::util::either::Either;
 
 pub(in crate::router) async fn reload<F>(
@@ -21,7 +20,7 @@ where
     match app_state.try_reload_frontend() {
         Ok(new_state) => match new_state.do_reload_backend().await {
             Ok(_new_state) => Ok(()),
-            Err(FailState { error, .. }) => Err(error.no_context()),
+            Err(FailState { error, .. }) => Err(error),
         },
 
         Err((_, error)) => {
@@ -49,7 +48,9 @@ impl AppState<f::Misconfigured, b::Stopped> {
                 tracing::error!("{error:?}");
 
                 // Update stored error (for better health diagnostics).
-                Err(Either::E1(app_state.transition_failed(error)))
+                Err(Either::E1(
+                    app_state.transition_failed(errors::start_failed(&error)),
+                ))
             }
         }
     }
@@ -60,8 +61,8 @@ pub(in crate::router) async fn init_config(
 ) -> Result<(), Error> {
     match app_state.do_init_config().await {
         Ok(_new_state) => Ok(()),
-        Err(Either::E1(FailState { error, .. })) => Err(errors::bad_configuration(&error)),
-        Err(Either::E2(FailState { error, .. })) => Err(errors::start_failed(&error)),
+        Err(Either::E1(FailState { error, .. })) => Err(error),
+        Err(Either::E2(FailState { error, .. })) => Err(error),
     }
 }
 

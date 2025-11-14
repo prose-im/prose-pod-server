@@ -3,8 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use axum::extract::State;
 
 use crate::responders::Error;
@@ -18,7 +16,7 @@ pub(in crate::router) async fn backend_reload(
 ) -> Result<(), Error> {
     match app_state.do_reload_backend().await {
         Ok(_new_state) => Ok(()),
-        Err(FailState { error, .. }) => Err(error.no_context()),
+        Err(FailState { error, .. }) => Err(error),
     }
 }
 
@@ -47,7 +45,7 @@ impl AppState<f::Running, b::Running> {
 
                 debug_panic_or_log_error!("{error:?}");
 
-                return Err(self.with_error(Arc::new(error)));
+                return Err(self.with_error(error.no_context()));
             }
         }
 
@@ -65,7 +63,7 @@ impl AppState<f::Running, b::Running> {
 
                 debug_panic_or_log_error!("{error:?}");
 
-                return Err(self.with_error(Arc::new(error)));
+                return Err(self.with_error(error.no_context()));
             }
         }
 

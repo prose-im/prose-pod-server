@@ -221,7 +221,7 @@ pub mod frontend {
     pub struct FrontendRunningWithMisconfiguration {
         pub(crate) config: Arc<AppConfig>,
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
-        pub error: Arc<anyhow::Error>,
+        pub error: crate::responders::Error,
     }
 
     state_boilerplate!(FrontendRunningWithMisconfiguration);
@@ -236,7 +236,7 @@ pub mod frontend {
 
     #[derive(Debug, Clone)]
     pub struct FrontendMisconfigured {
-        pub error: Arc<anyhow::Error>,
+        pub error: crate::responders::Error,
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
@@ -263,21 +263,23 @@ pub mod frontend {
 
     // MARK: State transitions
 
-    impl<S: FrontendStateTrait> From<(S, &Arc<anyhow::Error>)> for FrontendMisconfigured {
-        fn from((state, error): (S, &Arc<anyhow::Error>)) -> Self {
+    impl<'a, S: FrontendStateTrait> From<(S, &'a crate::responders::Error)> for FrontendMisconfigured {
+        fn from((state, error): (S, &'a crate::responders::Error)) -> Self {
             Self {
-                error: Arc::clone(error),
+                error: error.to_owned(),
                 tracing_reload_handles: Arc::clone(state.tracing_reload_handles()),
             }
         }
     }
 
-    impl<'a> From<(FrontendRunning, &'a Arc<anyhow::Error>)> for FrontendRunningWithMisconfiguration {
-        fn from((state, error): (FrontendRunning, &'a Arc<anyhow::Error>)) -> Self {
+    impl<'a> From<(FrontendRunning, &'a crate::responders::Error)>
+        for FrontendRunningWithMisconfiguration
+    {
+        fn from((state, error): (FrontendRunning, &'a crate::responders::Error)) -> Self {
             Self {
                 config: state.config,
                 tracing_reload_handles: state.tracing_reload_handles,
-                error: Arc::clone(error),
+                error: error.to_owned(),
             }
         }
     }
@@ -370,7 +372,7 @@ pub mod backend {
 
     #[derive(Debug, Clone)]
     pub struct BackendStartFailed {
-        pub error: Arc<anyhow::Error>,
+        pub error: crate::responders::Error,
     }
 
     state_boilerplate!(BackendStartFailed);
@@ -398,7 +400,7 @@ pub mod backend {
     #[derive(Debug, Clone)]
     pub struct BackendRestartFailed {
         pub state: Arc<Operational>,
-        pub error: Arc<anyhow::Error>,
+        pub error: crate::responders::Error,
     }
 
     state_boilerplate!(BackendRestartFailed);
@@ -419,13 +421,13 @@ pub mod backend {
 
     // MARK: State transitions
 
-    impl_fail_state_from_pair!((BackendStarting => BackendStartFailed, &'a Arc<anyhow::Error>) use error);
+    impl_fail_state_from_pair!((BackendStarting => BackendStartFailed, &'a crate::responders::Error) use error);
 
     impl_trivial_transition!(BackendRunning => BackendRestarting);
     impl_trivial_transition!(BackendRunning => default BackendUndergoingFactoryReset);
 
     impl_trivial_transition!(BackendRestarting => BackendRunning);
-    impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a Arc<anyhow::Error>) use both);
+    impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a crate::responders::Error) use both);
 
     impl_trivial_transition!(BackendRestartFailed => BackendRestarting);
 
@@ -537,49 +539,25 @@ pub struct FailState<F, B> {
     #[allow(dead_code)]
     pub state: AppState<F, B>,
 
-    pub error: Arc<anyhow::Error>,
+    pub error: crate::responders::Error,
 }
 
 impl<F, B> AppState<F, B> {
-    pub fn with_error(self, error: Arc<anyhow::Error>) -> FailState<F, B> {
+    pub fn with_error(self, error: crate::responders::Error) -> FailState<F, B> {
         FailState { state: self, error }
     }
 }
 
-// `AppState` + `Arc<anyhow::Error>` to `AppState` transition.
-impl<F, F2, B, B2> TransitionFrom<AppState<F, B>, Arc<anyhow::Error>> for AppState<F2, B2>
-where
-    AppState<F2, B2>:
-        for<'a> TransitionFrom<AppState<F, B>, (&'a Arc<anyhow::Error>, &'a Arc<anyhow::Error>)>,
-{
-    #[inline]
-    fn transition_from(state: AppState<F, B>, error: Arc<anyhow::Error>) -> Self {
-        AppState::<F2, B2>::transition_from(state, (&error, &error))
-    }
-}
-
-// `AppState` + `anyhow::Error` to `AppState` transition.
-impl<F, B, B2> TransitionFrom<AppState<F, B>, anyhow::Error> for AppState<F, B2>
-where
-    AppState<F, B>: TransitionWith<Self, Arc<anyhow::Error>>,
-{
-    #[inline]
-    fn transition_from(state: AppState<F, B>, error: anyhow::Error) -> Self {
-        TransitionWith::transition_with(state, Arc::new(error))
-    }
-}
-
-// `AppState` + `Arc<anyhow::Error>` to `FailState` transition.
+// `AppState` + `Error` to `FailState` transition.
 impl<F, B> AppState<F, B> {
     #[inline]
-    pub fn transition_failed<F2, B2>(self, error: anyhow::Error) -> FailState<F2, B2>
+    pub fn transition_failed<F2, B2>(self, error: crate::responders::Error) -> FailState<F2, B2>
     where
         Self: for<'a> TransitionWith<
                 AppState<F2, B2>,
-                (&'a Arc<anyhow::Error>, &'a Arc<anyhow::Error>),
+                (&'a crate::responders::Error, &'a crate::responders::Error),
             >,
     {
-        let error = Arc::new(error);
         TransitionWith::transition_with(self, (&error, &error)).with_error(error)
     }
 }
@@ -621,7 +599,7 @@ mod macros {
                 }
             })*
 
-            impl_fail_state_from_pair!(($state, &'a Arc<anyhow::Error>) use left);
+            impl_fail_state_from_pair!(($state, &'a crate::responders::Error) use left);
         };
     }
     pub(super) use state_boilerplate;
@@ -671,7 +649,7 @@ mod macros {
                 #[inline(always)]
                 fn from((_, error): ($left, $(&$lifetime)? $right)) -> Self {
                     Self {
-                        error: Arc::clone(error),
+                        error: error.to_owned(),
                     }
                 }
             }
@@ -697,7 +675,7 @@ mod macros {
                 fn from((left, error): ($other, $(&$lifetime)? $right)) -> Self {
                     Self {
                         state: left.state,
-                        error: Arc::clone(error),
+                        error: error.to_owned(),
                     }
                 }
             }
@@ -709,7 +687,7 @@ mod macros {
                 #[inline(always)]
                 fn from((_, error): ($other, $(&$lifetime)? $right)) -> Self {
                     Self {
-                        error: Arc::clone(error),
+                        error: error.to_owned(),
                     }
                 }
             }
