@@ -47,7 +47,8 @@ tasks:
       - >-
         [[ "$(cat .task/checksum/dev-build-profile)" == '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' ]]
 
-  internal:
+  wip-hg:
+    internal: true
     cmds:
       - pushd plugins/community
       - hg init
