@@ -17,5 +17,6 @@ configuration options.
 
   Prosody-Version Status
   --------------- ----------------------
-  trunk           Works as of 2024-12-21
+  trunk           Works as of 2025-05-25
+  13              Work
   0.12            Does not work

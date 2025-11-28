@@ -108,11 +108,13 @@ local function ringbuffer_log_sink_maker(sink_config)
 	end
 
 	if sink_config.signal then
-		module:hook_global("signal/"..sink_config.signal, handler);
-		event_hooks[handler] = "signal/"..sink_config.signal;
-	elseif sink_config.event then
+		local event_name = "signal/"..sink_config.signal;
+		module:hook_global(event_name, handler);
+		table.insert(event_hooks, { handler, event_name });
+	end
+	if sink_config.event then
 		module:hook_global(sink_config.event, handler);
-		event_hooks[handler] = sink_config.event;
+		table.insert(event_hooks, { handler, sink_config.event });
 	end
 
 	return function (name, level, message, ...)
@@ -122,9 +124,10 @@ local function ringbuffer_log_sink_maker(sink_config)
 end
 
 module:hook_global("reopen-log-files", function()
-	for handler, event_name in pairs(event_hooks) do
+	for i, entry in ipairs(event_hooks) do
+		local handler, event_name = entry[1], entry[2];
 		module:unhook_object_event(prosody.events, event_name, handler);
-		event_hooks[handler] = nil;
+		event_hooks[i] = nil;
 	end
 end, 1);
 

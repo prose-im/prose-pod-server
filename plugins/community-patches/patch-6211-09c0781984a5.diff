@@ -1,0 +1,32 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759562782 -28800
+#      Sat Oct 04 15:26:22 2025 +0800
+# Node ID 09c0781984a50f6051279586f593cb3f42c90402
+# Parent  0e7dc156f1f45282070d9c9d6a1211ab4ffd5b5d
+mod_http_admin_api: Add `jid` to user info objects
+
+diff -r 0e7dc156f1f4 -r 09c0781984a5 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:24:04 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:26:22 2025 +0800
+@@ -242,6 +242,7 @@
+ 	end
+ 
+ 	return {
++		jid = jid.join(username, module.host);
+ 		username = username;
+ 		display_name = display_name;
+ 		role = primary_role and primary_role.name or nil;
+diff -r 0e7dc156f1f4 -r 09c0781984a5 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:24:04 2025 +0800
++++ b/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:26:22 2025 +0800
+@@ -475,6 +475,9 @@
+     User:
+       type: object
+       properties:
++        jid:
++          type: string
++          description: XMPP bare JID of the user
+         username:
+           type: string
+           description: XMPP username of the user

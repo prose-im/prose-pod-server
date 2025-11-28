@@ -1,0 +1,10 @@
+{
+  "overrides": [
+    {
+      "files": ["*.yaml"],
+      "options": {
+        "singleQuote": true
+      }
+    }
+  ]
+}

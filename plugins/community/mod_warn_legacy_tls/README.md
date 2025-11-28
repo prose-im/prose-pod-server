@@ -4,14 +4,13 @@ labels:
 summary: Warn users of obsolete TLS Versions in clients
 ---
 
-
 TLS 1.0 and TLS 1.1 are obsolete. This module warns clients if they are using those versions, to prepare for disabling them. (If you use the default prosody config, this module will be unnessesary in its default setting, since these protocols are not allowed anymore by any supported prosody version.)
 
 This module can be used to warn from TLS1.2 if you want to switch to modern security in the near future.
 
 # Configuration
 
-``` {.lua}
+``` lua
 modules_enabled = {
     -- other modules etc
     "warn_legacy_tls";
@@ -41,7 +40,8 @@ legacy_tls_versions = { "TLSv1", "TLSv1.1", "TLSv1.2" }
 
 # Compatibility
 
-Prosody-Version Status
---------------- ---------------------
-trunk           Works as of 24-12-16
-0.12            Works
+  Prosody-Version   Status
+  ----------------- ----------------------
+  trunk             Works as of 25-05-25
+  13                Works
+  0.12              Works

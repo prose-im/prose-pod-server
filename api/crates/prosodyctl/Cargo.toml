@@ -1,0 +1,19 @@
+[package]
+name = "prosodyctl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+
+[dependencies]
+anyhow = { version = "1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["time", "io-util", "process"] }
+tracing = { version = "0.1", default-features = false }
+secrecy = { version = "0.10", optional = true, default-features = false }
+thiserror = { version = "2", default-features = false }
+
+[features]
+default = []
+secrecy = ["dep:secrecy"]
+mod_groups = []
+mod_invites = []

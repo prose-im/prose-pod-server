@@ -1,0 +1,43 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758277204 -25200
+#      Fri Sep 19 17:20:04 2025 +0700
+# Node ID c3963fb69d24ea83daaf7e7dee81f435be4af83b
+# Parent  8b24da7957133dde10387fa631c6bd228809fe7c
+mod_groups_shell: Add `groups:create`
+
+diff -r 8b24da795713 -r c3963fb69d24 mod_groups_shell/mod_groups_shell.lua
+--- a/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 17:07:04 2025 +0700
++++ b/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 17:20:04 2025 +0700
+@@ -6,6 +6,31 @@
+ 
+ shell_env.groups = {};
+ 
++function shell_env.groups:create(host, group_name, create_default_muc, group_id)
++	local print = self.session.print;
++
++	if not host then
++		return false, "host not given"
++	end
++
++	local mod_groups = modulemanager.get_module(host, "groups_internal")
++	if not mod_groups then
++		return false, host .. " does not have mod_groups_internal loaded"
++	end
++
++	if not group_name then
++		return false, "group name not given"
++	end
++
++	local err
++	group_id, err = mod_groups.create({ name = group_name }, create_default_muc, group_id)
++	if group_id then
++		return true, "Created group " .. group_id
++	else
++		return false, err
++	end
++end
++
+ function shell_env.groups:sync_group(host, group_id)
+ 	local print = self.session.print;
+ 

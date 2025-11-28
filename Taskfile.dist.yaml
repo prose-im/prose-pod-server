@@ -13,4 +13,44 @@ tasks:
 
   update:plugins:
     desc: Update Prosody community modules
-    cmd: hg -R plugins/community pull --update
+    cmds:
+      - hg -R plugins/community pull --update
+      - git add plugins/community
+      - "git commit -m 'feat(prosody): Update Prosody Community modules'"
+    preconditions:
+      - git diff --cached --quiet
+
+  dev:build:
+    desc: Build `proseim/prose-pod-server:local`
+    cmds:
+      - |-
+        docker build -t proseim/prose-pod-server:local \
+          --build-arg VERSION="$(cat VERSION)" \
+          --build-arg COMMIT="$(git rev-parse HEAD)" \
+          --build-arg CARGO_PROFILE='{{ .CARGO_PROFILE }}' \
+          {{ .CLI_ARGS }} \
+          '{{ .ROOT_DIR }}'
+      - echo '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' > .task/checksum/dev-build-profile
+    vars:
+      CARGO_PROFILE: '{{ .CARGO_PROFILE | default "dev" }}'
+    sources:
+      - plugins/**
+      - prosody/**
+      - api/src/**
+      - api/crates/**/src/**
+      - api/Cargo.toml
+      - pod-bootstrap.cfg.lua
+      - VERSION
+      - Dockerfile
+      - .dockerignore
+    status:
+      - >-
+        [[ "$(cat .task/checksum/dev-build-profile)" == '{{ .CARGO_PROFILE }}-{{ .CHECKSUM }}' ]]
+
+  wip-hg:
+    internal: true
+    cmds:
+      - pushd plugins/community
+      - hg init
+      - hg pull https://hg.prosody.im/prosody-modules/
+      - popd

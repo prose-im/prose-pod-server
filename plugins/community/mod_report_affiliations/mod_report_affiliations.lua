@@ -91,7 +91,7 @@ function get_info_element(username)
 	return st.stanza("info", {
 		affiliation = account_type;
 		since = since and dt.datetime(since - (since%86400)) or nil;
-		trust = ("%d"):format(trust);
+		trust = ("%d"):format(trust or 0);
 		xmlns = xmlns_aff;
 	});
 end

@@ -1,0 +1,37 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758196583 -25200
+#      Thu Sep 18 18:56:23 2025 +0700
+# Node ID 0f0a835a5e55e6620074e08d3fcbdd4e4b4b72f1
+# Parent  e29059c45cf972dc3310926011522afca2c4d904
+mod_http_admin_api: Allow choosing a group ID on creation
+
+Adds an `id` field to `POST /groups`, forwarded to `mod_groups.create` which already supported this.
+
+diff -r e29059c45cf9 -r 0f0a835a5e55 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Thu Sep 18 18:54:15 2025 +0700
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Thu Sep 18 18:56:23 2025 +0700
+@@ -610,7 +610,8 @@
+ 		{
+ 			name = group.name;
+ 		},
+-		create_muc
++		create_muc,
++		group.id
+ 	);
+ 	if not group_id then
+ 		return 500;
+diff -r e29059c45cf9 -r 0f0a835a5e55 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Thu Sep 18 18:54:15 2025 +0700
++++ b/mod_http_admin_api/openapi.yaml	Thu Sep 18 18:56:23 2025 +0700
+@@ -652,6 +652,10 @@
+         create_muc:
+           type: boolean
+           description: Create a MUC associated with the group
++        id:
++          type: string
++          description: Predefined group ID
++          nullable: true
+     Group:
+       type: object
+       properties:

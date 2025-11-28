@@ -1,0 +1,88 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1762155156 -28800
+#      Mon Nov 03 15:32:36 2025 +0800
+# Node ID c69edc9c19fff24752086dba7cfeb30f289b2165
+# Parent  ce4069988cd02c01942539f100bd7af6ad05f201
+mod_http_admin_api: Accept `"application/json"` with parameters
+
+Some HTTP clients set `"application/json; charset=utf-8"` for JSON by default.
+Instead of having to add client-side workarounds and cluttering call sites,
+we can just support it by not checking for an exact match.
+
+diff -r ce4069988cd0 -r c69edc9c19ff mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Tue Oct 28 12:10:55 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Mon Nov 03 15:32:36 2025 +0800
+@@ -94,6 +94,18 @@
+ 	return routes;
+ end
+ 
++-- Checks if the content type is `application/json`.
++--
++-- | Input                               | Output  |
++-- | ----------------------------------- | ------- |
++-- | `"application/json"`                | `true`  |
++-- | `"application/json; charset=utf-8"` | `true`  |
++-- | `"application/json+whatever"`       | `false` |
++-- | `"application/foo"`                 | `false` |
++local function is_json(content_type)
++	return content_type:match("^application/json(;|$)") ~= nil
++end
++
+ local function token_info_to_invite_info(token_info)
+ 	local additional_data = token_info.additional_data;
+ 	local groups = additional_data and additional_data.groups or nil;
+@@ -160,7 +172,7 @@
+ 
+ 	local request = event.request;
+ 	if request.body and #request.body > 0 then
+-		if request.headers.content_type ~= json_content_type then
++		if is_json(request.headers.content_type) then
+ 			module:log("warn", "Invalid content type");
+ 			return nil, "invalid-json";
+ 		end
+@@ -500,7 +512,7 @@
+ 	if not current_user then return nil, "user-not-found"; end
+ 
+ 	local request = event.request;
+-	if request.headers.content_type ~= json_content_type
++	if is_json(request.headers.content_type)
+ 	or (not request.body or #request.body == 0) then
+ 		return nil, "invalid-json";
+ 	end
+@@ -531,7 +543,7 @@
+ 	end
+ 
+ 	local request = event.request;
+-	if request.headers.content_type ~= json_content_type
++	if is_json(request.headers.content_type)
+ 	or (not request.body or #request.body == 0) then
+ 		return nil, "invalid-json";
+ 	end
+@@ -635,7 +647,7 @@
+ 
+ function create_group(event)
+ 	local request = event.request;
+-	if request.headers.content_type ~= json_content_type
++	if is_json(request.headers.content_type)
+ 	or (not request.body or #request.body == 0) then
+ 		return nil, "invalid-json";
+ 	end
+@@ -686,7 +698,7 @@
+ 	if not group_id then return nil, "group-not-found"; end
+ 
+ 	local request = event.request;
+-	if request.headers.content_type ~= json_content_type or (not request.body or #request.body == 0) then
++	if is_json(request.headers.content_type) or (not request.body or #request.body == 0) then
+ 		return nil, "invalid-json";
+ 	end
+ 
+@@ -825,7 +837,7 @@
+ 
+ local function post_server_announcement(event)
+ 	local request = event.request;
+-	if request.headers.content_type ~= json_content_type
++	if is_json(request.headers.content_type)
+ 	or (not request.body or #request.body == 0) then
+ 		return nil, "invalid-json";
+ 	end

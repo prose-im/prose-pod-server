@@ -27,10 +27,11 @@ modules_enabled = {
 
 # Compatibility
 
-  ------- ---------------
-  trunk   Works^[as of 2024-10-22]
+  ------- ------------------------
+  trunk   Works as of 2025-06-13
+  13      Works
   0.12    Works
-  ------- ---------------
+  ------- ------------------------
 
 ## XEP version
 

@@ -6,6 +6,7 @@
 
 local encodings = require "util.encodings";
 local base64 = encodings.base64;
+local code2err = require "net.http.errors".registry;
 local errors = require "util.error";
 local http = require "net.http";
 local id = require "util.id";
@@ -64,7 +65,7 @@ local function check_credentials(request) -- > session | boolean, error
 		return nil, post_errors.new("noauthz", { request = request });
 	end
 
-	if auth_type == "basic" then
+	if auth_type == "basic" and module:get_host_type() == "local" then
 		local creds = base64.decode(auth_data);
 		if not creds then
 			return nil, post_errors.new("malformauthz", { request = request });
@@ -81,6 +82,13 @@ local function check_credentials(request) -- > session | boolean, error
 			return false, post_errors.new("unauthz", { request = request });
 		end
 		return { username = username; host = module.host };
+	elseif auth_type == "basic" and module:get_host_type() == "component" then
+		local component_secret = module:get_option_string("component_secret");
+		local creds = base64.decode(auth_data);
+		if creds ~= module.host .. ":" .. component_secret then
+			return nil, post_errors.new("malformauthz", { request = request });
+		end
+		return { host = module.host };
 	elseif auth_type == "bearer" then
 		if tokens.get_token_session then
 			local token_session, err = tokens.get_token_session(auth_data);
@@ -525,8 +533,6 @@ function new_webhook(rest_url, send_type)
 			end
 		end);
 
-	local code2err = require "net.http.errors".registry;
-
 	local function handle_stanza(event)
 		local stanza, origin = event.stanza, event.origin;
 		local reply_allowed = stanza.attr.type ~= "error" and stanza.attr.type ~= "result";
@@ -664,6 +670,7 @@ local supported_errors = {
 
 -- strip some stuff, notably the optional traceback table that casues stack overflow in util.json
 local function simplify_error(e)
+	if not e then return end
 	return {
 		type = e.type;
 		condition = e.condition;
@@ -677,6 +684,11 @@ local http_server = require "net.http.server";
 module:hook_object_event(http_server, "http-error", function (event)
 	local request, response = event.request, event.response;
 	local response_as = decide_type(request and request.headers.accept or "", supported_errors);
+
+	if not event.error and code2err[event.code] then
+		event.error = errors.new(event.code, nil, code2err);
+	end
+
 	if response_as == "application/xmpp+xml" then
 		if response then
 			response.headers.content_type = "application/xmpp+xml";

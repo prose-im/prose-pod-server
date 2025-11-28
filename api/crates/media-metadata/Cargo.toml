@@ -1,0 +1,9 @@
+[package]
+name = "media-metadata"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+
+[dependencies]
+media-type-detect = { path = "../media-type-detect" }

@@ -62,7 +62,7 @@ The possible fields of the logging config entry are:
     may contain a number of variables, described below. Defaults to
     `"{paths.data}/ringbuffer-logs-{pid}-{count}.log"`.
 
-Only one of the following triggers may be specified:
+One or both of the following triggers may be specified:
 
 `signal`
 :   A signal that will cause the buffer to be dumped, e.g. `"SIGUSR2"`.
@@ -70,7 +70,7 @@ Only one of the following triggers may be specified:
     avoid conflicts.
 
 `event`
-:   Alternatively, the name of a Prosody global event that will trigger
+:   The name of a Prosody global event that will trigger
     the logs to be dumped, e.g. `"config-reloaded"`.
 
 ## Filename variables

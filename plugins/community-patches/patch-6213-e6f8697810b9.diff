@@ -1,0 +1,46 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759563246 -28800
+#      Sat Oct 04 15:34:06 2025 +0800
+# Node ID e6f8697810b9f86de4e173c02ae43778aa1e014e
+# Parent  1f7dadae87e2613fb656c1bd380e00196517e837
+mod_http_admin_api: Allow adding additional data to an account register invite
+
+diff -r 1f7dadae87e2 -r e6f8697810b9 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:29:44 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:34:06 2025 +0800
+@@ -180,12 +180,14 @@
+ 			note = options.note;
+ 		}, options.ttl);
+ 	elseif invite_type == "account" then
+-		invite = invites.create_account(options.username, {
+-			source = source;
+-			groups = options.groups;
+-			roles = options.roles;
+-			note = options.note;
+-		}, options.ttl);
++		-- NOTE: This edits the table in-place. However we don’t care as we never
++		--   read the table later. This saves a clone operation.
++		local additional_data = options.additional_data or {};
++		additional_data.source = source;
++		additional_data.groups = options.groups;
++		additional_data.roles = options.roles;
++		additional_data.note = options.note;
++		invite = invites.create_account(options.username, additional_data, options.ttl);
+ 	else
+ 		return 400;
+ 	end
+diff -r 1f7dadae87e2 -r e6f8697810b9 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:29:44 2025 +0800
++++ b/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:34:06 2025 +0800
+@@ -610,6 +610,10 @@
+           type: string
+           nullable: true
+           description: Free-form text note/annotation to help identify the invitation
++        additional_data:
++          type: object
++          description: Free-form object containing additional data to attach to the invite.
++          nullable: true
+     NewGroupInvite:
+       type: object
+       properties:

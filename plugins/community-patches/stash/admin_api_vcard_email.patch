@@ -1,0 +1,52 @@
+diff -r d1be0f55e367 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Tue Oct 14 23:46:53 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Fri Oct 17 11:05:30 2025 +0800
+@@ -29,6 +29,7 @@
+ 
+ local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
+ local xmlns_nick = "http://jabber.org/protocol/nick";
++local xmlns_vcard4 = "urn:ietf:params:xml:ns:vcard-4.0";
+ 
+ assert(mod_lastlog2.get_last_active, "Newer version of mod_lastlog2 is required to use this module");
+ 
+@@ -568,6 +569,40 @@
+ 		end
+ 	end
+ 
++	if new_user.email ~= nil then
++		local pep_service = mod_pep.get_pep_service(username);
++
++		local ok, id, vcard4 = pep_service:get_last_item("urn:xmpp:vcard4", true);
++		if ok and vcard4 then
++			-- Nothing to do, success case.
++		elseif id == "item-not-found" or not id then
++			vcard4 = st.stanza("item", { xmlns = xmlns_pubsub, id = "current" })
++				:tag("vcard", { xmlns = xmlns_vcard4 });
++
++			if new_user.display_name then
++				vcard4:tag("fn"):text_tag("text", new_user.display_name):up();
++			else
++				module:log("warn", "No vCard 4.0 found for '"..username.."' and no `display_name` provided. Setting `FN` to an empty string.");
++				vcard4:tag("fn"):text_tag("text", ""):up();
++			end
++		elseif id == "forbidden" then
++			return 403;
++		else
++			return 500, id;
++		end
++
++		vcard4:tag("email"):text_tag("text", new_user.email):up();
++
++		local ok, err = pep_service:publish("urn:xmpp:vcard4", event.session.full_jid, "current", vcard4);
++		if ok then
++			-- Continue.
++		elseif err == "forbidden" then
++			return 403;
++		else
++			return 500, err;
++		end
++	end
++
+ 	return 200;
+ end
+ 

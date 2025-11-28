@@ -1,0 +1,63 @@
+version: '3'
+
+tasks:
+  preflight:
+    desc: Check that everything is working correctly
+    cmds:
+      - task: lint
+      - task: check
+      - task: test
+
+  lint:
+    desc: Run linters
+    cmds:
+      - task: lint:cargo
+
+  lint:cargo:
+    internal: true
+    cmds:
+      - cargo fmt --check
+
+  check:
+    desc: Try to compile the code with multiple feature flag sets
+    cmds:
+      - task: check:cargo
+
+  check:cargo:
+    internal: true
+    cmds:
+      - cargo check --no-default-features
+      - cargo check --no-default-features --features {{ .MODS }}
+      - cargo check --all-features
+    vars:
+      MODS:
+        sh: >-
+          cargo metadata --format-version=1 --no-deps
+          | jq -r '.packages[]
+            | select(.name == "prosody-http")
+            | .features
+            | keys
+            | map(select(startswith("mod_")))
+            | join(",")'
+
+  test:
+    desc: Run tests
+    cmds:
+      - task: test:cargo
+
+  test:cargo:
+    internal: true
+    cmds:
+      - cargo test --no-default-features
+      - cargo test --no-default-features --features {{ .MODS }}
+      - cargo test --all-features
+    vars:
+      MODS:
+        sh: >-
+          cargo metadata --format-version=1 --no-deps
+          | jq -r '.packages[]
+            | select(.name == "prosody-http")
+            | .features
+            | keys
+            | map(select(startswith("mod_")))
+            | join(",")'

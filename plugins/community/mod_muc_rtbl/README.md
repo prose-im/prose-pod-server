@@ -2,7 +2,7 @@
 summary: 
 rockspec:
   dependencies:
-  - mod_pubsub_subscription
+  - mod_rtbl
 labels:
 - Stage-Alpha
 ...
@@ -23,17 +23,29 @@ modules_enabled = {
 }
 ```
 
-Then there are two options, which must be set under the component or in the
-global section of your config:
+Then you should configure one or more lists you want to subscribe to, supplying
+full or partial URIs (the default node is 'muc_bans_sha256' if unspecified):
 
+```lua
+muc_rtbls = {
+	"rtbl.example";
+	-- Equivalent to above
+	"xmpp:rtbl.example?;node=muc_bans_sha256";
+}
 ```
-muc_rtbl_jid = "rtbl.example"
-muc_rtbl_node = "muc_bans_sha256"
-```
+
+If an unaffiliated JID matches an entry found in any of the configured RTBLs,
+this module will block:
+
+- Joins
+- Group chat messages
+- Private messages
+
+from the JID that matched.
 
 # Compatibility
 
-Should work with Prosody >= 0.11.x
+Should work with Prosody >= 0.12.x
 
 # Developers
 

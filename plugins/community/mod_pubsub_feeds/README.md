@@ -39,7 +39,7 @@ that clients can subscribe to using
 
 This module also implements [WebSub](https://www.w3.org/TR/websub/),
 formerly known as
-[PubSubHubbub](http://pubsubhubbub.googlecode.com/svn/trunk/pubsubhubbub-core-0.3.html).
+[PubSubHubbub](http://web.archive.org/web/20150705085301/http://pubsubhubbub.googlecode.com/svn/trunk/pubsubhubbub-core-0.3.html).
 This allows "feed hubs" to instantly push feed updates to subscribers.
 
 This may be removed in the future since it does not seem to be oft used

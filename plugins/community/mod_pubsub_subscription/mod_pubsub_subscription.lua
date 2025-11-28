@@ -31,9 +31,9 @@ local function subscription_added(item_event)
 	assert(item.node, "pubsub subscription item MUST have a 'node' field.");
 	item.from = item.from or module.host;
 
-	local already_subscibed = false;
+	local already_subscribed = false;
 	for _ in active_subscriptions:iter(item.service, item.node, item.from, nil) do -- luacheck: ignore 512
-		already_subscibed = true;
+		already_subscribed = true;
 		break
 	end
 
@@ -42,10 +42,22 @@ local function subscription_added(item_event)
 	pending_subscription:set(iq_id, item._id);
 	active_subscriptions:set(item.service, item.node, item.from, item._id, item);
 
-	if not already_subscibed then
-		module:send(st.iq({ type = "set", id = iq_id, from = item.from, to = item.service })
-			:tag("pubsub", { xmlns = xmlns_pubsub })
-				:tag("subscribe", { jid = item.from, node = item.node }));
+	if not already_subscribed then
+		local function send_subscribe()
+			module:log("debug", "%s is subscribing to %s:%s", item.from, item.service, item.node);
+			module:send(st.iq({ type = "set", id = iq_id, from = item.from, to = item.service })
+				:tag("pubsub", { xmlns = xmlns_pubsub })
+					:tag("subscribe", { jid = item.from, node = item.node }));
+		end
+
+		if prosody.start_time then
+			send_subscribe();
+		else
+			module:log("debug", "%s will subscribe to %s:%s after server startup", item.from, item.service, item.node);
+			module:hook_global("server-started", send_subscribe);
+		end
+	else
+		module:log("debug", "%s is already subscribed to %s:%s", item.from, item.service, item.node);
 	end
 end
 
@@ -65,7 +77,7 @@ for _, event_name in ipairs(valid_events) do
 	end);
 end
 
-function handle_iq(context, event)
+function handle_iq(context, event) --luacheck: ignore 212/context
 	local stanza = event.stanza;
 	local service = stanza.attr.from;
 

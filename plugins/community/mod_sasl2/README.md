@@ -31,6 +31,7 @@ This module requires Prosody **trunk** and is not compatible with 0.12 or older 
 
      Prosody Version           Status
   -----------------------  ----------------
-  trunk as of 2024-11-24   Works
+  trunk as of 2025-05-25   Works
+  13                       Works
   0.12                     Does not work
   -----------------------  ----------------

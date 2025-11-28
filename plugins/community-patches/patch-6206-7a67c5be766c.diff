@@ -1,0 +1,20 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1758310159 -25200
+#      Sat Sep 20 02:29:19 2025 +0700
+# Node ID 7a67c5be766c51527ee9fcb2c51ad29996e8561b
+# Parent  c3963fb69d24ea83daaf7e7dee81f435be4af83b
+mod_groups_shell: Improve success log of `groups:sync_group`
+
+diff -r c3963fb69d24 -r 7a67c5be766c mod_groups_shell/mod_groups_shell.lua
+--- a/mod_groups_shell/mod_groups_shell.lua	Fri Sep 19 17:20:04 2025 +0700
++++ b/mod_groups_shell/mod_groups_shell.lua	Sat Sep 20 02:29:19 2025 +0700
+@@ -58,7 +58,7 @@
+ 	-- NOTE: This operation is O(n^2).
+ 	ok, err = mod_groups.sync(group_id)
+ 	if ok then
+-		return true, "Synchronised members"
++		return true, "Synchronised group " .. group_id
+ 	else
+ 		return ok, err
+ 	end

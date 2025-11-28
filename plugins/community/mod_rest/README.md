@@ -37,13 +37,11 @@ modules_enabled = {"rest"}
 
 ## As a Component
 
-If you install this as a component, you won't be able to use user authentication above,
-and must use OAuth2 authentication outlined below.
+If you install this as a component, the HTTP Basic credentials are the components base JID along with its secret.
 
 ``` {.lua}
 Component "chat.example.com" "rest"
 component_secret = "dmVyeSBzZWNyZXQgdG9rZW4K"
-modules_enabled = {"http_oauth2"}
 ```
 
 ## User authentication
@@ -63,11 +61,10 @@ prosodyctl adduser admin@chat.example.com
 and lastly, drop the "@host" from the username in your http queries, EG:
 
 ```lua
-curl \
-  https://chat.example.com:5281/rest/version/chat.example.com \
-  -k \
+curl -sf \
+  -H 'Accept: application/json' \
   --user admin \
-  -H 'Accept: application/json'
+  https://chat.example.com:5281/rest/version/chat.example.com
 ```
 
 ## OAuth2

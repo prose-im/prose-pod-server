@@ -52,6 +52,7 @@ prosodyctl mod_audit user@example.com
 
 # Compatibilty
 
-Requires Prosody **trunk** as of 2025-02-11.
-
-Does not work with Prosody 0.12 or earlier.
+  Prosody-Version   Status
+  ----------------- ---------------
+  13.0              Works
+  0.12              Does not work

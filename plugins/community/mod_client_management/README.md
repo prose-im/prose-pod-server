@@ -43,8 +43,8 @@ prosodyctl shell user revoke_client user@example.com grant/xxxxx
 
 ## Compatibility
 
-Requires Prosody trunk (as of 2023-03-29). Not compatible with Prosody 0.12
-and earlier.
+Requires Prosody 13.0.
+Not compatible with Prosody 0.12 and earlier.
 
 ## Developers
 

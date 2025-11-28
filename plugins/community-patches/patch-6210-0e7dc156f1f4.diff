@@ -1,0 +1,43 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1759562644 -28800
+#      Sat Oct 04 15:24:04 2025 +0800
+# Node ID 0e7dc156f1f45282070d9c9d6a1211ab4ffd5b5d
+# Parent  0c2e3378e854d80fd41cc22ba9f41f0db8c9a38b
+mod_http_admin_api: Allow adding additional data to a password reset invite
+
+diff -r 0c2e3378e854 -r 0e7dc156f1f4 mod_http_admin_api/mod_http_admin_api.lua
+--- a/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 13:02:45 2025 +0800
++++ b/mod_http_admin_api/mod_http_admin_api.lua	Sat Oct 04 15:24:04 2025 +0800
+@@ -150,7 +150,13 @@
+ 		if not options.username then
+ 			return 400;
+ 		end
+-		invite = invites.create_account_reset(options.username, options.ttl);
++		local info = debug.getinfo(invites.create_account_reset, "u");
++		if info.nparams == 3 then
++			invite = invites.create_account_reset(options.username, options.additional_data, options.ttl);
++		else
++			-- COMPAT w/ previous versions not accepting `additional_data`
++			invite = invites.create_account_reset(options.username, options.ttl);
++		end
+ 	elseif invite_type == "group" then
+ 		if not options.groups then
+ 			return 400;
+diff -r 0c2e3378e854 -r 0e7dc156f1f4 mod_http_admin_api/openapi.yaml
+--- a/mod_http_admin_api/openapi.yaml	Sat Oct 04 13:02:45 2025 +0800
++++ b/mod_http_admin_api/openapi.yaml	Sat Oct 04 15:24:04 2025 +0800
+@@ -640,6 +640,13 @@
+           type: number
+           description: Time in seconds that the link will be valid. Defaults to 24 hours.
+           nullable: true
++        additional_data:
++          type: object
++          description: |-
++            Free-form object containing additional data to attach to the invite.
++
++            NOTE: Doesn’t work with all Prosody versions (needs a non-released patch).
++          nullable: true
+     NewGroup:
+       type: object
+       properties:

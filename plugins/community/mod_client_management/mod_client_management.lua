@@ -430,18 +430,18 @@ end);
 
 -- Command
 
-module:on_ready(function ()
-	local console_env = module:shared("/*/admin_shell/env");
-	if not console_env.user then return; end -- admin_shell probably not loaded
+module:add_item("shell-command", {
+	section = "user";
+	name = "clients";
+	desc = "List a user's clients";
+	args = {
+		{ name = "jid"; type = "string" }
+	};
+	host_selector = "jid";
+	handler = function(self, user_jid)
+		local username = jid.split(user_jid);
 
-	function console_env.user:clients(user_jid)
-		local username, host = jid.split(user_jid);
-		local mod = prosody.hosts[host] and prosody.hosts[host].modules.client_management;
-		if not mod then
-			return false, ("Host does not exist on this server, or does not have mod_client_management loaded");
-		end
-
-		local clients = mod.get_active_clients(username);
+		local clients = get_active_clients(username);
 		if not clients or #clients == 0 then
 			return true, "No clients associated with this account";
 		end
@@ -516,18 +516,24 @@ module:on_ready(function ()
 		print(string.rep("-", self.session.width));
 		return true, ("%d clients"):format(#clients);
 	end
+});
 
-	function console_env.user:revoke_client(user_jid, selector) -- luacheck: ignore 212/self
-		local username, host = jid.split(user_jid);
-		local mod = prosody.hosts[host] and prosody.hosts[host].modules.client_management;
-		if not mod then
-			return false, ("Host does not exist on this server, or does not have mod_client_management loaded");
-		end
+module:add_item("shell-command", {
+	section = "user";
+	name = "revoke_client";
+	desc = "Revoke access from a user's client";
+	args = {
+		{ name = "jid"; type = "string" };
+		{ name = "selector"; type = "string" };
+	};
+	host_selector = "jid";
+	handler = function(self, user_jid, selector) -- luacheck: ignore 212/self
+		local username = jid.split(user_jid);
 
-		local revoked, err = revocation_errors.coerce(mod.revoke_client_access(username, selector));
+		local revoked, err = revocation_errors.coerce(revoke_client_access(username, selector));
 		if not revoked then
 			return false, err.text or err;
 		end
 		return true, "Client access revoked";
 	end
-end);
+});

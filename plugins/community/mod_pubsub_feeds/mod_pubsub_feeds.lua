@@ -228,7 +228,7 @@ function handle_http_request(event)
 		if query["hub.mode"] == "unsubscribe" then
 			-- Unsubscribe from unknown feed
 			module:log("debug", "Unsubscribe from unknown feed %s -- %s", query["hub.topic"], formencode(query));
-			return query["hub.challenge"];
+			return { headers = { content_type = "text/plain" }; body = query["hub.challenge"] };
 		end
 		module:log("debug", "Push for unknown feed %s -- %s", query["hub.topic"], formencode(query));
 		return 404;
@@ -254,7 +254,7 @@ function handle_http_request(event)
 			if lease_seconds then
 				feed.lease_expires = time() + lease_seconds - refresh_interval * 2;
 			end
-			return query["hub.challenge"];
+			return { headers = { content_type = "text/plain" }; body = query["hub.challenge"] };
 		end
 		return 400;
 	elseif method == "POST" then

@@ -34,8 +34,9 @@ module:depends("http");
 local invites = module:depends("invites");
 local invites_page = module:depends("invites_page");
 
+local template_path = module:get_option_string("invites_register_template_path", "html");
 function serve_register_page(event)
-	local register_page_template = assert(module:load_resource("html/register.html")):read("*a");
+	local register_page_template = assert(module:load_resource(template_path .. "/register.html")):read("*a");
 
 	local query_params = event.request.url.query and http_formdecode(event.request.url.query);
 
@@ -71,8 +72,8 @@ function handle_register_form(event)
 	local user, password, token = form_data["user"], form_data["password"], form_data["token"];
 	local app_id = form_data["app_id"];
 
-	local register_page_template = assert(module:load_resource("html/register.html")):read("*a");
-	local error_template = assert(module:load_resource("html/register_error.html")):read("*a");
+	local register_page_template = assert(module:load_resource(template_path .. "/register.html")):read("*a");
+	local error_template = assert(module:load_resource(template_path .. "/register_error.html")):read("*a");
 
 	local invite = invites.get(token);
 	if not invite then
@@ -201,9 +202,9 @@ function handle_register_form(event)
 				};
 			end
 			-- If recognised app, we serve a page that includes setup instructions
-			success_template = assert(module:load_resource("html/register_success_setup.html")):read("*a");
+			success_template = assert(module:load_resource(template_path .. "/register_success_setup.html")):read("*a");
 		else
-			success_template = assert(module:load_resource("html/register_success.html")):read("*a");
+			success_template = assert(module:load_resource(template_path .. "/register_success.html")):read("*a");
 		end
 
 		-- Due to the credentials being served here, ensure that

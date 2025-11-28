@@ -1,0 +1,22 @@
+# HG changeset patch
+# User Rémi Bardon <remi@remibardon.name>
+# Date 1761624655 -28800
+#      Tue Oct 28 12:10:55 2025 +0800
+# Node ID ce4069988cd02c01942539f100bd7af6ad05f201
+# Parent  c76296d94e1299745b554f907b019e00cf1dc5ac
+mod_http_oauth2: Add debug log when client_id is incorrect in POST /token
+
+diff -r c76296d94e12 -r ce4069988cd0 mod_http_oauth2/mod_http_oauth2.lua
+--- a/mod_http_oauth2/mod_http_oauth2.lua	Mon Oct 27 12:56:43 2025 +0800
++++ b/mod_http_oauth2/mod_http_oauth2.lua	Tue Oct 28 12:10:55 2025 +0800
+@@ -910,8 +910,9 @@
+ 	if not params.client_id then return oauth_error("invalid_request", "missing 'client_id'"); end
+ 	if not params.client_secret then return oauth_error("invalid_request", "missing 'client_secret'"); end
+ 
+-	local client = check_client(params.client_id);
++	local client, err = check_client(params.client_id);
+ 	if not client then
++		module:log("debug", "Incorrect credentials (client_id): "..err);
+ 		return oauth_error("invalid_client", "incorrect credentials");
+ 	end
+ 

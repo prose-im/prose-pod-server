@@ -1,0 +1,6 @@
+[package]
+name = "media-type-detect"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]

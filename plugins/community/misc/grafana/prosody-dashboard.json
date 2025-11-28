@@ -1,11 +1,9 @@
 {
-   "description" : "",
    "editable" : true,
    "fiscalYearStartMonth" : 0,
    "graphTooltip" : 1,
    "id" : 1,
    "links" : [],
-   "liveNow" : false,
    "panels" : [
       {
          "collapsed" : false,
@@ -21,6 +19,7 @@
          "type" : "row"
       },
       {
+         "description" : "This panel requires [mod_measure_process](https://modules.prosody.im/mod_measure_process.html)",
          "fieldConfig" : {
             "defaults" : {
                "color" : {
@@ -34,6 +33,7 @@
                   "axisLabel" : "",
                   "axisPlacement" : "right",
                   "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
                   "drawStyle" : "line",
                   "fillOpacity" : 10,
                   "gradientMode" : "scheme",
@@ -68,8 +68,7 @@
                   "mode" : "absolute",
                   "steps" : [
                      {
-                        "color" : "green",
-                        "value" : null
+                        "color" : "green"
                      },
                      {
                         "color" : "red",
@@ -96,26 +95,33 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
-         "pluginVersion" : "8.2.5",
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "rate(process_cpu_seconds_total{job=\"prosody\"}[$__interval])",
+               "expr" : "rate(process_cpu_seconds_total{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
                "instant" : false,
                "interval" : "",
                "intervalFactor" : 2,
                "legendFormat" : "usage",
-               "refId" : "A"
+               "refId" : "A",
+               "useBackend" : false
             }
          ],
          "title" : "CPU",
          "type" : "timeseries"
       },
       {
+         "description" : "This panel requires [mod_measure_lua](https://modules.prosody.im/mod_measure_lua.html), [mod_measure_malloc](https://modules.prosody.im/mod_measure_malloc.html), and [mod_measure_process](https://modules.prosody.im/mod_measure_process.html),",
          "fieldConfig" : {
             "defaults" : {
                "color" : {
@@ -128,6 +134,7 @@
                   "axisLabel" : "",
                   "axisPlacement" : "right",
                   "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
                   "drawStyle" : "line",
                   "fillOpacity" : 10,
                   "gradientMode" : "none",
@@ -162,8 +169,7 @@
                   "mode" : "percentage",
                   "steps" : [
                      {
-                        "color" : "green",
-                        "value" : null
+                        "color" : "green"
                      }
                   ]
                },
@@ -177,9 +183,9 @@
                      "options" : {
                         "mode" : "exclude",
                         "names" : [
+                           "Lua",
                            "RSS",
-                           "Used",
-                           "Lua"
+                           "Used"
                         ],
                         "prefix" : "All except:",
                         "readOnly" : true
@@ -213,60 +219,79 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
-         "pluginVersion" : "8.2.5",
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
+               "disableTextWrap" : false,
+               "editorMode" : "code",
                "exemplar" : true,
-               "expr" : "max_over_time(process_virtual_memory_bytes{job=\"prosody\"}[$__interval])",
+               "expr" : "max_over_time(process_virtual_memory_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "fullMetaSearch" : false,
                "hide" : false,
+               "includeNullMetadata" : true,
                "interval" : "",
                "intervalFactor" : 1,
                "legendFormat" : "Virtual",
-               "refId" : "VIRT"
+               "range" : true,
+               "refId" : "VIRT",
+               "useBackend" : false
             },
             {
                "exemplar" : false,
-               "expr" : "max_over_time(process_resident_memory_bytes{job=\"prosody\"}[$__interval])",
+               "expr" : "max_over_time(process_resident_memory_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "interval" : "",
                "legendFormat" : "RSS",
                "refId" : "RSS"
             },
             {
                "exemplar" : false,
-               "expr" : "max_over_time(malloc_heap_allocated_bytes{job=\"prosody\"}[$__interval])",
+               "expr" : "max_over_time(malloc_heap_allocated_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "hide" : false,
                "interval" : "",
                "legendFormat" : "Allocated ({{mode}})",
                "refId" : "Malloc allocated"
             },
             {
+               "editorMode" : "code",
                "exemplar" : false,
-               "expr" : "max_over_time(malloc_heap_used_bytes{job=\"prosody\"}[$__interval])",
+               "expr" : "max_over_time(malloc_heap_used_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "hide" : false,
                "interval" : "",
                "legendFormat" : "Used",
+               "range" : true,
                "refId" : "Malloc Used"
             },
             {
+               "editorMode" : "code",
                "exemplar" : false,
-               "expr" : "max_over_time(lua_heap_bytes{job=\"prosody\"}[$__interval])",
+               "expr" : "max_over_time(lua_heap_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "hide" : false,
                "interval" : "",
                "legendFormat" : "Lua",
+               "range" : true,
                "refId" : "Lua"
             },
             {
                "exemplar" : false,
-               "expr" : "sum(lua_heap_bytes{job=\"prosody\"}) / (sum(prosody_mod_c2s__connections{job=\"prosody\"})+sum(prosody_mod_s2s__connections_inbound{job=\"prosody\"})+sum(prosody_mod_s2s__connections_outbound{job=\"prosody\"}))",
+               "expr" : "sum(lua_heap_bytes{job=~\"$job\",instance=~\"$instance\"}) / (\nsum(prosody_mod_c2s__connections{job=~\"$job\",instance=~\"$instance\"}) +\nsum(prosody_mod_s2s__connections_inbound{job=~\"$job\",instance=~\"$instance\"}) +\nsum(prosody_mod_s2s__connections_outbound{job=~\"$job\",instance=~\"$instance\"})\n)",
                "hide" : false,
                "interval" : "",
                "legendFormat" : "Lua (per connection)",
                "refId" : "LuaPerConn"
+            },
+            {
+               "editorMode" : "code",
+               "expr" : "max_over_time(malloc_heap_unused_bytes{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
+               "hide" : false,
+               "instant" : false,
+               "legendFormat" : "Unused",
+               "range" : true,
+               "refId" : "A"
             }
          ],
          "title" : "Memory",
@@ -298,6 +323,7 @@
                   "axisLabel" : "",
                   "axisPlacement" : "right",
                   "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
                   "drawStyle" : "line",
                   "fillOpacity" : 100,
                   "gradientMode" : "none",
@@ -329,8 +355,7 @@
                   "mode" : "absolute",
                   "steps" : [
                      {
-                        "color" : "green",
-                        "value" : null
+                        "color" : "green"
                      },
                      {
                         "color" : "red",
@@ -357,14 +382,16 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "exemplar" : true,
-               "expr" : "prosody_mod_c2s__connections{type=\"c2s\"}",
+               "expr" : "prosody_mod_c2s__connections{job=~\"$job\",instance=~\"$instance\",type=\"c2s\"}",
                "interval" : "",
                "legendFormat" : "{{ip_family}} {{type}}",
                "refId" : "c2s"
@@ -386,6 +413,7 @@
                   "axisLabel" : "",
                   "axisPlacement" : "right",
                   "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
                   "drawStyle" : "line",
                   "fillOpacity" : 100,
                   "gradientMode" : "none",
@@ -417,8 +445,7 @@
                   "mode" : "absolute",
                   "steps" : [
                      {
-                        "color" : "green",
-                        "value" : null
+                        "color" : "green"
                      },
                      {
                         "color" : "red",
@@ -445,21 +472,23 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "exemplar" : true,
-               "expr" : "sum(prosody_mod_s2s__connections_inbound{type=\"s2sin\"}) by (ip_family)",
+               "expr" : "sum(prosody_mod_s2s__connections_inbound{job=~\"$job\",instance=~\"$instance\",type=\"s2sin\"}) by (ip_family)",
                "interval" : "",
                "legendFormat" : "{{ip_family}} s2sin",
                "refId" : "s2sin"
             },
             {
                "exemplar" : true,
-               "expr" : "sum(prosody_mod_s2s__connections_outbound{type=\"s2sout\"}) by (ip_family)",
+               "expr" : "sum(prosody_mod_s2s__connections_outbound{job=~\"$job\",instance=~\"$instance\",type=\"s2sout\"}) by (ip_family)",
                "hide" : false,
                "interval" : "",
                "legendFormat" : "{{ip_family}} s2sout",
@@ -517,7 +546,8 @@
                "layout" : "auto"
             },
             "tooltip" : {
-               "show" : true,
+               "mode" : "single",
+               "showColorScale" : false,
                "yHistogram" : false
             },
             "yAxis" : {
@@ -525,13 +555,13 @@
                "reverse" : false
             }
          },
-         "pluginVersion" : "10.2.2",
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : false,
-               "expr" : "changes(prosody_mod_c2s__encrypted_total[$__interval])",
+               "expr" : "changes(prosody_mod_c2s__encrypted_total{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "fullMetaSearch" : false,
                "includeNullMetadata" : true,
                "interval" : "10m",
@@ -592,7 +622,8 @@
                "layout" : "auto"
             },
             "tooltip" : {
-               "show" : true,
+               "mode" : "single",
+               "showColorScale" : false,
                "yHistogram" : false
             },
             "yAxis" : {
@@ -600,13 +631,13 @@
                "reverse" : false
             }
          },
-         "pluginVersion" : "10.2.2",
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : false,
-               "expr" : "changes(prosody_mod_s2s__encrypted_total[$__interval])",
+               "expr" : "changes(prosody_mod_s2s__encrypted_total{job=~\"$job\",instance=~\"$instance\"}[$__interval])",
                "format" : "time_series",
                "fullMetaSearch" : false,
                "includeNullMetadata" : true,
@@ -635,15 +666,6 @@
          "type" : "row"
       },
       {
-         "cards" : {},
-         "color" : {
-            "cardColor" : "#b4ff00",
-            "colorScale" : "sqrt",
-            "colorScheme" : "interpolateRdYlGn",
-            "exponent" : 0.5,
-            "mode" : "spectrum"
-         },
-         "dataFormat" : "tsbuckets",
          "description" : "How long a session has been hibernating when a client resumes it",
          "fieldConfig" : {
             "defaults" : {
@@ -666,13 +688,7 @@
             "x" : 0,
             "y" : 27
          },
-         "heatmap" : {},
-         "hideZeroBuckets" : true,
-         "highlightCards" : true,
          "id" : 14,
-         "legend" : {
-            "show" : true
-         },
          "options" : {
             "calculate" : false,
             "calculation" : {},
@@ -701,7 +717,8 @@
             },
             "showValue" : "never",
             "tooltip" : {
-               "show" : true,
+               "mode" : "single",
+               "showColorScale" : false,
                "yHistogram" : false
             },
             "yAxis" : {
@@ -711,18 +728,17 @@
                "unit" : "clocks"
             }
          },
-         "pluginVersion" : "10.2.2",
-         "reverseYBuckets" : false,
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "sum by(le) (changes(prosody_mod_smacks__resumption_age_seconds_bucket{host=\"$virtualhost\"}[$__interval]))",
+               "expr" : "rate(prosody_mod_smacks__resumption_age_seconds_bucket{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
                "format" : "heatmap",
                "fullMetaSearch" : false,
-               "includeNullMetadata" : true,
-               "interval" : "600",
+               "includeNullMetadata" : false,
+               "interval" : "",
                "legendFormat" : "{{le}}",
                "range" : true,
                "refId" : "A",
@@ -730,20 +746,7 @@
             }
          ],
          "title" : "Resumption Age",
-         "tooltip" : {
-            "show" : true,
-            "showHistogram" : false
-         },
-         "type" : "heatmap",
-         "xAxis" : {
-            "show" : true
-         },
-         "yAxis" : {
-            "format" : "clocks",
-            "logBase" : 1,
-            "show" : true
-         },
-         "yBucketBound" : "upper"
+         "type" : "heatmap"
       },
       {
          "fieldConfig" : {
@@ -758,6 +761,7 @@
                   "axisLabel" : "",
                   "axisPlacement" : "auto",
                   "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
                   "drawStyle" : "line",
                   "fillOpacity" : 0,
                   "gradientMode" : "none",
@@ -788,8 +792,7 @@
                   "mode" : "absolute",
                   "steps" : [
                      {
-                        "color" : "green",
-                        "value" : null
+                        "color" : "green"
                      },
                      {
                         "color" : "red",
@@ -816,29 +819,39 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
-               "editorMode" : "code",
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "rate(prosody_mod_smacks__tx_queued_stanzas_total{host=\"$virtualhost\"}[$__interval])",
+               "expr" : "rate(prosody_mod_smacks__tx_queued_stanzas_total{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__interval])",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
                "interval" : "600",
                "legendFormat" : "queued on {{host}}",
                "range" : true,
-               "refId" : "A"
+               "refId" : "A",
+               "useBackend" : false
             },
             {
+               "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "rate(prosody_mod_smacks__tx_acked_stanzas_count{host=\"$virtualhost\"}[$__interval])",
+               "expr" : "rate(prosody_mod_smacks__tx_acked_stanzas_count{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__interval])",
+               "fullMetaSearch" : false,
                "hide" : false,
+               "includeNullMetadata" : true,
                "interval" : "600",
                "legendFormat" : "acked on {{host}}",
                "range" : true,
-               "refId" : "B"
+               "refId" : "B",
+               "useBackend" : false
             }
          ],
          "title" : "Stanzas",
@@ -860,55 +873,16 @@
       {
          "fieldConfig" : {
             "defaults" : {
-               "color" : {
-                  "mode" : "palette-classic"
-               },
                "custom" : {
-                  "axisBorderShow" : false,
-                  "axisCenteredZero" : false,
-                  "axisColorMode" : "text",
-                  "axisLabel" : "",
-                  "axisPlacement" : "auto",
-                  "barAlignment" : 0,
-                  "drawStyle" : "points",
-                  "fillOpacity" : 0,
-                  "gradientMode" : "none",
                   "hideFrom" : {
                      "legend" : false,
                      "tooltip" : false,
                      "viz" : false
                   },
-                  "insertNulls" : false,
-                  "lineInterpolation" : "linear",
-                  "lineWidth" : 1,
-                  "pointSize" : 5,
                   "scaleDistribution" : {
                      "type" : "linear"
-                  },
-                  "showPoints" : "auto",
-                  "spanNulls" : false,
-                  "stacking" : {
-                     "group" : "A",
-                     "mode" : "none"
-                  },
-                  "thresholdsStyle" : {
-                     "mode" : "off"
                   }
-               },
-               "mappings" : [],
-               "thresholds" : {
-                  "mode" : "absolute",
-                  "steps" : [
-                     {
-                        "color" : "green"
-                     },
-                     {
-                        "color" : "red",
-                        "value" : 80
-                     }
-                  ]
-               },
-               "unit" : "s"
+               }
             },
             "overrides" : []
          },
@@ -920,32 +894,135 @@
          },
          "id" : 18,
          "options" : {
+            "calculate" : false,
+            "cellGap" : 1,
+            "color" : {
+               "exponent" : 0.5,
+               "fill" : "dark-orange",
+               "mode" : "scheme",
+               "reverse" : false,
+               "scale" : "exponential",
+               "scheme" : "RdYlGn",
+               "steps" : 64
+            },
+            "exemplars" : {
+               "color" : "rgba(255,0,255,0.7)"
+            },
+            "filterValues" : {
+               "le" : 1e-09
+            },
             "legend" : {
-               "calcs" : [],
-               "displayMode" : "list",
-               "placement" : "bottom",
-               "showLegend" : true
+               "show" : true
+            },
+            "rowsFrame" : {
+               "layout" : "auto"
             },
             "tooltip" : {
                "mode" : "single",
-               "sort" : "none"
+               "showColorScale" : false,
+               "yHistogram" : false
+            },
+            "yAxis" : {
+               "axisPlacement" : "left",
+               "reverse" : false,
+               "unit" : "s"
             }
          },
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
+               "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : false,
-               "expr" : "histogram_quantile(0.95, sum by(le) (rate(prosody_mod_csi_simple__buffer_hold_seconds_bucket{host=\"$virtualhost\"}[$__rate_interval])))",
-               "format" : "time_series",
+               "expr" : "rate(prosody_mod_csi_simple__buffer_hold_seconds_bucket{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
+               "format" : "heatmap",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : false,
                "instant" : false,
                "interval" : "",
-               "legendFormat" : "CSI hold seconds",
+               "legendFormat" : "__auto",
                "range" : true,
-               "refId" : "A"
+               "refId" : "A",
+               "useBackend" : false
             }
          ],
          "title" : "Hold time",
-         "type" : "timeseries"
+         "type" : "heatmap"
+      },
+      {
+         "fieldConfig" : {
+            "defaults" : {
+               "custom" : {
+                  "hideFrom" : {
+                     "legend" : false,
+                     "tooltip" : false,
+                     "viz" : false
+                  },
+                  "scaleDistribution" : {
+                     "type" : "linear"
+                  }
+               }
+            },
+            "overrides" : []
+         },
+         "gridPos" : {
+            "h" : 8,
+            "w" : 12,
+            "x" : 12,
+            "y" : 36
+         },
+         "id" : 20,
+         "options" : {
+            "calculate" : false,
+            "cellGap" : 1,
+            "color" : {
+               "exponent" : 0.5,
+               "fill" : "dark-orange",
+               "mode" : "scheme",
+               "reverse" : false,
+               "scale" : "exponential",
+               "scheme" : "PRGn",
+               "steps" : 64
+            },
+            "exemplars" : {
+               "color" : "rgba(255,0,255,0.7)"
+            },
+            "filterValues" : {
+               "le" : 1e-09
+            },
+            "legend" : {
+               "show" : true
+            },
+            "rowsFrame" : {
+               "layout" : "auto"
+            },
+            "tooltip" : {
+               "mode" : "single",
+               "showColorScale" : false,
+               "yHistogram" : false
+            },
+            "yAxis" : {
+               "axisPlacement" : "left",
+               "reverse" : false
+            }
+         },
+         "pluginVersion" : "11.6.0",
+         "targets" : [
+            {
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
+               "expr" : "rate(prosody_mod_csi_simple__flush_stanza_count_bucket{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
+               "format" : "heatmap",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : false,
+               "legendFormat" : "Stanzas flushed",
+               "range" : true,
+               "refId" : "A",
+               "useBackend" : false
+            }
+         ],
+         "title" : "Flush sizes",
+         "type" : "heatmap"
       },
       {
          "fieldConfig" : {
@@ -960,8 +1037,9 @@
                   "axisLabel" : "",
                   "axisPlacement" : "auto",
                   "barAlignment" : 0,
-                  "drawStyle" : "points",
-                  "fillOpacity" : 0,
+                  "barWidthFactor" : 0.6,
+                  "drawStyle" : "line",
+                  "fillOpacity" : 50,
                   "gradientMode" : "none",
                   "hideFrom" : {
                      "legend" : false,
@@ -969,7 +1047,7 @@
                      "viz" : false
                   },
                   "insertNulls" : false,
-                  "lineInterpolation" : "linear",
+                  "lineInterpolation" : "smooth",
                   "lineWidth" : 1,
                   "pointSize" : 5,
                   "scaleDistribution" : {
@@ -979,7 +1057,7 @@
                   "spanNulls" : false,
                   "stacking" : {
                      "group" : "A",
-                     "mode" : "none"
+                     "mode" : "percent"
                   },
                   "thresholdsStyle" : {
                      "mode" : "off"
@@ -1005,10 +1083,10 @@
          "gridPos" : {
             "h" : 8,
             "w" : 12,
-            "x" : 12,
-            "y" : 36
+            "x" : 0,
+            "y" : 44
          },
-         "id" : 20,
+         "id" : 32,
          "options" : {
             "legend" : {
                "calcs" : [],
@@ -1017,21 +1095,121 @@
                "showLegend" : true
             },
             "tooltip" : {
+               "hideZeros" : false,
                "mode" : "single",
                "sort" : "none"
             }
          },
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
+               "disableTextWrap" : false,
                "editorMode" : "builder",
-               "expr" : "histogram_quantile(0.95, sum by(le) (rate(prosody_mod_csi_simple__flush_stanza_count_bucket{host=\"$virtualhost\"}[$__rate_interval])))",
+               "expr" : "avg_over_time(prosody_mod_csi__state_sessions{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__interval])",
                "format" : "time_series",
-               "legendFormat" : "Stanzas flushed",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
+               "legendFormat" : "{{csi_state}}",
                "range" : true,
-               "refId" : "A"
+               "refId" : "A",
+               "useBackend" : false
             }
          ],
-         "title" : "Flush sizes",
+         "title" : "CSI States",
+         "type" : "timeseries"
+      },
+      {
+         "description" : "This panel requires [mod_measure_conn_buffers](https://modules.prosody.im/mod_measure_conn_buffers.html)",
+         "fieldConfig" : {
+            "defaults" : {
+               "color" : {
+                  "mode" : "palette-classic"
+               },
+               "custom" : {
+                  "axisBorderShow" : false,
+                  "axisCenteredZero" : false,
+                  "axisColorMode" : "text",
+                  "axisLabel" : "",
+                  "axisPlacement" : "auto",
+                  "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
+                  "drawStyle" : "line",
+                  "fillOpacity" : 0,
+                  "gradientMode" : "none",
+                  "hideFrom" : {
+                     "legend" : false,
+                     "tooltip" : false,
+                     "viz" : false
+                  },
+                  "insertNulls" : false,
+                  "lineInterpolation" : "linear",
+                  "lineWidth" : 1,
+                  "pointSize" : 5,
+                  "scaleDistribution" : {
+                     "type" : "linear"
+                  },
+                  "showPoints" : "auto",
+                  "spanNulls" : false,
+                  "stacking" : {
+                     "group" : "A",
+                     "mode" : "none"
+                  },
+                  "thresholdsStyle" : {
+                     "mode" : "off"
+                  }
+               },
+               "mappings" : [],
+               "thresholds" : {
+                  "mode" : "absolute",
+                  "steps" : [
+                     {
+                        "color" : "green"
+                     },
+                     {
+                        "color" : "red",
+                        "value" : 80
+                     }
+                  ]
+               },
+               "unit" : "bytes"
+            },
+            "overrides" : []
+         },
+         "gridPos" : {
+            "h" : 8,
+            "w" : 12,
+            "x" : 12,
+            "y" : 44
+         },
+         "id" : 33,
+         "options" : {
+            "legend" : {
+               "calcs" : [],
+               "displayMode" : "list",
+               "placement" : "bottom",
+               "showLegend" : true
+            },
+            "tooltip" : {
+               "hideZeros" : false,
+               "mode" : "single",
+               "sort" : "none"
+            }
+         },
+         "pluginVersion" : "11.6.0",
+         "targets" : [
+            {
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
+               "expr" : "max_over_time(prosody_mod_measure_conn_buffers__total_pending_tx{job=~\"$job\",instance=~\"$instance\",host=\"\"}[$__interval])",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
+               "legendFormat" : "{{instance}}",
+               "range" : true,
+               "refId" : "A",
+               "useBackend" : false
+            }
+         ],
+         "title" : "Connection Buffers",
          "type" : "timeseries"
       },
       {
@@ -1040,7 +1218,7 @@
             "h" : 1,
             "w" : 24,
             "x" : 0,
-            "y" : 44
+            "y" : 52
          },
          "id" : 22,
          "panels" : [],
@@ -1048,17 +1226,6 @@
          "type" : "row"
       },
       {
-         "cards" : {},
-         "color" : {
-            "cardColor" : "#b4ff00",
-            "colorScale" : "sqrt",
-            "colorScheme" : "interpolateRdYlGn",
-            "exponent" : 0.5,
-            "max" : 5,
-            "min" : 0,
-            "mode" : "opacity"
-         },
-         "dataFormat" : "tsbuckets",
          "fieldConfig" : {
             "defaults" : {
                "custom" : {
@@ -1078,20 +1245,16 @@
             "h" : 8,
             "w" : 18,
             "x" : 0,
-            "y" : 45
+            "y" : 53
          },
-         "heatmap" : {},
-         "hideZeroBuckets" : false,
-         "highlightCards" : true,
          "id" : 8,
-         "legend" : {
-            "show" : false
-         },
          "options" : {
             "calculate" : false,
             "calculation" : {},
             "cellGap" : 2,
-            "cellValues" : {},
+            "cellValues" : {
+               "decimals" : 0
+            },
             "color" : {
                "exponent" : 0.5,
                "fill" : "#b4ff00",
@@ -1117,7 +1280,8 @@
             },
             "showValue" : "never",
             "tooltip" : {
-               "show" : true,
+               "mode" : "single",
+               "showColorScale" : false,
                "yHistogram" : false
             },
             "yAxis" : {
@@ -1126,18 +1290,17 @@
                "unit" : "bytes"
             }
          },
-         "pluginVersion" : "10.2.0",
-         "reverseYBuckets" : false,
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "disableTextWrap" : false,
                "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "sum by(le) (changes(prosody_mod_http_file_share__upload_bytes_bucket{host=\"$virtualhost\"}[$__interval]))",
+               "expr" : "sum by(le) (increase(prosody_mod_http_file_share__upload_bytes_bucket{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[1h]))",
                "format" : "heatmap",
                "fullMetaSearch" : false,
                "includeNullMetadata" : true,
-               "interval" : "3600s",
+               "interval" : "1h",
                "intervalFactor" : 1,
                "legendFormat" : "{{le}}",
                "range" : true,
@@ -1146,20 +1309,7 @@
             }
          ],
          "title" : "Upload sizes",
-         "tooltip" : {
-            "show" : true,
-            "showHistogram" : false
-         },
-         "type" : "heatmap",
-         "xAxis" : {
-            "show" : true
-         },
-         "yAxis" : {
-            "format" : "bytes",
-            "logBase" : 1,
-            "show" : true
-         },
-         "yBucketBound" : "upper"
+         "type" : "heatmap"
       },
       {
          "fieldConfig" : {
@@ -1186,7 +1336,7 @@
             "h" : 8,
             "w" : 6,
             "x" : 18,
-            "y" : 45
+            "y" : 53
          },
          "id" : 10,
          "options" : {
@@ -1202,14 +1352,15 @@
             },
             "showThresholdLabels" : false,
             "showThresholdMarkers" : false,
+            "sizing" : "auto",
             "text" : {}
          },
-         "pluginVersion" : "10.2.0",
+         "pluginVersion" : "11.6.0",
          "targets" : [
             {
                "editorMode" : "builder",
                "exemplar" : true,
-               "expr" : "prosody_mod_http_file_share__total_storage_bytes{host=\"$virtualhost\"}",
+               "expr" : "prosody_mod_http_file_share__total_storage_bytes{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}",
                "instant" : false,
                "interval" : "",
                "legendFormat" : "",
@@ -1218,10 +1369,226 @@
          ],
          "title" : "Total uploads",
          "type" : "gauge"
+      },
+      {
+         "collapsed" : false,
+         "gridPos" : {
+            "h" : 1,
+            "w" : 24,
+            "x" : 0,
+            "y" : 61
+         },
+         "id" : 34,
+         "panels" : [],
+         "title" : "Spam",
+         "type" : "row"
+      },
+      {
+         "description" : "This panel requires [mod_anti_spam](https://modules.prosody.im/mod_anti_spam.html)",
+         "fieldConfig" : {
+            "defaults" : {
+               "color" : {
+                  "mode" : "palette-classic"
+               },
+               "custom" : {
+                  "axisBorderShow" : false,
+                  "axisCenteredZero" : false,
+                  "axisColorMode" : "text",
+                  "axisLabel" : "",
+                  "axisPlacement" : "auto",
+                  "barAlignment" : 0,
+                  "barWidthFactor" : 0.6,
+                  "drawStyle" : "line",
+                  "fillOpacity" : 0,
+                  "gradientMode" : "none",
+                  "hideFrom" : {
+                     "legend" : false,
+                     "tooltip" : false,
+                     "viz" : false
+                  },
+                  "insertNulls" : false,
+                  "lineInterpolation" : "linear",
+                  "lineWidth" : 1,
+                  "pointSize" : 5,
+                  "scaleDistribution" : {
+                     "type" : "linear"
+                  },
+                  "showPoints" : "auto",
+                  "spanNulls" : false,
+                  "stacking" : {
+                     "group" : "A",
+                     "mode" : "none"
+                  },
+                  "thresholdsStyle" : {
+                     "mode" : "off"
+                  }
+               },
+               "mappings" : [],
+               "thresholds" : {
+                  "mode" : "absolute",
+                  "steps" : [
+                     {
+                        "color" : "green"
+                     },
+                     {
+                        "color" : "red",
+                        "value" : 80
+                     }
+                  ]
+               },
+               "unit" : "pps"
+            },
+            "overrides" : []
+         },
+         "gridPos" : {
+            "h" : 8,
+            "w" : 12,
+            "x" : 0,
+            "y" : 62
+         },
+         "id" : 36,
+         "options" : {
+            "legend" : {
+               "calcs" : [],
+               "displayMode" : "list",
+               "placement" : "bottom",
+               "showLegend" : true
+            },
+            "tooltip" : {
+               "hideZeros" : false,
+               "mode" : "single",
+               "sort" : "none"
+            }
+         },
+         "pluginVersion" : "11.6.0",
+         "targets" : [
+            {
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
+               "expr" : "rate(prosody_mod_anti_spam__anti_spam_blocked_stanzas_total{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
+               "legendFormat" : "{{reason}}",
+               "range" : true,
+               "refId" : "A",
+               "useBackend" : false
+            }
+         ],
+         "title" : "mod_anti_spam",
+         "type" : "timeseries"
+      },
+      {
+         "description" : "This panel requires [mod_spam_reporting](https://modules.prosody.im/mod_spam_reporting.html) and [mod_report_forward](https://modules.prosody.im/mod_report_forward.html)",
+         "fieldConfig" : {
+            "defaults" : {
+               "color" : {
+                  "mode" : "palette-classic"
+               },
+               "custom" : {
+                  "axisBorderShow" : false,
+                  "axisCenteredZero" : false,
+                  "axisColorMode" : "text",
+                  "axisLabel" : "",
+                  "axisPlacement" : "auto",
+                  "barAlignment" : 0,
+                  "barWidthFactor" : 1,
+                  "drawStyle" : "line",
+                  "fillOpacity" : 25,
+                  "gradientMode" : "none",
+                  "hideFrom" : {
+                     "legend" : false,
+                     "tooltip" : false,
+                     "viz" : false
+                  },
+                  "insertNulls" : false,
+                  "lineInterpolation" : "smooth",
+                  "lineWidth" : 1,
+                  "pointSize" : 5,
+                  "scaleDistribution" : {
+                     "type" : "linear"
+                  },
+                  "showPoints" : "auto",
+                  "spanNulls" : false,
+                  "stacking" : {
+                     "group" : "A",
+                     "mode" : "none"
+                  },
+                  "thresholdsStyle" : {
+                     "mode" : "off"
+                  }
+               },
+               "mappings" : [],
+               "thresholds" : {
+                  "mode" : "absolute",
+                  "steps" : [
+                     {
+                        "color" : "green"
+                     },
+                     {
+                        "color" : "red",
+                        "value" : 80
+                     }
+                  ]
+               },
+               "unit" : "pps"
+            },
+            "overrides" : []
+         },
+         "gridPos" : {
+            "h" : 8,
+            "w" : 12,
+            "x" : 12,
+            "y" : 62
+         },
+         "id" : 35,
+         "options" : {
+            "legend" : {
+               "calcs" : [],
+               "displayMode" : "list",
+               "placement" : "bottom",
+               "showLegend" : true
+            },
+            "tooltip" : {
+               "hideZeros" : false,
+               "mode" : "single",
+               "sort" : "none"
+            }
+         },
+         "pluginVersion" : "11.6.0",
+         "targets" : [
+            {
+               "disableTextWrap" : false,
+               "editorMode" : "builder",
+               "expr" : "rate(prosody_mod_spam_reporting__received_reports_total{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
+               "fullMetaSearch" : false,
+               "includeNullMetadata" : true,
+               "interval" : "",
+               "legendFormat" : "{{report_type}} reports",
+               "range" : true,
+               "refId" : "A",
+               "useBackend" : false
+            },
+            {
+               "disableTextWrap" : false,
+               "editorMode" : "code",
+               "expr" : "-rate(prosody_mod_report_forward__forwarded_reports_total{job=~\"$job\",instance=~\"$instance\",host=~\"$virtualhost\"}[$__rate_interval])",
+               "fullMetaSearch" : false,
+               "hide" : false,
+               "includeNullMetadata" : true,
+               "instant" : false,
+               "legendFormat" : "forwarded",
+               "range" : true,
+               "refId" : "B",
+               "useBackend" : false
+            }
+         ],
+         "title" : "Reports",
+         "type" : "timeseries"
       }
    ],
+   "preload" : false,
    "refresh" : "5m",
-   "schemaVersion" : 38,
+   "schemaVersion" : 41,
    "tags" : [
       "prosody",
       "xmpp"
@@ -1229,21 +1596,57 @@
    "templating" : {
       "list" : [
          {
-            "definition" : "label_values(host)",
-            "hide" : 0,
-            "includeAll" : false,
-            "label" : "VirtualHost",
-            "multi" : false,
-            "name" : "virtualhost",
+            "current" : {
+               "text" : "prosody",
+               "value" : "prosody"
+            },
+            "definition" : "label_values(prosody_info,job)",
+            "label" : "Job",
+            "name" : "job",
             "options" : [],
             "query" : {
-               "query" : "label_values(host)",
+               "qryType" : 1,
+               "query" : "label_values(prosody_info,job)",
                "refId" : "PrometheusVariableQueryEditor-VariableQuery"
             },
             "refresh" : 1,
             "regex" : "",
-            "skipUrlSync" : false,
-            "sort" : 0,
+            "type" : "query"
+         },
+         {
+            "current" : {
+               "text" : "All",
+               "value" : [
+                  "$__all"
+               ]
+            },
+            "definition" : "label_values(prosody_info{job=~\"$job\"},instance)",
+            "includeAll" : true,
+            "multi" : true,
+            "name" : "instance",
+            "options" : [],
+            "query" : {
+               "qryType" : 1,
+               "query" : "label_values(prosody_info{job=~\"$job\"},instance)",
+               "refId" : "PrometheusVariableQueryEditor-VariableQuery"
+            },
+            "refresh" : 1,
+            "regex" : "",
+            "type" : "query"
+         },
+         {
+            "definition" : "label_values({job=~\"$job\", instance=~\"$instance\"},host)",
+            "includeAll" : false,
+            "label" : "VirtualHost",
+            "name" : "virtualhost",
+            "options" : [],
+            "query" : {
+               "qryType" : 1,
+               "query" : "label_values({job=~\"$job\", instance=~\"$instance\"},host)",
+               "refId" : "PrometheusVariableQueryEditor-VariableQuery"
+            },
+            "refresh" : 1,
+            "regex" : "",
             "type" : "query"
          }
       ]
@@ -1256,6 +1659,5 @@
    "timezone" : "",
    "title" : "Prosody",
    "uid" : "y1Onovt7z",
-   "version" : 91,
-   "weekStart" : ""
+   "version" : 134
 }

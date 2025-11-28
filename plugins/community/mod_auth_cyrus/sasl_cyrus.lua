@@ -111,6 +111,7 @@ local function new(realm, service_name, app_name, host_fqdn)
 		mechanisms[w] = true;
 	end
 	sasl_i.mechs = mechanisms;
+	sasl_i.profile = {};
 	return setmetatable(sasl_i, method);
 end
 

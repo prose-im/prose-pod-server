@@ -23,9 +23,8 @@ admin_blocklist_roles = { "prosody:operator", "prosody:admin" }
 
 # Compatibility
 
-  Prosody-Version Status
-  --------------- ------
-  trunk*          Works
-  0.12            Works
-
-*as of 2024-12-21
+  Prosody Version   Status
+  ----------------- ------------------------
+  trunk             Works as of 2025-06-13
+  13.0              Works
+  0.12              Works

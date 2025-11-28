@@ -1,10 +1,14 @@
 -- Provide OpenID UserInfo data to mod_http_oauth2
 -- Alternatively, separate module for the whole HTTP endpoint?
 --
-module:add_item("openid-claim", "address");
-module:add_item("openid-claim", "email");
-module:add_item("openid-claim", "phone");
-module:add_item("openid-claim", "profile");
+module:add_item("openid-claim", { claim = "address"; title = "Address";
+	description = "Address details, if any, given in your user profile."; });
+module:add_item("openid-claim", { claim = "email"; title = "Email";
+	description = "Email address entered in your user profile." });
+module:add_item("openid-claim", { claim = "phone"; title = "Phone Number";
+	description = "Phone number entered in your user profile."; });
+module:add_item("openid-claim", { claim = "profile"; title = "Profile";
+	description = "Complete profile details" });
 
 local mod_pep = module:depends "pep";
 
