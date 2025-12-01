@@ -38,7 +38,6 @@ RUN apk add --no-cache \
 	lua5.4-dev \
 	libidn-dev \
 	openssl-dev \
-	libidn-dev \
 	luarocks5.4 \
 	sqlite-dev
 
