@@ -5,7 +5,15 @@ ARG CARGO_CHEF_IMAGE=lukemathwalker/cargo-chef:0.1.72-rust-1.89.0-alpine
 
 
 FROM ${CARGO_CHEF_IMAGE} AS chef
+
 WORKDIR /usr/src/prose-pod-server
+
+# Building Rust in Docker in CI can be very inefficient. This Dockerfile tries
+# to reduce CI build times by making proper use of the BuildKit cache + sccache.
+# It took inspiration from [depot.dev’s example Dockerfile](https://depot.dev/docs/container-builds/optimal-dockerfiles/rust-dockerfile).
+RUN apk add --no-cache sccache
+ENV RUSTC_WRAPPER=/usr/bin/sccache \
+	SCCACHE_DIR=/var/cache/sccache
 
 
 FROM chef AS api-plan
@@ -19,11 +27,19 @@ COPY --from=api-plan /usr/src/prose-pod-server/recipe.json recipe.json
 ARG CARGO_PROFILE='release'
 
 # Build dependencies.
-RUN cargo chef cook --recipe-path recipe.json --profile "${CARGO_PROFILE}"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git/db \
+	--mount=type=cache,target=${SCCACHE_DIR},sharing=locked \
+	cargo chef cook --recipe-path recipe.json --profile "${CARGO_PROFILE}"
 
 # Build the application.
 COPY api .
-RUN cargo install --path . --bin prose-pod-server --profile "${CARGO_PROFILE}"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+	--mount=type=cache,target=/usr/local/cargo/git/db \
+	--mount=type=cache,target=${SCCACHE_DIR},sharing=locked \
+	cargo install --path . --bin prose-pod-server --profile "${CARGO_PROFILE}"
+
+RUN sccache --show-stats
 
 
 

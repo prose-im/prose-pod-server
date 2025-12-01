@@ -65,6 +65,8 @@ jobs:
             VERSION=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.version'] }}
             COMMIT=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.revision'] }}
             BUILD_TIMESTAMP=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.created'] }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   create-github-release:
     needs: ship-docker-image
