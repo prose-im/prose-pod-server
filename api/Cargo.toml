@@ -43,6 +43,9 @@ tracing-subscriber = { version = "=0.3.20", default-features = false, features =
 [dev-dependencies]
 axum = { version = "*", features = ["macros"] }
 
+[lib]
+name = "prose_pod_server"
+
 # See defaults at <https://doc.rust-lang.org/cargo/reference/profiles.html#dev>.
 # NOTE: We made some values explicit, even if they're already the default.
 [profile.dev]
