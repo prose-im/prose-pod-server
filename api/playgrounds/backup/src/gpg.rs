@@ -78,14 +78,11 @@ impl VerificationHelper for &GpgConfig {
                 }
 
                 MessageLayer::Encryption { .. } if i == 0 => {
-                    let todo = "Do something?";
+                    // FIXME: Do something?
                 }
 
                 layer => {
-                    return Err(anyhow::anyhow!(
-                        "Unexpected message structure ({:?})",
-                        layer
-                    ));
+                    return Err(anyhow::anyhow!("Unexpected message structure ({layer:?})",));
                 }
             }
         }
