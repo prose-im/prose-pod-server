@@ -7,11 +7,16 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use s3::types::CompletedPart;
 use std::io::{self, Read, Write};
+use time::UtcDateTime;
 
-use super::ObjectStore;
+use crate::util::saturating_i64_to_u64;
+
+use super::{ObjectMetadata, ObjectStore};
 
 /// 8MB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
+
+/// 8MB.
 const READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 pub struct S3Store {
@@ -23,7 +28,7 @@ impl ObjectStore for S3Store {
     type Writer = S3Writer;
     type Reader = S3Reader;
 
-    fn writer(&self, key: &str) -> Result<S3Writer, anyhow::Error> {
+    async fn writer(&self, key: &str) -> Result<S3Writer, anyhow::Error> {
         tokio::task::block_in_place(move || {
             tokio::runtime::Handle::current().block_on(async move {
                 S3Writer::new(self.client.clone(), &self.bucket, key).await
@@ -31,8 +36,67 @@ impl ObjectStore for S3Store {
         })
     }
 
-    fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error> {
+    async fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error> {
         Ok(S3Reader::new(self.client.clone(), &self.bucket, key))
+    }
+
+    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+        let mut keys = Vec::new();
+        let mut continuation_token = None;
+
+        loop {
+            let resp = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .set_continuation_token(continuation_token.clone())
+                .send()
+                .await
+                .context("Failed listing S3 objects")?;
+
+            keys.extend(
+                resp.contents()
+                    .into_iter()
+                    .filter_map(|obj| obj.key().map(ToOwned::to_owned)),
+            );
+
+            if resp.is_truncated().unwrap_or(false) {
+                continuation_token = resp.next_continuation_token().map(|s| s.to_string());
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error> {
+        let meta = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .context("Failed getting S3 object metadata")?;
+
+        let created_at: &s3::primitives::DateTime = meta
+            .last_modified()
+            .context("S3 object has no last_modified timestamp")?;
+
+        let creation_date: UtcDateTime = UtcDateTime::from_unix_timestamp(created_at.secs())
+            .context("Failed converting S3 timestamp to OffsetDateTime")?;
+
+        let size: u64 = saturating_i64_to_u64(
+            meta.content_length()
+                .expect("S3 object has no content_length"),
+        );
+
+        Ok(ObjectMetadata {
+            file_name: key.to_owned(),
+            creation_date: creation_date,
+            size,
+        })
     }
 }
 

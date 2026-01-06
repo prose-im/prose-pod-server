@@ -52,7 +52,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (backup_file_name, integrity_check_file_name) = {
         let backup_name = "backup";
-        service.create_backup(backup_name, archive)?
+        service.create_backup(backup_name, archive).await?
     };
     let backup_file_path = Path::new(fs_prefix_backups).join(&backup_file_name);
     let integrity_check_file_path =
@@ -68,6 +68,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Integrity check
     service
         .check_backup_integrity(&backup_file_name, &integrity_check_file_name)
+        .await
         .context("Integrity check failed")?;
     println!("Integrity check passed");
 
@@ -98,7 +99,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
         println!("Modifying integrity check…");
         flip_one_bit_in_place(&integrity_check_file_path, 10, 1 << 3)?;
-        match service.check_backup_integrity(&backup_file_name, &integrity_check_file_name) {
+        match service
+            .check_backup_integrity(&backup_file_name, &integrity_check_file_name)
+            .await
+        {
             Err(err) => println!("Integrity check: {err:?} (expected)"),
             Ok(()) => bail!("Integrity check doesn’t work!"),
         }
@@ -126,7 +130,12 @@ async fn main() -> Result<(), anyhow::Error> {
     let archive = zstd::decode_all(&archive[..])?;
     println!("Decompressed {size_bytes}B", size_bytes = archive.len());
 
+    print!("\n");
     print_tar_tree(&archive)?;
+
+    print!("\n");
+    let backups = service.list_backups().await?;
+    println!("backups: {backups:?}");
 
     Ok(())
 }

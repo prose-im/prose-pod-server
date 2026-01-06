@@ -19,7 +19,7 @@ where
     S1: ObjectStore,
     S2: ObjectStore,
 {
-    pub fn check_backup_integrity(
+    pub async fn check_backup_integrity(
         &self,
         backup_file_name: &str,
         integrity_check_file_name: &str,
@@ -29,6 +29,7 @@ where
         let mut backup_reader = self
             .backup_store
             .reader(backup_file_name)
+            .await
             .context("Could not open backup reader")?;
 
         let mut verifier = BackupVerifier::new(self.integrity_config.as_ref());
@@ -37,6 +38,7 @@ where
         let mut integrity_check_reader = self
             .integrity_check_store
             .reader(integrity_check_file_name)
+            .await
             .context("Could not open integrity check reader")?;
         let mut integrity_check: Vec<u8> = Vec::new();
         integrity_check_reader

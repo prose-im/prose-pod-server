@@ -12,6 +12,7 @@ mod encryption;
 mod gpg;
 mod integrity;
 pub mod stores;
+mod util;
 mod writer_chain;
 
 use crate::{
@@ -104,7 +105,7 @@ where
     ///              ╺━┷━━━━━━━━┯━━━━━━━━┷━╸
     ///                         ◉
     /// ```
-    pub fn create_backup(
+    pub async fn create_backup(
         &self,
         backup_name: &str,
         archive: tar::Archive<std::io::Cursor<bytes::Bytes>>,
@@ -120,6 +121,7 @@ where
         let upload_backup = self
             .backup_store
             .writer(&backup_file_name)
+            .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
         let mut integrity_check: Vec<u8> = Vec::new();
@@ -147,6 +149,7 @@ where
         let mut upload_integrity_check = self
             .integrity_check_store
             .writer(&integrity_check_file_name)
+            .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
         let mut cursor = std::io::Cursor::new(integrity_check);
@@ -154,6 +157,10 @@ where
             .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
         Ok((backup_file_name, integrity_check_file_name))
+    }
+
+    pub async fn list_backups(&self) -> Result<Vec<String>, anyhow::Error> {
+        self.backup_store.list_all().await
     }
 }
 

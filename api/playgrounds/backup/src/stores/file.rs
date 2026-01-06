@@ -4,14 +4,14 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::{
-    fs::File,
-    os::unix::fs::OpenOptionsExt as _,
+    fs::{self, File},
+    os::unix::fs::{MetadataExt, OpenOptionsExt as _},
     path::{Path, PathBuf},
 };
 
-use anyhow::Context as _;
+use anyhow::Context;
 
-use super::ObjectStore;
+use super::{ObjectMetadata, ObjectStore};
 
 /// Read and write backups on disk.
 pub struct FsStore {
@@ -51,7 +51,7 @@ impl ObjectStore for FsStore {
     type Writer = File;
     type Reader = File;
 
-    fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
+    async fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
@@ -64,10 +64,10 @@ impl ObjectStore for FsStore {
             .truncate(self.overwrite)
             .mode(self.mode)
             .open(self.directory.join(file_name))
-            .context("Failed opening file")
+            .context("Failed opening file (write)")
     }
 
-    fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error> {
+    async fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
@@ -76,6 +76,40 @@ impl ObjectStore for FsStore {
         File::options()
             .read(true)
             .open(self.directory.join(file_name))
-            .context("Could not open backup file")
+            .context("Failed opening file (read)")
+    }
+
+    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+        let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
+
+        let mut file_names = Vec::new();
+        for entry in files.into_iter() {
+            match entry {
+                Ok(entry) => {
+                    let file_name = entry
+                        .file_name()
+                        .into_string()
+                        .expect("File names should only contain Unicode data");
+                    file_names.push(file_name);
+                }
+                Err(err) => eprintln!("{err:?}"),
+            }
+        }
+
+        Ok(file_names)
+    }
+
+    async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error> {
+        let meta = fs::metadata(file_name).context("Failed getting file metadata")?;
+        let created_at = meta.created().expect(
+            "File creation date should be accessible on filesystems \
+            where Prose is deployed",
+        );
+
+        Ok(ObjectMetadata {
+            file_name: file_name.to_owned(),
+            creation_date: created_at.into(),
+            size: meta.size(),
+        })
     }
 }
