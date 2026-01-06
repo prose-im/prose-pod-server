@@ -124,19 +124,19 @@ where
 
         let mut integrity_check: Vec<u8> = Vec::new();
 
-        let (mut gen_integrity_check, finalize2) = writer_chain::builder()
+        let (mut gen_integrity_check, finalize_integrity_check) = writer_chain::builder()
             .integrity_check(self.integrity_config.as_ref())
             .build(&mut integrity_check)?;
 
-        let (writer, finalize) = writer_chain::builder()
+        let (writer, finalize_backup) = writer_chain::builder()
             .archive(archive, &self.archiving_config)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_config.as_ref())
             .tee(&mut gen_integrity_check)
             .build(upload_backup)?;
 
-        () = finalize(writer)?;
-        () = finalize2(gen_integrity_check)?;
+        () = finalize_backup(writer)?;
+        () = finalize_integrity_check(gen_integrity_check)?;
 
         let integrity_check_file_name = if self.integrity_config.is_some() {
             format!("{backup_file_name}.sig")
