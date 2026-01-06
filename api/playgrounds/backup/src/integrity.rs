@@ -10,21 +10,23 @@ use openpgp::parse::{Parse as _, stream::*};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    BackupService, BackupSink, BackupSource, CreateBackupError, gpg::GpgConfig,
+    BackupRepository, BackupService, CreateBackupError, gpg::GpgConfig,
     writer_chain::WriterChainBuilder,
 };
 
-impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
+impl<Repository> BackupService<Repository> {
     pub fn check_backup_integrity(
         &self,
         backup_file_name: &str,
         integrity_check_file_name: &str,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), anyhow::Error>
+    where
+        Repository: BackupRepository,
+    {
         use std::io::Read as _;
 
         let mut backup_reader = self
             .repository
-            .source
             .reader(backup_file_name)
             .context("Could not open backup reader")?;
 

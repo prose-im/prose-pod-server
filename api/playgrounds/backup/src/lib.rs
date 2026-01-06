@@ -7,27 +7,25 @@ extern crate aws_sdk_s3 as s3;
 extern crate sequoia_openpgp as openpgp;
 
 mod archiving;
-mod backup_repository;
+pub mod backup_repository;
 mod compression;
 mod encryption;
 mod gpg;
 mod integrity;
-pub mod sink;
-pub mod source;
 mod writer_chain;
 
 use crate::archiving::check_archiving_will_succeed;
+use crate::backup_repository::S3BackupRepository;
 
-use self::sink::{BackupSink, S3Sink};
-use self::source::{BackupSource, S3Source};
 pub use self::{
-    archiving::ArchivingConfig, backup_repository::BackupRepository,
-    compression::CompressionConfig, encryption::EncryptionConfig, integrity::IntegrityConfig,
+    archiving::ArchivingConfig, backup_repository as repository,
+    backup_repository::BackupRepository, compression::CompressionConfig,
+    encryption::EncryptionConfig, integrity::IntegrityConfig,
 };
 
 // MARK: Service
 
-pub type BackupService<Sink = S3Sink, Source = S3Source> = ProseBackupService<Sink, Source>;
+pub type BackupService<Repository = S3BackupRepository> = ProseBackupService<Repository>;
 
 /// ```text
 /// ## Create backup
@@ -52,15 +50,15 @@ pub type BackupService<Sink = S3Sink, Source = S3Source> = ProseBackupService<Si
 /// Tests:
 ///   -> FileSink
 /// ```
-pub struct ProseBackupService<Sink: BackupSink, Source: BackupSource> {
+pub struct ProseBackupService<Repository> {
     pub archiving_config: ArchivingConfig,
     pub compression_config: CompressionConfig,
     pub encryption_config: Option<EncryptionConfig>,
     pub integrity_config: Option<IntegrityConfig>,
-    pub repository: BackupRepository<Source, Sink>,
+    pub repository: Repository,
 }
 
-impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
+impl<Repository> BackupService<Repository> {
     /// ```text
     ///                         ┌─/var/lib/prosody
     ///                         ├─/etc/prosody
@@ -103,7 +101,10 @@ impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
         &self,
         backup_name: &str,
         archive: tar::Archive<std::io::Cursor<bytes::Bytes>>,
-    ) -> Result<(String, String), CreateBackupError> {
+    ) -> Result<(String, String), CreateBackupError>
+    where
+        Repository: BackupRepository,
+    {
         check_archiving_will_succeed(&self.archiving_config)?;
 
         let backup_file_name = if self.encryption_config.is_some() {

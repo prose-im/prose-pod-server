@@ -14,9 +14,7 @@ use std::{
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use openpgp::parse::{Parse as _, stream::DecryptorBuilder};
-use prose_backup::source::FileSource;
 use prose_backup::{ArchivingConfig, BackupService, CompressionConfig, EncryptionConfig};
-use prose_backup::{BackupRepository, sink::FileSink};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -32,14 +30,10 @@ async fn main() -> Result<(), anyhow::Error> {
     // let integrity_config = None;
 
     let fs_prefix = ".out";
-    let sink = FileSink::default().overwrite(true).directory(fs_prefix);
     fs::create_dir_all(fs_prefix)?;
-    let source = FileSource::new(fs_prefix);
-
-    let repository = BackupRepository {
-        sink: sink,
-        source: source,
-    };
+    let repository = prose_backup::repository::File::default()
+        .overwrite(true)
+        .directory(fs_prefix);
 
     let service = BackupService {
         archiving_config,
