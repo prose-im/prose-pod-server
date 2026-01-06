@@ -23,28 +23,149 @@ pub trait BackupSink {
 pub use self::s3::S3Sink;
 #[cfg(feature = "destination_s3")]
 mod s3 {
-    use std::fs::File;
+    use bytes::Bytes;
+    use s3::types::CompletedPart;
+    use std::io::{self, Write};
 
     use super::BackupSink;
 
-    pub struct S3Sink;
+    pub struct S3Sink {
+        client: s3::Client,
+        bucket: String,
+    }
 
     impl BackupSink for S3Sink {
-        type BackupWriter = File;
-        type IntegrityCheckWriter = File;
+        type BackupWriter = S3Writer;
+        type IntegrityCheckWriter = S3Writer;
 
-        fn backup_writer(
-            &self,
-            backup_file_name: &str,
-        ) -> Result<Self::BackupWriter, anyhow::Error> {
-            todo!()
+        fn backup_writer(&self, key: &str) -> Result<Self::BackupWriter, anyhow::Error> {
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(async move {
+                    S3Writer::new(self.client.clone(), &self.bucket, key).await
+                })
+            })
         }
 
         fn integrity_check_writer(
             &self,
-            integrity_check_file_name: &str,
+            key: &str,
         ) -> Result<Self::IntegrityCheckWriter, anyhow::Error> {
-            todo!()
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(async move {
+                    S3Writer::new(self.client.clone(), &self.bucket, key).await
+                })
+            })
+        }
+    }
+
+    // MARK: Writer
+
+    /// 8MB.
+    const PART_SIZE: usize = 8 * 1024 * 1024;
+
+    pub struct S3Writer {
+        client: s3::Client,
+        bucket: String,
+        key: String,
+        upload_id: String,
+        buf: Vec<u8>,
+        parts: Vec<CompletedPart>,
+        part_number: i32,
+    }
+
+    impl S3Writer {
+        pub async fn new(
+            client: s3::Client,
+            bucket: impl Into<String>,
+            key: impl Into<String>,
+        ) -> anyhow::Result<Self> {
+            let bucket = bucket.into();
+            let key = key.into();
+
+            let resp = client
+                .create_multipart_upload()
+                .bucket(&bucket)
+                .key(&key)
+                .send()
+                .await?;
+
+            Ok(Self {
+                client,
+                bucket,
+                key,
+                upload_id: resp.upload_id().unwrap().to_string(),
+                buf: Vec::with_capacity(PART_SIZE),
+                parts: Vec::new(),
+                part_number: 1,
+            })
+        }
+
+        async fn flush_part(&mut self) -> anyhow::Result<()> {
+            if self.buf.is_empty() {
+                return Ok(());
+            }
+
+            let body = Bytes::copy_from_slice(&self.buf);
+
+            let resp = self
+                .client
+                .upload_part()
+                .bucket(&self.bucket)
+                .key(&self.key)
+                .upload_id(&self.upload_id)
+                .part_number(self.part_number)
+                .body(body.into())
+                .send()
+                .await?;
+
+            self.parts.push(
+                CompletedPart::builder()
+                    .part_number(self.part_number)
+                    .e_tag(resp.e_tag().unwrap())
+                    .build(),
+            );
+
+            self.part_number += 1;
+            self.buf.clear();
+            Ok(())
+        }
+
+        pub async fn complete(mut self) -> anyhow::Result<()> {
+            self.flush_part().await?;
+
+            self.client
+                .complete_multipart_upload()
+                .bucket(&self.bucket)
+                .key(&self.key)
+                .upload_id(&self.upload_id)
+                .multipart_upload(
+                    aws_sdk_s3::types::CompletedMultipartUpload::builder()
+                        .set_parts(Some(self.parts))
+                        .build(),
+                )
+                .send()
+                .await?;
+
+            Ok(())
+        }
+    }
+
+    impl Write for S3Writer {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buf.extend_from_slice(buf);
+
+            if self.buf.len() >= PART_SIZE {
+                // blocking shim; caller expected to be in async context
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.flush_part())
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            }
+
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
 }
