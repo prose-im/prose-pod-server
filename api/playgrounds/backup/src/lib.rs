@@ -116,11 +116,6 @@ where
         } else {
             format!("{backup_name}.tar.zst")
         };
-        let integrity_check_file_name = if self.integrity_config.is_some() {
-            format!("{backup_file_name}.sig")
-        } else {
-            format!("{backup_file_name}.sha256")
-        };
 
         let upload_backup = self
             .backup_store
@@ -142,6 +137,12 @@ where
 
         () = finalize(writer)?;
         () = finalize2(gen_integrity_check)?;
+
+        let integrity_check_file_name = if self.integrity_config.is_some() {
+            format!("{backup_file_name}.sig")
+        } else {
+            format!("{backup_file_name}.sha256")
+        };
 
         let mut upload_integrity_check = self
             .integrity_check_store
