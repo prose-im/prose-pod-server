@@ -137,10 +137,10 @@ where
             .archive(archive, &self.archiving_config)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_config.as_ref())
-            .tee(&mut gen_integrity_check, finalize2)
+            .tee(&mut gen_integrity_check)
             .build(upload_backup)?;
 
-        let ((), finalize2) = finalize(writer)?;
+        () = finalize(writer)?;
         () = finalize2(gen_integrity_check)?;
 
         let mut upload_integrity_check = self

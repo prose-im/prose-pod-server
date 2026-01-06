@@ -46,18 +46,16 @@ impl<W1: Write, W2: Write> Write for TeeWriter<W1, W2> {
 impl<M, F> WriterChainBuilder<M, F> {
     /// NOTE: Accepts a mutable reference to leave ownership to the called and
     ///   allow it to finalize the other writer manually.
-    pub fn tee<'a, InnerWriter, InnerWriter2, OuterWriter, Out1, F2, Out2, E>(
+    pub fn tee<'a, InnerWriter, InnerWriter2, OuterWriter, Out, E>(
         self,
         other_writer: &'a mut InnerWriter2,
-        finalize2: F2,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, E>,
-        impl FnOnce(OuterWriter) -> Result<(Out1, F2), E>,
+        impl FnOnce(OuterWriter) -> Result<Out, E>,
     >
     where
         M: FnOnce(TeeWriter<InnerWriter, &'a mut InnerWriter2>) -> Result<OuterWriter, E>,
-        F: FnOnce(OuterWriter) -> Result<Out1, E>,
-        F2: FnOnce(InnerWriter2) -> Out2,
+        F: FnOnce(OuterWriter) -> Result<Out, E>,
     {
         let Self { make, finalize, .. } = self;
 
@@ -67,7 +65,7 @@ impl<M, F> WriterChainBuilder<M, F> {
             finalize: move |writer: OuterWriter| {
                 let writer = finalize(writer)?;
 
-                Ok((writer, finalize2))
+                Ok(writer)
             },
         }
     }
