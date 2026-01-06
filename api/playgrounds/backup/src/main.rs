@@ -37,8 +37,8 @@ async fn main() -> Result<(), anyhow::Error> {
     let source = FileSource::new(fs_prefix);
 
     let repository = BackupRepository {
-        backup_sink: sink,
-        backup_source: source,
+        sink: sink,
+        source: source,
     };
 
     let service = BackupService {

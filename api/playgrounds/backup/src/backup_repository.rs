@@ -6,6 +6,12 @@
 use crate::{sink::BackupSink, source::BackupSource};
 
 pub struct BackupRepository<Source: BackupSource, Sink: BackupSink> {
-    pub backup_source: Source,
-    pub backup_sink: Sink,
+    pub source: Source,
+    pub sink: Sink,
+}
+
+impl<Source: BackupSource, Sink: BackupSink> BackupRepository<Source, Sink> {
+    pub fn writer(&self, backup_name: &str) -> Result<Sink::Writer, anyhow::Error> {
+        self.sink.writer(backup_name)
+    }
 }

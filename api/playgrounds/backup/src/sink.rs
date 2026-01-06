@@ -8,21 +8,16 @@ use std::io::Write;
 /// Where to save backups.
 /// By default, backups are uploaded to a S3-compliant object storage bucket.
 pub trait BackupSink {
-    type BackupWriter: Write + Send + Sync;
-    type IntegrityCheckWriter: Write + Send + Sync;
+    type Writer: Write + Send + Sync;
 
-    fn backup_writer(&self, backup_file_name: &str) -> Result<Self::BackupWriter, anyhow::Error>;
-
-    fn integrity_check_writer(
-        &self,
-        integrity_check_file_name: &str,
-    ) -> Result<Self::IntegrityCheckWriter, anyhow::Error>;
+    fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error>;
 }
 
 #[cfg(feature = "destination_s3")]
 pub use self::s3::S3Sink;
 #[cfg(feature = "destination_s3")]
 mod s3 {
+    use anyhow::Context as _;
     use bytes::Bytes;
     use s3::types::CompletedPart;
     use std::io::{self, Write};
@@ -35,24 +30,12 @@ mod s3 {
     }
 
     impl BackupSink for S3Sink {
-        type BackupWriter = S3Writer;
-        type IntegrityCheckWriter = S3Writer;
+        type Writer = S3Writer;
 
-        fn backup_writer(&self, key: &str) -> Result<Self::BackupWriter, anyhow::Error> {
+        fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
             tokio::task::block_in_place(move || {
                 tokio::runtime::Handle::current().block_on(async move {
-                    S3Writer::new(self.client.clone(), &self.bucket, key).await
-                })
-            })
-        }
-
-        fn integrity_check_writer(
-            &self,
-            key: &str,
-        ) -> Result<Self::IntegrityCheckWriter, anyhow::Error> {
-            tokio::task::block_in_place(move || {
-                tokio::runtime::Handle::current().block_on(async move {
-                    S3Writer::new(self.client.clone(), &self.bucket, key).await
+                    S3Writer::new(self.client.clone(), &self.bucket, file_name).await
                 })
             })
         }
@@ -78,7 +61,7 @@ mod s3 {
             client: s3::Client,
             bucket: impl Into<String>,
             key: impl Into<String>,
-        ) -> anyhow::Result<Self> {
+        ) -> Result<Self, anyhow::Error> {
             let bucket = bucket.into();
             let key = key.into();
 
@@ -87,7 +70,8 @@ mod s3 {
                 .bucket(&bucket)
                 .key(&key)
                 .send()
-                .await?;
+                .await
+                .context("Failed creating S3 multipart upload")?;
 
             Ok(Self {
                 client,
@@ -100,7 +84,7 @@ mod s3 {
             })
         }
 
-        async fn flush_part(&mut self) -> anyhow::Result<()> {
+        async fn flush_part(&mut self) -> Result<(), anyhow::Error> {
             if self.buf.is_empty() {
                 return Ok(());
             }
@@ -116,7 +100,8 @@ mod s3 {
                 .part_number(self.part_number)
                 .body(body.into())
                 .send()
-                .await?;
+                .await
+                .context("S3 multipart upload flush failed")?;
 
             self.parts.push(
                 CompletedPart::builder()
@@ -130,7 +115,7 @@ mod s3 {
             Ok(())
         }
 
-        pub async fn complete(mut self) -> anyhow::Result<()> {
+        pub async fn complete(mut self) -> Result<(), anyhow::Error> {
             self.flush_part().await?;
 
             self.client
@@ -144,7 +129,8 @@ mod s3 {
                         .build(),
                 )
                 .send()
-                .await?;
+                .await
+                .context("S3 multipart upload complete failed")?;
 
             Ok(())
         }
@@ -176,7 +162,6 @@ pub use self::file::FileSink;
 mod file {
     use std::{
         fs::File,
-        io,
         os::unix::fs::OpenOptionsExt as _,
         path::{Path, PathBuf},
     };
@@ -206,22 +191,6 @@ mod file {
             self.prefix = prefix.as_ref().to_path_buf();
             self
         }
-
-        fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
-            if !self.prefix.is_absolute() {
-                assert!(!path.as_ref().starts_with("/"), "Path should not start ");
-            } else {
-                panic!("OK");
-            }
-
-            File::options()
-                .create(true)
-                .create_new(!self.overwrite)
-                .write(true)
-                .truncate(self.overwrite)
-                .mode(self.mode)
-                .open(self.prefix.join(path))
-        }
     }
 
     impl Default for FileSink {
@@ -235,23 +204,24 @@ mod file {
     }
 
     impl BackupSink for FileSink {
-        type BackupWriter = File;
-        type IntegrityCheckWriter = File;
+        type Writer = File;
 
-        fn backup_writer(
-            &self,
-            backup_file_name: &str,
-        ) -> Result<Self::BackupWriter, anyhow::Error> {
-            self.open(backup_file_name)
-                .context("Could not create backup file")
-        }
+        fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
+            if !self.prefix.is_absolute() {
+                assert!(
+                    !file_name.starts_with("/"),
+                    "File name should not start with a `/`"
+                );
+            }
 
-        fn integrity_check_writer(
-            &self,
-            integrity_check_file_name: &str,
-        ) -> Result<Self::IntegrityCheckWriter, anyhow::Error> {
-            self.open(integrity_check_file_name)
-                .context("Could not create backup integrity check file")
+            File::options()
+                .create(true)
+                .create_new(!self.overwrite)
+                .write(true)
+                .truncate(self.overwrite)
+                .mode(self.mode)
+                .open(self.prefix.join(file_name))
+                .context("Failed opening file")
         }
     }
 }

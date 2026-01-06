@@ -119,14 +119,12 @@ impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
 
         let upload_backup = self
             .repository
-            .backup_sink
-            .backup_writer(&backup_file_name)
+            .writer(&backup_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
         let upload_integrity_check = self
             .repository
-            .backup_sink
-            .integrity_check_writer(&integrity_check_file_name)
+            .writer(&integrity_check_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
         let (mut gen_integrity_check, finalize2) = writer_chain::builder()
