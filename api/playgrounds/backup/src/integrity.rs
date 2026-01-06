@@ -10,22 +10,24 @@ use openpgp::parse::{Parse as _, stream::*};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    BackupService, CreateBackupError, ObjectStore, gpg::GpgConfig, writer_chain::WriterChainBuilder,
+    CreateBackupError, ObjectStore, ProseBackupService, gpg::GpgConfig,
+    writer_chain::WriterChainBuilder,
 };
 
-impl<Repository> BackupService<Repository> {
+impl<S1, S2> ProseBackupService<S1, S2>
+where
+    S1: ObjectStore,
+    S2: ObjectStore,
+{
     pub fn check_backup_integrity(
         &self,
         backup_file_name: &str,
         integrity_check_file_name: &str,
-    ) -> Result<(), anyhow::Error>
-    where
-        Repository: ObjectStore,
-    {
+    ) -> Result<(), anyhow::Error> {
         use std::io::Read as _;
 
         let mut backup_reader = self
-            .repository
+            .backup_store
             .reader(backup_file_name)
             .context("Could not open backup reader")?;
 
@@ -33,7 +35,7 @@ impl<Repository> BackupService<Repository> {
         std::io::copy(&mut backup_reader, &mut verifier.writer).context("Could not read backup")?;
 
         let mut integrity_check_reader = self
-            .repository
+            .integrity_check_store
             .reader(integrity_check_file_name)
             .context("Could not open integrity check reader")?;
         let mut integrity_check: Vec<u8> = Vec::new();

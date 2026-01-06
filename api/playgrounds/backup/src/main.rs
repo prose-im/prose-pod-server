@@ -29,26 +29,34 @@ async fn main() -> Result<(), anyhow::Error> {
     let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
     // let integrity_config = None;
 
-    let fs_prefix = ".out";
-    fs::create_dir_all(fs_prefix)?;
-    let repository = prose_backup::stores::Fs::default()
+    let fs_prefix_backups = ".out/backups";
+    fs::create_dir_all(fs_prefix_backups)?;
+    let backup_store = prose_backup::stores::Fs::default()
         .overwrite(true)
-        .directory(fs_prefix);
+        .directory(fs_prefix_backups);
+
+    let fs_prefix_integrity_checks = ".out/integrity-checks";
+    fs::create_dir_all(fs_prefix_integrity_checks)?;
+    let integrity_check_store = prose_backup::stores::Fs::default()
+        .overwrite(true)
+        .directory(fs_prefix_integrity_checks);
 
     let service = BackupService {
         archiving_config,
         compression_config,
         encryption_config,
         integrity_config,
-        repository,
+        backup_store,
+        integrity_check_store,
     };
 
     let (backup_file_name, integrity_check_file_name) = {
         let backup_name = "backup";
         service.create_backup(backup_name, archive)?
     };
-    let backup_file_path = Path::new(fs_prefix).join(&backup_file_name);
-    let integrity_check_file_path = Path::new(fs_prefix).join(&integrity_check_file_name);
+    let backup_file_path = Path::new(fs_prefix_backups).join(&backup_file_name);
+    let integrity_check_file_path =
+        Path::new(fs_prefix_integrity_checks).join(&integrity_check_file_name);
 
     // Now checking.
 

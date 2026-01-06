@@ -26,7 +26,8 @@ pub use self::{
 
 // MARK: Service
 
-pub type BackupService<Repository = S3Store> = ProseBackupService<Repository>;
+pub type BackupService<BackupStore = S3Store, IntegrityCheckStore = S3Store> =
+    ProseBackupService<BackupStore, IntegrityCheckStore>;
 
 /// ```text
 /// ## Create backup
@@ -51,17 +52,19 @@ pub type BackupService<Repository = S3Store> = ProseBackupService<Repository>;
 /// Tests:
 ///   -> FileSink
 /// ```
-pub struct ProseBackupService<Repository> {
+pub struct ProseBackupService<BackupStore, IntegrityCheckStore> {
     pub archiving_config: ArchivingConfig,
     pub compression_config: CompressionConfig,
     pub encryption_config: Option<EncryptionConfig>,
     pub integrity_config: Option<IntegrityConfig>,
-    pub repository: Repository,
+    pub backup_store: BackupStore,
+    pub integrity_check_store: IntegrityCheckStore,
 }
 
-impl<Repository> BackupService<Repository>
+impl<S1, S2> ProseBackupService<S1, S2>
 where
-    Repository: ObjectStore,
+    S1: ObjectStore,
+    S2: ObjectStore,
 {
     /// ```text
     ///                         ┌─/var/lib/prosody
@@ -120,7 +123,7 @@ where
         };
 
         let upload_backup = self
-            .repository
+            .backup_store
             .writer(&backup_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
@@ -141,7 +144,7 @@ where
         () = finalize2(gen_integrity_check)?;
 
         let mut upload_integrity_check = self
-            .repository
+            .integrity_check_store
             .writer(&integrity_check_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
