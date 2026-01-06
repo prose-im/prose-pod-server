@@ -13,7 +13,7 @@ use crate::writer_chain::WriterChainBuilder;
 
 #[derive(Debug)]
 pub struct ArchivingConfig {
-    pub paths: Vec<(PathBuf, &'static str)>,
+    paths: Vec<(PathBuf, &'static str)>,
     _private: (),
 }
 
@@ -49,19 +49,19 @@ pub(crate) fn check_archiving_will_succeed(
     Ok(())
 }
 
-pub(crate) fn archive_writer<W: Write>(
-    archive: &mut tar::Builder<W>,
+fn archive_writer<W: Write>(
+    builder: &mut tar::Builder<W>,
     archiving_config: &ArchivingConfig,
 ) -> Result<(), anyhow::Error> {
     for (local_path, archive_path) in archiving_config.paths.iter() {
         let path = Path::new(local_path);
 
         if path.is_file() {
-            archive
+            builder
                 .append_path_with_name(path, archive_path)
                 .with_context(|| format!("Could not archive file at '{}'", local_path.display()))?;
         } else if path.is_dir() {
-            archive
+            builder
                 .append_dir_all(archive_path, path)
                 .with_context(|| {
                     format!("Could not archive directory at '{}'", local_path.display())
