@@ -171,7 +171,7 @@ mod file {
     use super::BackupSink;
 
     pub struct FileSink {
-        prefix: PathBuf,
+        directory: PathBuf,
         overwrite: bool,
         mode: u32,
     }
@@ -187,8 +187,8 @@ mod file {
             self
         }
 
-        pub fn prefix(mut self, prefix: impl AsRef<Path>) -> Self {
-            self.prefix = prefix.as_ref().to_path_buf();
+        pub fn directory(mut self, directory: impl AsRef<Path>) -> Self {
+            self.directory = directory.as_ref().to_path_buf();
             self
         }
     }
@@ -196,7 +196,7 @@ mod file {
     impl Default for FileSink {
         fn default() -> Self {
             Self {
-                prefix: PathBuf::new(),
+                directory: PathBuf::new(),
                 overwrite: false,
                 mode: 0o600,
             }
@@ -207,12 +207,10 @@ mod file {
         type Writer = File;
 
         fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
-            if !self.prefix.is_absolute() {
-                assert!(
-                    !file_name.starts_with("/"),
-                    "File name should not start with a `/`"
-                );
-            }
+            assert!(
+                !file_name.starts_with("/"),
+                "File name should not start with a `/`"
+            );
 
             File::options()
                 .create(true)
@@ -220,7 +218,7 @@ mod file {
                 .write(true)
                 .truncate(self.overwrite)
                 .mode(self.mode)
-                .open(self.prefix.join(file_name))
+                .open(self.directory.join(file_name))
                 .context("Failed opening file")
         }
     }

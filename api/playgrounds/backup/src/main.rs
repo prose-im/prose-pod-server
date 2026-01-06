@@ -32,7 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // let integrity_config = None;
 
     let fs_prefix = ".out";
-    let sink = FileSink::default().overwrite(true).prefix(fs_prefix);
+    let sink = FileSink::default().overwrite(true).directory(fs_prefix);
     fs::create_dir_all(fs_prefix)?;
     let source = FileSource::new(fs_prefix);
 

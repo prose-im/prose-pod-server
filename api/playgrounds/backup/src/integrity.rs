@@ -25,7 +25,7 @@ impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
         let mut backup_reader = self
             .repository
             .source
-            .backup_reader(backup_file_name)
+            .reader(backup_file_name)
             .context("Could not open backup reader")?;
 
         let mut verifier = BackupVerifier::new(self.integrity_config.as_ref());
@@ -33,8 +33,7 @@ impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
 
         let mut integrity_check_reader = self
             .repository
-            .source
-            .integrity_check_reader(integrity_check_file_name)
+            .reader(integrity_check_file_name)
             .context("Could not open integrity check reader")?;
         let mut integrity_check: Vec<u8> = Vec::new();
         integrity_check_reader

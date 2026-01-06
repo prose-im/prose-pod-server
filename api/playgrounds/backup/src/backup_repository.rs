@@ -14,4 +14,8 @@ impl<Source: BackupSource, Sink: BackupSink> BackupRepository<Source, Sink> {
     pub fn writer(&self, backup_name: &str) -> Result<Sink::Writer, anyhow::Error> {
         self.sink.writer(backup_name)
     }
+
+    pub fn reader(&self, backup_name: &str) -> Result<Source::Reader, anyhow::Error> {
+        self.source.reader(backup_name)
+    }
 }

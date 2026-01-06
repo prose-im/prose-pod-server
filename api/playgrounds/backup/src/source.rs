@@ -6,15 +6,9 @@
 use std::io::Read;
 
 pub trait BackupSource {
-    type BackupReader: Read;
-    type IntegrityCheckReader: Read;
+    type Reader: Read;
 
-    fn backup_reader(&self, backup_file_name: &str) -> Result<Self::BackupReader, anyhow::Error>;
-
-    fn integrity_check_reader(
-        &self,
-        integrity_check_file_name: &str,
-    ) -> Result<Self::IntegrityCheckReader, anyhow::Error>;
+    fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error>;
 }
 
 #[cfg(feature = "destination_s3")]
@@ -28,20 +22,9 @@ mod s3 {
     pub struct S3Source;
 
     impl BackupSource for S3Source {
-        type BackupReader = File;
-        type IntegrityCheckReader = File;
+        type Reader = File;
 
-        fn backup_reader(
-            &self,
-            backup_file_name: &str,
-        ) -> Result<Self::BackupReader, anyhow::Error> {
-            todo!()
-        }
-
-        fn integrity_check_reader(
-            &self,
-            integrity_check_file_name: &str,
-        ) -> Result<Self::IntegrityCheckReader, anyhow::Error> {
+        fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error> {
             todo!()
         }
     }
@@ -51,8 +34,8 @@ mod s3 {
 pub use self::file::FileSource;
 #[cfg(feature = "destination_file")]
 mod file {
+    use std::fs::File;
     use std::path::{Path, PathBuf};
-    use std::{fs::File, io};
 
     use anyhow::Context as _;
 
@@ -70,30 +53,21 @@ mod file {
                 directory: directory.as_ref().to_path_buf(),
             }
         }
-
-        fn open(&self, path: impl AsRef<Path>) -> Result<File, io::Error> {
-            File::options().read(true).open(self.directory.join(path))
-        }
     }
 
     impl BackupSource for FileSource {
-        type BackupReader = File;
-        type IntegrityCheckReader = File;
+        type Reader = File;
 
-        fn backup_reader(
-            &self,
-            backup_file_name: &str,
-        ) -> Result<Self::BackupReader, anyhow::Error> {
-            self.open(backup_file_name)
+        fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error> {
+            assert!(
+                !file_name.starts_with("/"),
+                "File name should not start with a `/`"
+            );
+
+            File::options()
+                .read(true)
+                .open(self.directory.join(file_name))
                 .context("Could not open backup file")
-        }
-
-        fn integrity_check_reader(
-            &self,
-            integrity_check_file_name: &str,
-        ) -> Result<Self::IntegrityCheckReader, anyhow::Error> {
-            self.open(integrity_check_file_name)
-                .context("Could not open backup integrity check file")
         }
     }
 }
