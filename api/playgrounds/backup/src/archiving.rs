@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 
-use crate::{CreateBackupError, ProseBackupWriterBuilder};
+use crate::CreateBackupError;
+use crate::writer_chain::WriterChainBuilder;
 
 #[derive(Debug)]
 pub struct ArchivingConfig {
@@ -73,7 +74,7 @@ pub(crate) fn archive_writer<W: Write>(
     Ok(())
 }
 
-impl<M, F> ProseBackupWriterBuilder<M, F> {
+impl<M, F> WriterChainBuilder<M, F> {
     /// NOTE: We don’t start from zero as the Prose Pod API has to send its own
     ///   backup to the Prose Pod Server. The Pod Server then merges it with
     ///   the rest of the server’s data and creates the backup file.
@@ -81,7 +82,7 @@ impl<M, F> ProseBackupWriterBuilder<M, F> {
         self,
         archive: tar::Archive<R>,
         archiving_config: &ArchivingConfig,
-    ) -> ProseBackupWriterBuilder<
+    ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
     >
@@ -92,7 +93,7 @@ impl<M, F> ProseBackupWriterBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        ProseBackupWriterBuilder {
+        WriterChainBuilder {
             make: move |writer: InnerWriter| {
                 let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 

@@ -14,10 +14,9 @@ mod gpg;
 mod integrity;
 pub mod sink;
 pub mod source;
-mod util;
+mod writer_chain;
 
 use crate::archiving::check_archiving_will_succeed;
-use crate::util::tee_writer::TeeWriter;
 
 use self::sink::{BackupSink, S3Sink};
 use self::source::{BackupSource, S3Source};
@@ -130,11 +129,11 @@ impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
             .integrity_check_writer(&integrity_check_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        let (mut gen_integrity_check, finalize2) = builder()
+        let (mut gen_integrity_check, finalize2) = writer_chain::builder()
             .integrity_check(self.integrity_config.as_ref())
             .build(upload_integrity_check)?;
 
-        let (writer, finalize) = builder()
+        let (writer, finalize) = writer_chain::builder()
             .archive(archive, &self.archiving_config)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_config.as_ref())
@@ -178,68 +177,4 @@ pub enum CreateBackupError {
 
     #[error("Failed computing backup integrity check: {0:?}")]
     IntegrityCheckGenerationFailed(anyhow::Error),
-}
-
-// MARK: Writer
-
-struct ProseBackupWriterBuilder<Make, Finalize> {
-    make: Make,
-    finalize: Finalize,
-}
-
-fn builder<W, E>() -> ProseBackupWriterBuilder<
-    // NOTE: We need `W -> W` here as this layer will be
-    //   the outer-most layer when building the final writer.
-    impl FnOnce(W) -> Result<W, E>,
-    impl FnOnce(W) -> Result<W, E>,
-> {
-    ProseBackupWriterBuilder {
-        make: move |writer: W| Ok(writer),
-        finalize: move |writer: W| Ok(writer),
-    }
-}
-
-impl<M, F> ProseBackupWriterBuilder<M, F> {
-    /// NOTE: Accepts a mutable reference to leave ownership to the called and
-    ///   allow it to finalize the other writer manually.
-    fn tee<'a, InnerWriter, InnerWriter2, OuterWriter, Out1, F2, Out2, E>(
-        self,
-        other_writer: &'a mut InnerWriter2,
-        finalize2: F2,
-    ) -> ProseBackupWriterBuilder<
-        impl FnOnce(InnerWriter) -> Result<OuterWriter, E>,
-        impl FnOnce(OuterWriter) -> Result<(Out1, F2), E>,
-    >
-    where
-        M: FnOnce(TeeWriter<InnerWriter, &'a mut InnerWriter2>) -> Result<OuterWriter, E>,
-        F: FnOnce(OuterWriter) -> Result<Out1, E>,
-        F2: FnOnce(InnerWriter2) -> Out2,
-    {
-        let Self { make, finalize, .. } = self;
-
-        ProseBackupWriterBuilder {
-            make: move |writer| make(TeeWriter::new(writer, other_writer)),
-
-            finalize: move |writer: OuterWriter| {
-                let writer = finalize(writer)?;
-
-                Ok((writer, finalize2))
-            },
-        }
-    }
-
-    #[must_use]
-    fn build<InnerWriter, OuterWriter, Out>(
-        self,
-        writer: InnerWriter,
-    ) -> Result<(OuterWriter, F), CreateBackupError>
-    where
-        InnerWriter: std::io::Write,
-        M: FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
-        F: FnOnce(OuterWriter) -> Out,
-    {
-        let Self { make, finalize, .. } = self;
-
-        make(writer).map(move |w| (w, finalize))
-    }
 }

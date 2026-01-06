@@ -7,18 +7,18 @@ use std::io::Write;
 
 use anyhow::Context as _;
 
-use crate::{CreateBackupError, ProseBackupWriterBuilder};
+use crate::{CreateBackupError, writer_chain::WriterChainBuilder};
 
 #[derive(Debug)]
 pub struct CompressionConfig {
     pub zstd_compression_level: i32,
 }
 
-impl<M, F> ProseBackupWriterBuilder<M, F> {
+impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn compress<InnerWriter, OuterWriter>(
         self,
         config: &CompressionConfig,
-    ) -> ProseBackupWriterBuilder<
+    ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
     >
@@ -29,7 +29,7 @@ impl<M, F> ProseBackupWriterBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        ProseBackupWriterBuilder {
+        WriterChainBuilder {
             make: move |writer: InnerWriter| {
                 let writer = zstd::Encoder::new(writer, config.zstd_compression_level)
                     .context("Could not build zstd encoder")

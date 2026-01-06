@@ -7,7 +7,11 @@ use std::io::Write;
 
 use openpgp::serialize::stream::*;
 
-use crate::{CreateBackupError, ProseBackupWriterBuilder, gpg::GpgConfig, util::either::Either};
+use crate::{
+    CreateBackupError,
+    gpg::GpgConfig,
+    writer_chain::{WriterChainBuilder, either::Either},
+};
 
 pub type EncryptionConfig = GpgConfig;
 
@@ -38,11 +42,11 @@ fn encrypt<'a, W: Write + Send + Sync + 'a>(
     Ok(literal)
 }
 
-impl<M, F> ProseBackupWriterBuilder<M, F> {
+impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn encrypt_if_possible<'a, InnerWriter, OuterWriter>(
         self,
         config: Option<&'a EncryptionConfig>,
-    ) -> ProseBackupWriterBuilder<
+    ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,
     >
@@ -53,7 +57,7 @@ impl<M, F> ProseBackupWriterBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        ProseBackupWriterBuilder {
+        WriterChainBuilder {
             make: move |writer: InnerWriter| {
                 let writer: Either<_, _> = match config {
                     Some(config) => {

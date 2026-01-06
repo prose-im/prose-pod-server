@@ -10,8 +10,8 @@ use openpgp::parse::{Parse as _, stream::*};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    BackupService, BackupSink, BackupSource, CreateBackupError, ProseBackupWriterBuilder,
-    gpg::GpgConfig,
+    BackupService, BackupSink, BackupSource, CreateBackupError, gpg::GpgConfig,
+    writer_chain::WriterChainBuilder,
 };
 
 impl<Sink: BackupSink, Source: BackupSource> BackupService<Sink, Source> {
@@ -67,11 +67,11 @@ impl<'a> BackupVerifier<'a> {
 
 // MARK: Integrity
 
-impl<M, F> ProseBackupWriterBuilder<M, F> {
+impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn integrity_check<'a, W, OuterWriter>(
         self,
         config: Option<&IntegrityConfig>,
-    ) -> ProseBackupWriterBuilder<
+    ) -> WriterChainBuilder<
         impl FnOnce(W) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,
     >
@@ -82,7 +82,7 @@ impl<M, F> ProseBackupWriterBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        ProseBackupWriterBuilder {
+        WriterChainBuilder {
             make: move |writer| {
                 let writer = if let Some(integrity_config) = config {
                     IntegrityWriter::Signature(
