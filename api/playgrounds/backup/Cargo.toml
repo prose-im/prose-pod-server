@@ -36,10 +36,10 @@ name = "prose_backup"
 [[bin]]
 name = "backup"
 path = "src/main.rs"
-required-features = ["destination_file"]
+required-features = ["destination_fs"]
 
 [features]
 default = ["destination_s3"]
-test = ["destination_file"]
+test = ["destination_fs"]
+destination_fs = []
 destination_s3 = ["dep:aws-sdk-s3"]
-destination_file = []

@@ -31,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let fs_prefix = ".out";
     fs::create_dir_all(fs_prefix)?;
-    let repository = prose_backup::repository::File::default()
+    let repository = prose_backup::stores::Fs::default()
         .overwrite(true)
         .directory(fs_prefix);
 

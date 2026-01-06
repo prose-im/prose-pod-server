@@ -10,8 +10,7 @@ use openpgp::parse::{Parse as _, stream::*};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    BackupRepository, BackupService, CreateBackupError, gpg::GpgConfig,
-    writer_chain::WriterChainBuilder,
+    BackupService, CreateBackupError, ObjectStore, gpg::GpgConfig, writer_chain::WriterChainBuilder,
 };
 
 impl<Repository> BackupService<Repository> {
@@ -21,7 +20,7 @@ impl<Repository> BackupService<Repository> {
         integrity_check_file_name: &str,
     ) -> Result<(), anyhow::Error>
     where
-        Repository: BackupRepository,
+        Repository: ObjectStore,
     {
         use std::io::Read as _;
 

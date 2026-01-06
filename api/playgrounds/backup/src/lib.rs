@@ -7,25 +7,26 @@ extern crate aws_sdk_s3 as s3;
 extern crate sequoia_openpgp as openpgp;
 
 mod archiving;
-pub mod backup_repository;
 mod compression;
 mod encryption;
 mod gpg;
 mod integrity;
+pub mod stores;
 mod writer_chain;
 
-use crate::archiving::check_archiving_will_succeed;
-use crate::backup_repository::S3BackupRepository;
+use crate::{
+    archiving::check_archiving_will_succeed,
+    stores::{ObjectStore, S3Store},
+};
 
 pub use self::{
-    archiving::ArchivingConfig, backup_repository as repository,
-    backup_repository::BackupRepository, compression::CompressionConfig,
-    encryption::EncryptionConfig, integrity::IntegrityConfig,
+    archiving::ArchivingConfig, compression::CompressionConfig, encryption::EncryptionConfig,
+    integrity::IntegrityConfig,
 };
 
 // MARK: Service
 
-pub type BackupService<Repository = S3BackupRepository> = ProseBackupService<Repository>;
+pub type BackupService<Repository = S3Store> = ProseBackupService<Repository>;
 
 /// ```text
 /// ## Create backup
@@ -58,7 +59,10 @@ pub struct ProseBackupService<Repository> {
     pub repository: Repository,
 }
 
-impl<Repository> BackupService<Repository> {
+impl<Repository> BackupService<Repository>
+where
+    Repository: ObjectStore,
+{
     /// ```text
     ///                         ┌─/var/lib/prosody
     ///                         ├─/etc/prosody
@@ -101,10 +105,7 @@ impl<Repository> BackupService<Repository> {
         &self,
         backup_name: &str,
         archive: tar::Archive<std::io::Cursor<bytes::Bytes>>,
-    ) -> Result<(String, String), CreateBackupError>
-    where
-        Repository: BackupRepository,
-    {
+    ) -> Result<(String, String), CreateBackupError> {
         check_archiving_will_succeed(&self.archiving_config)?;
 
         let backup_file_name = if self.encryption_config.is_some() {
@@ -185,4 +186,10 @@ pub enum CreateBackupError {
 
     #[error("Failed uploading backup integrity check: {0:?}")]
     IntegrityCheckUploadFailed(std::io::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExtractBackupError {
+    #[error("Cannot create reader: {0:?}")]
+    CannotCreateReader(anyhow::Error),
 }
