@@ -123,14 +123,11 @@ impl<Repository> BackupService<Repository> {
             .writer(&backup_file_name)
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        let upload_integrity_check = self
-            .repository
-            .writer(&integrity_check_file_name)
-            .map_err(CreateBackupError::CannotCreateSink)?;
+        let mut integrity_check: Vec<u8> = Vec::new();
 
         let (mut gen_integrity_check, finalize2) = writer_chain::builder()
             .integrity_check(self.integrity_config.as_ref())
-            .build(upload_integrity_check)?;
+            .build(&mut integrity_check)?;
 
         let (writer, finalize) = writer_chain::builder()
             .archive(archive, &self.archiving_config)
@@ -141,6 +138,15 @@ impl<Repository> BackupService<Repository> {
 
         let ((), finalize2) = finalize(writer)?;
         () = finalize2(gen_integrity_check)?;
+
+        let mut upload_integrity_check = self
+            .repository
+            .writer(&integrity_check_file_name)
+            .map_err(CreateBackupError::CannotCreateSink)?;
+
+        let mut cursor = std::io::Cursor::new(integrity_check);
+        std::io::copy(&mut cursor, &mut upload_integrity_check)
+            .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
         Ok((backup_file_name, integrity_check_file_name))
     }
@@ -176,4 +182,7 @@ pub enum CreateBackupError {
 
     #[error("Failed computing backup integrity check: {0:?}")]
     IntegrityCheckGenerationFailed(anyhow::Error),
+
+    #[error("Failed uploading backup integrity check: {0:?}")]
+    IntegrityCheckUploadFailed(std::io::Error),
 }
