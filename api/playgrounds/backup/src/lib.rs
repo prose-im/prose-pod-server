@@ -76,6 +76,8 @@ where
     S1: ObjectStore,
     S2: ObjectStore,
 {
+    /// Everything is done in a single stream of the following shape:
+    ///
     /// ```text
     ///                         ┌─/var/lib/prosody
     ///                         ├─/etc/prosody
@@ -103,16 +105,14 @@ where
     ///            | Upload |            ◇───────────┐
     ///            | backup |        Yes │           │ No
     ///            |  (S3)  |        ┌───┴───┐ ┌─────┴─────┐
-    ///            └───┬────┘        │ Sign  | │   Hash    |
-    ///                │             | (GPG) │ | (SHA 256) │
-    ///                │             └───┬───┘ └─────┬─────┘
-    ///                │                 ◇───────────┘
-    ///                │        ┌────────┴─────────┐
-    ///                │        | Upload integrity |
-    ///                │        |    check (S3)    |
-    ///                │        └────────┬─────────┘
-    ///              ╺━┷━━━━━━━━┯━━━━━━━━┷━╸
-    ///                         ◉
+    ///            └────────┘        │ Sign  | │   Hash    |
+    ///                              | (GPG) │ | (SHA 256) │
+    ///                              └───┬───┘ └─────┬─────┘
+    ///                                  ◇───────────┘
+    ///                         ┌────────┴─────────┐
+    ///                         | Upload integrity |
+    ///                         |    check (S3)    |
+    ///                         └──────────────────┘
     /// ```
     pub async fn create_backup(
         &self,
