@@ -27,3 +27,16 @@ where
         }
     }
 }
+
+impl<R1, R2> std::io::Read for Either<R1, R2>
+where
+    R1: std::io::Read,
+    R2: std::io::Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Either::A(reader) => reader.read(buf),
+            Either::B(reader) => reader.read(buf),
+        }
+    }
+}

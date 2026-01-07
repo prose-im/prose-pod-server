@@ -176,15 +176,15 @@ where
         &self,
         backup_name: &str,
         location: impl AsRef<Path>,
-    ) -> Result<(), ExtractBackupError> {
+    ) -> Result<(), anyhow::Error> {
+        use crate::writer_chain::either::Either;
         use openpgp::parse::Parse as _;
         use openpgp::parse::stream::DecryptorBuilder;
-        use std::io::Read as _;
 
         let integrity_checks = (self.integrity_check_store)
             .find(backup_name)
             .await
-            .map_err(ExtractBackupError::FailedListingIntegrityChecks)?;
+            .context("Failed listing integrity checks")?;
 
         // Check signature first.
         let signature_name = integrity_checks
@@ -194,33 +194,28 @@ where
         if let Some(signature_name) = signature_name {
             self.check_backup_integrity(&backup_name, &signature_name)
                 .await
-                .map_err(ExtractBackupError::IntegrityCheckFailed)?;
+                .context("Integrity check failed")?;
 
-            let mut backup_reader = (self.backup_store)
+            let backup_reader = (self.backup_store)
                 .reader(backup_name)
                 .await
                 .map_err(ExtractBackupError::CannotCreateReader)?;
 
-            let compressed_archive: Vec<u8> = if backup_name.ends_with(".gpg") {
+            let compressed_archive_reader = if backup_name.ends_with(".gpg") {
                 if let Some(config) = self.encryption_config.as_ref() {
-                    let mut decryptor = DecryptorBuilder::from_reader(backup_reader)
-                        .map_err(ExtractBackupError::IntegrityCheckFailed)?
+                    let decryptor = DecryptorBuilder::from_reader(backup_reader)
+                        .context("Failed creating decryptor")?
                         .with_policy(config.policy.as_ref(), None, config)
                         .map_err(ExtractBackupError::DecryptionFailed)?;
 
-                    let mut bytes: Vec<u8> = Vec::new();
-                    decryptor
-                        .read_to_end(&mut bytes)
-                        .context("Read failed")
-                        .map_err(ExtractBackupError::DecryptionFailed)?;
+                    // TODO: Gather stats.
+                    // if cfg!(debug_assertions) {
+                    //     println!("Decrypted {size_bytes}B", size_bytes = bytes.len());
+                    // }
 
-                    if cfg!(debug_assertions) {
-                        println!("Decrypted {size_bytes}B", size_bytes = bytes.len());
-                    }
-
-                    bytes
+                    Either::A(decryptor)
                 } else {
-                    return Err(ExtractBackupError::CannotDecrypt(
+                    return Err(anyhow!(
                         "Encryption not configured. Cannot find private keys.",
                     ));
                 }
@@ -229,30 +224,26 @@ where
                     eprintln!("NOT DECRYPTING");
                 }
 
-                let mut bytes: Vec<u8> = Vec::new();
-                backup_reader
-                    .read_to_end(&mut bytes)
-                    .context("Read failed")
-                    .map_err(ExtractBackupError::DecryptionFailed)?;
+                // TODO: Gather stats.
+                // if cfg!(debug_assertions) {
+                //     println!("Read {size_bytes}B plaintext", size_bytes = bytes.len());
+                // }
 
-                if cfg!(debug_assertions) {
-                    println!("Read {size_bytes}B plaintext", size_bytes = bytes.len());
-                }
-
-                bytes
+                Either::B(backup_reader)
             };
 
-            let archive_bytes: Vec<u8> = zstd::decode_all(&compressed_archive[..])
-                .map_err(ExtractBackupError::DecompressionFailed)?;
+            let archive_bytes =
+                zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
 
-            if cfg!(debug_assertions) {
-                println!(
-                    "Decompressed {size_bytes}B",
-                    size_bytes = archive_bytes.len()
-                );
-            }
+            // TODO: Gather stats.
+            // if cfg!(debug_assertions) {
+            //     println!(
+            //         "Decompressed {size_bytes}B",
+            //         size_bytes = archive_bytes.len()
+            //     );
+            // }
 
-            extract_archive(&archive_bytes, location)
+            extract_archive(archive_bytes, location)
                 .map_err(ExtractBackupError::ExtractionFailed)?;
 
             return Ok(());
@@ -267,11 +258,13 @@ where
     }
 }
 
-fn extract_archive(data: &[u8], location: impl AsRef<Path>) -> Result<(), anyhow::Error> {
+fn extract_archive<R>(archive_reader: R, location: impl AsRef<Path>) -> Result<(), anyhow::Error>
+where
+    R: std::io::Read,
+{
     use std::ffi::OsString;
 
-    let cursor = std::io::Cursor::new(data);
-    let mut archive = tar::Archive::new(cursor);
+    let mut archive = tar::Archive::new(archive_reader);
 
     let mut entries = archive.entries()?;
 
@@ -386,14 +379,8 @@ pub enum CreateBackupError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractBackupError {
-    #[error("Failed listing integrity checks: {0:?}")]
-    FailedListingIntegrityChecks(anyhow::Error),
-
     #[error("Cannot create reader: {0:?}")]
     CannotCreateReader(anyhow::Error),
-
-    #[error("Integrity check failed: {0:?}")]
-    IntegrityCheckFailed(anyhow::Error),
 
     #[error("Cannot decrypt backup: {0:?}")]
     CannotDecrypt(&'static str),
