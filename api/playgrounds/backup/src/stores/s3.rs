@@ -40,7 +40,7 @@ impl ObjectStore for S3Store {
         Ok(S3Reader::new(self.client.clone(), &self.bucket, key))
     }
 
-    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
         let mut keys = Vec::new();
         let mut continuation_token = None;
 
@@ -57,7 +57,9 @@ impl ObjectStore for S3Store {
             keys.extend(
                 resp.contents()
                     .into_iter()
-                    .filter_map(|obj| obj.key().map(ToOwned::to_owned)),
+                    .filter_map(|obj| obj.key())
+                    .filter(|key| key.starts_with(prefix))
+                    .map(ToOwned::to_owned),
             );
 
             if resp.is_truncated().unwrap_or(false) {

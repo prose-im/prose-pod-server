@@ -6,32 +6,48 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, anyhow, bail};
 
-use crate::CreateBackupError;
 use crate::writer_chain::WriterChainBuilder;
+use crate::{BackupInternalMetadata, CreateBackupError};
+
+pub const CURRENT_BACKUP_VERSION: u8 = 1;
+
+// WARN: Do not change as doing so would break backwards compatibility.
+pub(crate) const METADATA_FILE_NAME: &'static str = "metadata.json";
 
 #[derive(Debug)]
 pub struct ArchivingConfig {
-    paths: Vec<(PathBuf, &'static str)>,
+    pub version: u8,
+    pub paths: Vec<(PathBuf, &'static str)>,
     _private: (),
-}
-
-impl ArchivingConfig {
-    pub fn new(prefix: impl AsRef<Path>) -> Self {
-        Self {
-            paths: vec![
-                (prefix.as_ref().join("var/lib/prosody"), "prosody-data"),
-                (prefix.as_ref().join("etc/prosody"), "prosody-config"),
-            ],
-            _private: (),
-        }
-    }
 }
 
 impl Default for ArchivingConfig {
     fn default() -> Self {
-        Self::new("/")
+        Self::version(CURRENT_BACKUP_VERSION).unwrap()
+    }
+}
+
+impl ArchivingConfig {
+    pub fn version(version: u8) -> Result<Self, anyhow::Error> {
+        Self::new(version, "/")
+    }
+
+    pub fn new(version: u8, prefix: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+        let paths = match version {
+            1 => vec![
+                (prefix.as_ref().join("var/lib/prosody"), "prosody-data"),
+                (prefix.as_ref().join("etc/prosody"), "prosody-config"),
+            ],
+            n => return Err(anyhow!("Unknown backup version: {n}")),
+        };
+
+        Ok(Self {
+            version,
+            paths,
+            _private: (),
+        })
     }
 }
 
@@ -97,6 +113,14 @@ impl<M, F> WriterChainBuilder<M, F> {
             make: move |writer: InnerWriter| {
                 let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
+                add_metadata_file(
+                    &BackupInternalMetadata {
+                        version: archiving_config.version,
+                    },
+                    &mut builder,
+                )
+                .map_err(CreateBackupError::CannotArchive)?;
+
                 merge_archives(archive, &mut builder).map_err(CreateBackupError::CannotArchive)?;
 
                 archive_writer(&mut builder, archiving_config)
@@ -120,6 +144,25 @@ impl<M, F> WriterChainBuilder<M, F> {
             },
         }
     }
+}
+
+fn add_metadata_file<W: std::io::Write>(
+    metadata: &BackupInternalMetadata,
+    builder: &mut tar::Builder<W>,
+) -> Result<(), anyhow::Error> {
+    let metadata_bytes = serde_json::to_vec(metadata)?;
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(metadata_bytes.len() as u64);
+    header.set_cksum();
+
+    builder.append_data(
+        &mut header,
+        METADATA_FILE_NAME,
+        std::io::Cursor::new(metadata_bytes),
+    )?;
+
+    Ok(())
 }
 
 fn merge_archives<R: std::io::Read, W: std::io::Write>(

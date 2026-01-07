@@ -57,13 +57,19 @@ impl ObjectStore for FsStore {
             "File name should not start with a `/`"
         );
 
+        let path = self.directory.join(file_name);
+
+        // if cfg!(debug_assertions) {
+        //     println!("Opening {} (write)…", path.display());
+        // }
+
         File::options()
             .create(true)
             .create_new(!self.overwrite)
             .write(true)
             .truncate(self.overwrite)
             .mode(self.mode)
-            .open(self.directory.join(file_name))
+            .open(path)
             .context("Failed opening file (write)")
     }
 
@@ -73,13 +79,19 @@ impl ObjectStore for FsStore {
             "File name should not start with a `/`"
         );
 
+        let path = self.directory.join(file_name);
+
+        // if cfg!(debug_assertions) {
+        //     println!("Opening {} (read)…", path.display());
+        // }
+
         File::options()
             .read(true)
-            .open(self.directory.join(file_name))
+            .open(path)
             .context("Failed opening file (read)")
     }
 
-    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
         let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
 
         let mut file_names = Vec::new();
@@ -90,7 +102,10 @@ impl ObjectStore for FsStore {
                         .file_name()
                         .into_string()
                         .expect("File names should only contain Unicode data");
-                    file_names.push(file_name);
+
+                    if file_name.starts_with(prefix) {
+                        file_names.push(file_name);
+                    }
                 }
                 Err(err) => eprintln!("{err:?}"),
             }

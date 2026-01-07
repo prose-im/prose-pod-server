@@ -15,14 +15,23 @@ pub mod stores;
 mod util;
 mod writer_chain;
 
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, anyhow};
+
 use crate::{
-    archiving::check_archiving_will_succeed,
+    archiving::{METADATA_FILE_NAME, check_archiving_will_succeed},
     stores::{ObjectStore, S3Store},
+    util::safe_replace,
 };
 
 pub use self::{
-    archiving::ArchivingConfig, compression::CompressionConfig, encryption::EncryptionConfig,
-    integrity::IntegrityConfig,
+    archiving::ArchivingConfig, archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
+    compression::CompressionConfig, encryption::EncryptionConfig, integrity::IntegrityConfig,
 };
 
 // MARK: Service
@@ -162,6 +171,182 @@ where
     pub async fn list_backups(&self) -> Result<Vec<String>, anyhow::Error> {
         self.backup_store.list_all().await
     }
+
+    pub async fn extract_backup(
+        &self,
+        backup_name: &str,
+        location: impl AsRef<Path>,
+    ) -> Result<(), ExtractBackupError> {
+        use openpgp::parse::Parse as _;
+        use openpgp::parse::stream::DecryptorBuilder;
+        use std::io::Read as _;
+
+        let integrity_checks = (self.integrity_check_store)
+            .find(backup_name)
+            .await
+            .map_err(ExtractBackupError::FailedListingIntegrityChecks)?;
+
+        // Check signature first.
+        let signature_name = integrity_checks
+            .iter()
+            .find(|name| name.as_str() == format!("{backup_name}.sig").as_str());
+
+        if let Some(signature_name) = signature_name {
+            self.check_backup_integrity(&backup_name, &signature_name)
+                .await
+                .map_err(ExtractBackupError::IntegrityCheckFailed)?;
+
+            let mut backup_reader = (self.backup_store)
+                .reader(backup_name)
+                .await
+                .map_err(ExtractBackupError::CannotCreateReader)?;
+
+            let compressed_archive: Vec<u8> = if backup_name.ends_with(".gpg") {
+                if let Some(config) = self.encryption_config.as_ref() {
+                    let mut decryptor = DecryptorBuilder::from_reader(backup_reader)
+                        .map_err(ExtractBackupError::IntegrityCheckFailed)?
+                        .with_policy(config.policy.as_ref(), None, config)
+                        .map_err(ExtractBackupError::DecryptionFailed)?;
+
+                    let mut bytes: Vec<u8> = Vec::new();
+                    decryptor
+                        .read_to_end(&mut bytes)
+                        .context("Read failed")
+                        .map_err(ExtractBackupError::DecryptionFailed)?;
+
+                    if cfg!(debug_assertions) {
+                        println!("Decrypted {size_bytes}B", size_bytes = bytes.len());
+                    }
+
+                    bytes
+                } else {
+                    return Err(ExtractBackupError::CannotDecrypt(
+                        "Encryption not configured. Cannot find private keys.",
+                    ));
+                }
+            } else {
+                if cfg!(debug_assertions) {
+                    eprintln!("NOT DECRYPTING");
+                }
+
+                let mut bytes: Vec<u8> = Vec::new();
+                backup_reader
+                    .read_to_end(&mut bytes)
+                    .context("Read failed")
+                    .map_err(ExtractBackupError::DecryptionFailed)?;
+
+                if cfg!(debug_assertions) {
+                    println!("Read {size_bytes}B plaintext", size_bytes = bytes.len());
+                }
+
+                bytes
+            };
+
+            let archive_bytes: Vec<u8> = zstd::decode_all(&compressed_archive[..])
+                .map_err(ExtractBackupError::DecompressionFailed)?;
+
+            if cfg!(debug_assertions) {
+                println!(
+                    "Decompressed {size_bytes}B",
+                    size_bytes = archive_bytes.len()
+                );
+            }
+
+            extract_archive(&archive_bytes, location)
+                .map_err(ExtractBackupError::ExtractionFailed)?;
+
+            return Ok(());
+        }
+
+        // FIXME: Do not look for hash if signature is mandatory.
+
+        // Check hash if no signature exist.
+        let todo = "Hash check";
+
+        Ok(())
+    }
+}
+
+fn extract_archive(data: &[u8], location: impl AsRef<Path>) -> Result<(), anyhow::Error> {
+    use std::ffi::OsString;
+
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = tar::Archive::new(cursor);
+
+    let mut entries = archive.entries()?;
+
+    let metadata: BackupInternalMetadata = {
+        let entry = match entries.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(err)) => return Err(anyhow::Error::new(err).context("Backup invalid")),
+            None => return Err(anyhow!("Backup empty.")),
+        };
+
+        let path = entry.path()?;
+
+        if path != Path::new(METADATA_FILE_NAME) {
+            return Err(anyhow!(
+                "Backup invalid: Metadata file not found (first entry: {path:?})."
+            ));
+        }
+
+        serde_json::from_reader(entry)?
+    };
+
+    let archiving_config = ArchivingConfig::new(metadata.version, location)?;
+    let mut extract_paths: HashMap<OsString, PathBuf> = archiving_config
+        .paths
+        .into_iter()
+        .map(|(a, b)| (OsString::from(b), a))
+        .collect();
+
+    let mut size_bytes = 0;
+
+    let tmp = tempfile::TempDir::new()?;
+    for entry in entries {
+        let mut entry = entry?;
+
+        entry.unpack_in(tmp.path())?;
+
+        if let Ok(entry_size) = entry.header().entry_size() {
+            size_bytes += entry_size;
+        }
+    }
+
+    let extracted_files = fs::read_dir(tmp.path())?;
+    for entry in extracted_files.into_iter() {
+        match entry {
+            Ok(entry) => {
+                let entry_name = entry.file_name();
+                let Some(dst) = extract_paths.remove(&entry_name) else {
+                    eprintln!(
+                        "Don’t know where to extract '{src}', skipping.",
+                        src = entry_name.display()
+                    );
+                    continue;
+                };
+
+                safe_replace(entry.path(), &dst)?;
+            }
+            Err(err) => eprintln!("{err:?}"),
+        }
+    }
+
+    if !extract_paths.is_empty() {
+        return Err(anyhow!(
+            "Backup invalid: Missing data ({:?}).",
+            extract_paths.keys().collect::<Vec<_>>()
+        ));
+    }
+
+    println!("Total unarchived: {size_bytes}B");
+
+    Ok(())
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct BackupInternalMetadata {
+    version: u8,
 }
 
 // MARK: Errors
@@ -201,6 +386,24 @@ pub enum CreateBackupError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractBackupError {
+    #[error("Failed listing integrity checks: {0:?}")]
+    FailedListingIntegrityChecks(anyhow::Error),
+
     #[error("Cannot create reader: {0:?}")]
     CannotCreateReader(anyhow::Error),
+
+    #[error("Integrity check failed: {0:?}")]
+    IntegrityCheckFailed(anyhow::Error),
+
+    #[error("Cannot decrypt backup: {0:?}")]
+    CannotDecrypt(&'static str),
+
+    #[error("Backup decryption failed: {0:?}")]
+    DecryptionFailed(anyhow::Error),
+
+    #[error("Backup decompression failed: {0:?}")]
+    DecompressionFailed(std::io::Error),
+
+    #[error("Backup extraction failed: {0:?}")]
+    ExtractionFailed(anyhow::Error),
 }

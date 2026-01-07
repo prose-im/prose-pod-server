@@ -20,7 +20,7 @@ use prose_backup::{ArchivingConfig, BackupService, CompressionConfig, Encryption
 async fn main() -> Result<(), anyhow::Error> {
     let archive: tar::Archive<_> = tar::Archive::new(Default::default());
 
-    let archiving_config = ArchivingConfig::new("./data");
+    let archiving_config = ArchivingConfig::new(prose_backup::CURRENT_VERSION, "./data").unwrap();
     let compression_config = CompressionConfig {
         zstd_compression_level: 5,
     };
@@ -29,17 +29,19 @@ async fn main() -> Result<(), anyhow::Error> {
     let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
     // let integrity_config = None;
 
-    let fs_prefix_backups = ".out/backups";
-    fs::create_dir_all(fs_prefix_backups)?;
+    let fs_prefix = Path::new(".out");
+
+    let fs_prefix_backups = fs_prefix.join("backups");
+    fs::create_dir_all(&fs_prefix_backups)?;
     let backup_store = prose_backup::stores::Fs::default()
         .overwrite(true)
-        .directory(fs_prefix_backups);
+        .directory(&fs_prefix_backups);
 
-    let fs_prefix_integrity_checks = ".out/integrity-checks";
-    fs::create_dir_all(fs_prefix_integrity_checks)?;
+    let fs_prefix_integrity_checks = fs_prefix.join("integrity-checks");
+    fs::create_dir_all(&fs_prefix_integrity_checks)?;
     let integrity_check_store = prose_backup::stores::Fs::default()
         .overwrite(true)
-        .directory(fs_prefix_integrity_checks);
+        .directory(&fs_prefix_integrity_checks);
 
     let service = BackupService {
         archiving_config,
@@ -54,9 +56,8 @@ async fn main() -> Result<(), anyhow::Error> {
         let backup_name = "backup";
         service.create_backup(backup_name, archive).await?
     };
-    let backup_file_path = Path::new(fs_prefix_backups).join(&backup_file_name);
-    let integrity_check_file_path =
-        Path::new(fs_prefix_integrity_checks).join(&integrity_check_file_name);
+    let backup_file_path = fs_prefix_backups.join(&backup_file_name);
+    let integrity_check_file_path = fs_prefix_integrity_checks.join(&integrity_check_file_name);
 
     // Now checking.
 
@@ -72,41 +73,41 @@ async fn main() -> Result<(), anyhow::Error> {
         .context("Integrity check failed")?;
     println!("Integrity check passed");
 
-    {
-        fn flip_one_bit_in_place(
-            path: impl AsRef<Path>,
-            pos: u64,
-            mask: u8,
-        ) -> std::io::Result<()> {
-            use io::Seek as _;
+    // {
+    //     fn flip_one_bit_in_place(
+    //         path: impl AsRef<Path>,
+    //         pos: u64,
+    //         mask: u8,
+    //     ) -> std::io::Result<()> {
+    //         use io::Seek as _;
 
-            let mut f = fs::OpenOptions::new().read(true).write(true).open(path)?;
+    //         let mut f = fs::OpenOptions::new().read(true).write(true).open(path)?;
 
-            // Read one byte
-            let mut byte = [0u8];
-            f.seek(io::SeekFrom::Start(pos))?;
-            f.read_exact(&mut byte)?;
+    //         // Read one byte
+    //         let mut byte = [0u8];
+    //         f.seek(io::SeekFrom::Start(pos))?;
+    //         f.read_exact(&mut byte)?;
 
-            // Flip bit
-            byte[0] ^= mask;
+    //         // Flip bit
+    //         byte[0] ^= mask;
 
-            // Seek back and write new byte
-            f.seek(io::SeekFrom::Start(pos))?;
-            f.write_all(&byte)?;
+    //         // Seek back and write new byte
+    //         f.seek(io::SeekFrom::Start(pos))?;
+    //         f.write_all(&byte)?;
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        println!("Modifying integrity check…");
-        flip_one_bit_in_place(&integrity_check_file_path, 10, 1 << 3)?;
-        match service
-            .check_backup_integrity(&backup_file_name, &integrity_check_file_name)
-            .await
-        {
-            Err(err) => println!("Integrity check: {err:?} (expected)"),
-            Ok(()) => bail!("Integrity check doesn’t work!"),
-        }
-    }
+    //     println!("Modifying integrity check…");
+    //     flip_one_bit_in_place(&integrity_check_file_path, 10, 1 << 3)?;
+    //     match service
+    //         .check_backup_integrity(&backup_file_name, &integrity_check_file_name)
+    //         .await
+    //     {
+    //         Err(err) => println!("Integrity check: {err:?} (expected)"),
+    //         Ok(()) => bail!("Integrity check doesn’t work!"),
+    //     }
+    // }
 
     let archive = if let Some(config) = service.encryption_config.as_ref() {
         let mut decryptor = DecryptorBuilder::from_file(&backup_file_path)?
@@ -135,7 +136,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     print!("\n");
     let backups = service.list_backups().await?;
-    println!("backups: {backups:?}");
+    println!("Backups: {backups:?}");
+
+    print!("\n");
+    let fs_prefix_extract = fs_prefix.join("extract");
+    std::fs::create_dir_all(&fs_prefix_extract)?;
+    service
+        .extract_backup(&backup_file_name, fs_prefix_extract)
+        .await?;
 
     Ok(())
 }

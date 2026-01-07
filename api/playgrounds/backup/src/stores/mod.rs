@@ -23,7 +23,11 @@ pub trait ObjectStore {
 
     async fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error>;
 
-    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error>;
+    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
+
+    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+        self.find("").await
+    }
 
     async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error>;
 }

@@ -49,28 +49,6 @@ where
     }
 }
 
-// MARK: Verifier
-
-pub type BackupVerifier<'a> = ProseBackupVerifier<'a>;
-
-pub(crate) struct ProseBackupVerifier<'a> {
-    pub(crate) writer: IntegrityChecker<'a>,
-}
-
-impl<'a> BackupVerifier<'a> {
-    pub(crate) fn new(integrity_config: Option<&'a IntegrityConfig>) -> Self {
-        Self {
-            writer: IntegrityChecker::new(integrity_config),
-        }
-    }
-
-    pub(crate) fn verify(self, integrity_check: &Vec<u8>) -> Result<(), anyhow::Error> {
-        self.writer.verify(integrity_check)
-    }
-}
-
-// MARK: Integrity
-
 impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn integrity_check<'a, W, OuterWriter>(
         self,
@@ -115,6 +93,28 @@ impl<M, F> WriterChainBuilder<M, F> {
         }
     }
 }
+
+// MARK: Verifier
+
+pub type BackupVerifier<'a> = ProseBackupVerifier<'a>;
+
+pub(crate) struct ProseBackupVerifier<'a> {
+    pub(crate) writer: IntegrityChecker<'a>,
+}
+
+impl<'a> BackupVerifier<'a> {
+    pub(crate) fn new(integrity_config: Option<&'a IntegrityConfig>) -> Self {
+        Self {
+            writer: IntegrityChecker::new(integrity_config),
+        }
+    }
+
+    pub(crate) fn verify(self, integrity_check: &Vec<u8>) -> Result<(), anyhow::Error> {
+        self.writer.verify(integrity_check)
+    }
+}
+
+// MARK: Integrity
 
 pub type IntegrityConfig = GpgConfig;
 

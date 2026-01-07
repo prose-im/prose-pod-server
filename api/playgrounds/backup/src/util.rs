@@ -9,12 +9,52 @@ pub fn saturating_i64_to_u64(value: i64) -> u64 {
     value.max(0) as u64
 }
 
+/// Renames a directory (moves it to a new location), temporarily backing up
+/// the existing directory and restoring it on failure (if applicable).
+pub fn safe_replace(
+    src: impl AsRef<std::path::Path>,
+    dst: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::fs;
+
+    let backup = dst.with_extension("bak");
+
+    if fs::exists(dst)? {
+        fs::rename(dst, &backup)?;
+    }
+
+    if let Some(parent) = dst.parent() {
+        if !fs::exists(parent).unwrap_or(false) {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    match fs::rename(src, &dst) {
+        res @ Ok(_) => {
+            if backup.exists() {
+                // Remove backup on success.
+                fs::remove_dir_all(backup)?;
+            }
+
+            res
+        }
+        res @ Err(_) => {
+            // Restore backup on failure.
+            if backup.exists() {
+                fs::rename(backup, &dst)?;
+            }
+
+            res
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_saturating_i64_to_u64() {
-        use crate::util::saturating_i64_to_u64;
-
         // Casting with `as` can yield incorrect values:
         assert_eq!(i64::MIN, -9223372036854775808);
         assert_eq!(i64::MIN as u64, 9223372036854775808);
