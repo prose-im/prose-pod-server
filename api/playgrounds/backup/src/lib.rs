@@ -26,7 +26,7 @@ use anyhow::{Context, anyhow};
 use crate::{
     archiving::{METADATA_FILE_NAME, check_archiving_will_succeed},
     stores::{ObjectStore, S3Store},
-    util::safe_replace,
+    util::{safe_replace, stats_reader::StatsReader},
 };
 
 pub use self::{
@@ -177,6 +177,7 @@ where
         backup_name: &str,
         location: impl AsRef<Path>,
     ) -> Result<(), anyhow::Error> {
+        use crate::util::stats_reader::ReadStats;
         use crate::writer_chain::either::Either;
         use openpgp::parse::Parse as _;
         use openpgp::parse::stream::DecryptorBuilder;
@@ -201,6 +202,10 @@ where
                 .await
                 .map_err(ExtractBackupError::CannotCreateReader)?;
 
+            let mut raw_read_stats = ReadStats::new();
+            let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
+
+            let mut decryption_stats = ReadStats::new();
             let compressed_archive_reader = if backup_name.ends_with(".gpg") {
                 if let Some(config) = self.encryption_config.as_ref() {
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
@@ -208,10 +213,7 @@ where
                         .with_policy(config.policy.as_ref(), None, config)
                         .map_err(ExtractBackupError::DecryptionFailed)?;
 
-                    // TODO: Gather stats.
-                    // if cfg!(debug_assertions) {
-                    //     println!("Decrypted {size_bytes}B", size_bytes = bytes.len());
-                    // }
+                    let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
 
                     Either::A(decryptor)
                 } else {
@@ -224,27 +226,46 @@ where
                     eprintln!("NOT DECRYPTING");
                 }
 
-                // TODO: Gather stats.
-                // if cfg!(debug_assertions) {
-                //     println!("Read {size_bytes}B plaintext", size_bytes = bytes.len());
-                // }
-
                 Either::B(backup_reader)
             };
 
             let archive_bytes =
                 zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
 
-            // TODO: Gather stats.
-            // if cfg!(debug_assertions) {
-            //     println!(
-            //         "Decompressed {size_bytes}B",
-            //         size_bytes = archive_bytes.len()
-            //     );
-            // }
+            let mut decompression_stats = ReadStats::new();
+            let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-            extract_archive(archive_bytes, location)
+            let unarchived_size = extract_archive(archive_bytes, location)
                 .map_err(ExtractBackupError::ExtractionFailed)?;
+
+            println!("Stats:");
+            println!("  Read:         {raw_read_stats}");
+            println!("  Decrypted:    {decryption_stats}");
+            println!("  Decompressed: {decompression_stats}");
+            println!("  Unarchived:   {unarchived_size}B");
+
+            fn size_ratio(read: u64, reference: &ReadStats) -> f64 {
+                let read: u32 = read.min(u64::from(u32::MAX)) as u32;
+                let reference: u32 = reference.bytes_read().min(u64::from(u32::MAX)) as u32;
+                f64::from(read) / f64::from(reference)
+            }
+            println!("Size ratios:");
+            println!(
+                "  Raw read:      {:.2}x",
+                size_ratio(raw_read_stats.bytes_read(), &raw_read_stats)
+            );
+            println!(
+                "  Decryption:    {:.2}x",
+                size_ratio(decryption_stats.bytes_read(), &raw_read_stats)
+            );
+            println!(
+                "  Decompression: {:.2}x",
+                size_ratio(decompression_stats.bytes_read(), &raw_read_stats)
+            );
+            println!(
+                "  Unarchiving:   {:.2}x",
+                size_ratio(unarchived_size, &raw_read_stats)
+            );
 
             return Ok(());
         }
@@ -258,7 +279,7 @@ where
     }
 }
 
-fn extract_archive<R>(archive_reader: R, location: impl AsRef<Path>) -> Result<(), anyhow::Error>
+fn extract_archive<R>(archive_reader: R, location: impl AsRef<Path>) -> Result<u64, anyhow::Error>
 where
     R: std::io::Read,
 {
@@ -332,9 +353,7 @@ where
         ));
     }
 
-    println!("Total unarchived: {size_bytes}B");
-
-    Ok(())
+    Ok(size_bytes)
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
