@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
+use bytes::Bytes;
 
 use crate::writer_chain::WriterChainBuilder;
 use crate::{BackupInternalMetadata, CreateBackupError};
@@ -20,6 +21,7 @@ pub(crate) const METADATA_FILE_NAME: &'static str = "metadata.json";
 pub struct ArchivingConfig {
     pub version: u8,
     pub paths: Vec<(&'static str, PathBuf)>,
+    pub api_archive_name: &'static str,
     _private: (),
 }
 
@@ -35,19 +37,18 @@ impl ArchivingConfig {
     }
 
     pub fn new(version: u8, prefix: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
-        let paths = match version {
-            1 => vec![
-                ("prosody-data", prefix.as_ref().join("var/lib/prosody")),
-                ("prosody-config", prefix.as_ref().join("etc/prosody")),
-            ],
-            n => return Err(anyhow!("Unknown backup version: {n}")),
-        };
-
-        Ok(Self {
-            version,
-            paths,
-            _private: (),
-        })
+        match version {
+            1 => Ok(Self {
+                version,
+                paths: vec![
+                    ("prosody-data", prefix.as_ref().join("var/lib/prosody")),
+                    ("prosody-config", prefix.as_ref().join("etc/prosody")),
+                ],
+                api_archive_name: "prose-pod-api-data",
+                _private: (),
+            }),
+            n => Err(anyhow!("Unknown backup version: {n}")),
+        }
     }
 }
 
@@ -92,9 +93,9 @@ impl<M, F> WriterChainBuilder<M, F> {
     /// NOTE: We don’t start from zero as the Prose Pod API has to send its own
     ///   backup to the Prose Pod Server. The Pod Server then merges it with
     ///   the rest of the server’s data and creates the backup file.
-    pub(crate) fn archive<InnerWriter, OuterWriter, R: std::io::Read>(
+    pub(crate) fn archive<InnerWriter, OuterWriter>(
         self,
-        archive: tar::Archive<R>,
+        prose_pod_api_data: Bytes,
         archiving_config: &ArchivingConfig,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
@@ -119,7 +120,12 @@ impl<M, F> WriterChainBuilder<M, F> {
                 )
                 .map_err(CreateBackupError::CannotArchive)?;
 
-                merge_archives(archive, &mut builder).map_err(CreateBackupError::CannotArchive)?;
+                append_data(
+                    prose_pod_api_data,
+                    archiving_config.api_archive_name,
+                    &mut builder,
+                )
+                .map_err(CreateBackupError::CannotArchive)?;
 
                 archive_writer(&mut builder, archiving_config)
                     .map_err(CreateBackupError::CannotArchive)?;
@@ -163,15 +169,16 @@ fn add_metadata_file<W: std::io::Write>(
     Ok(())
 }
 
-fn merge_archives<R: std::io::Read, W: std::io::Write>(
-    mut archive: tar::Archive<R>,
+fn append_data<W: std::io::Write>(
+    data: Bytes,
+    path: &'static str,
     builder: &mut tar::Builder<W>,
 ) -> Result<(), anyhow::Error> {
-    for entry in archive.entries()? {
-        let entry = entry?;
-        let header = entry.header().to_owned();
-        builder.append(&header, entry)?;
-    }
+    let mut header = tar::Header::new_gnu();
+    header.set_size(data.len() as u64);
+    header.set_cksum();
+
+    builder.append_data(&mut header, path, std::io::Cursor::new(data))?;
 
     Ok(())
 }

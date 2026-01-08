@@ -7,18 +7,18 @@ extern crate sequoia_openpgp as openpgp;
 
 use std::{
     fs::{self, File},
-    io::{self, Read as _, Write as _},
+    io::{self, Read as _},
     path::Path,
 };
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use bytes::Bytes;
 use openpgp::parse::{Parse as _, stream::DecryptorBuilder};
 use prose_backup::{ArchivingConfig, BackupService, CompressionConfig, EncryptionConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let archive: tar::Archive<_> = tar::Archive::new(Default::default());
+    let prose_pod_api_data = Bytes::new();
 
     let archiving_config = ArchivingConfig::new(prose_backup::CURRENT_VERSION, "./data").unwrap();
     let compression_config = CompressionConfig {
@@ -54,7 +54,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (backup_file_name, integrity_check_file_name) = {
         let backup_name = "backup";
-        service.create_backup(backup_name, archive).await?
+        service
+            .create_backup(backup_name, prose_pod_api_data)
+            .await?
     };
     let backup_file_path = fs_prefix_backups.join(&backup_file_name);
     let integrity_check_file_path = fs_prefix_integrity_checks.join(&integrity_check_file_name);
@@ -141,9 +143,22 @@ async fn main() -> Result<(), anyhow::Error> {
     print!("\n");
     let fs_prefix_extract = fs_prefix.join("extract");
     std::fs::create_dir_all(&fs_prefix_extract)?;
-    service
+    let mut restore_result = service
         .extract_backup(&backup_file_name, fs_prefix_extract)
         .await?;
+
+    println!("\nReading Pod API data…");
+    let prose_pod_api_data_len = restore_result
+        .prose_pod_api_data
+        .metadata()
+        .map_or(0, |meta| meta.len());
+    // NOTE: This `as` is safe to use as we’re working with unsigned integers
+    //   and it’s fine if capacity is less than real size. Also there is
+    //   no chance we’ll go above `u32::MAX` on a 32-bit target.
+    let mut prose_pod_api_data: Vec<u8> = Vec::with_capacity(prose_pod_api_data_len as usize);
+    restore_result
+        .prose_pod_api_data
+        .read_to_end(&mut prose_pod_api_data)?;
 
     Ok(())
 }

@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow};
+use bytes::Bytes;
 
 use crate::{
     archiving::{METADATA_FILE_NAME, check_archiving_will_succeed},
@@ -117,7 +118,7 @@ where
     pub async fn create_backup(
         &self,
         backup_name: &str,
-        archive: tar::Archive<std::io::Cursor<bytes::Bytes>>,
+        prose_pod_api_data: Bytes,
     ) -> Result<(String, String), CreateBackupError> {
         check_archiving_will_succeed(&self.archiving_config)?;
 
@@ -140,7 +141,7 @@ where
             .build(&mut integrity_check)?;
 
         let (writer, finalize_backup) = writer_chain::builder()
-            .archive(archive, &self.archiving_config)
+            .archive(prose_pod_api_data, &self.archiving_config)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_config.as_ref())
             .tee(&mut gen_integrity_check)
@@ -172,11 +173,12 @@ where
         self.backup_store.list_all().await
     }
 
+    #[must_use]
     pub async fn extract_backup(
         &self,
         backup_name: &str,
         location: impl AsRef<Path>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<RestoreSuccess, anyhow::Error> {
         use crate::util::stats_reader::ReadStats;
         use crate::writer_chain::either::Either;
         use openpgp::parse::Parse as _;
@@ -235,8 +237,9 @@ where
             let mut decompression_stats = ReadStats::new();
             let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-            let unarchived_size = extract_archive(archive_bytes, location)
+            let restore_result = extract_archive(archive_bytes, location)
                 .map_err(ExtractBackupError::ExtractionFailed)?;
+            let unarchived_size = restore_result.restored_bytes_count;
 
             println!("Stats:");
             println!("  Read:         {raw_read_stats}");
@@ -267,7 +270,7 @@ where
                 size_ratio(unarchived_size, &raw_read_stats)
             );
 
-            return Ok(());
+            return Ok(restore_result);
         }
 
         // FIXME: Do not look for hash if signature is mandatory.
@@ -275,11 +278,31 @@ where
         // Check hash if no signature exist.
         let todo = "Hash check";
 
-        Ok(())
+        Ok(todo!())
     }
 }
 
-fn extract_archive<R>(archive_reader: R, location: impl AsRef<Path>) -> Result<u64, anyhow::Error>
+pub struct RestoreSuccess {
+    /// The total amount of data restored on the Prose Pod Server.
+    pub restored_bytes_count: u64,
+
+    /// The Prose Pod Server cannot restore Prose Pod API data as it doesn’t
+    /// have access to its file system. Here is where it’s stored before being
+    /// sent to the Prose Pod API and restored there.
+    pub prose_pod_api_data: fs::File,
+
+    /// Backups archives are unpacked in a temporary directory, that gets
+    /// deleted when this is dropped. In order for [`prose_pod_api_data`] to
+    /// stay available, this needs to stay alive. Drop when done sending data.
+    ///
+    /// [`prose_pod_api_data`]: RestoreSuccess::prose_pod_api_data
+    pub tmp_dir: tempfile::TempDir,
+}
+
+fn extract_archive<R>(
+    archive_reader: R,
+    location: impl AsRef<Path>,
+) -> Result<RestoreSuccess, anyhow::Error>
 where
     R: std::io::Read,
 {
@@ -332,6 +355,11 @@ where
         match entry {
             Ok(entry) => {
                 let entry_name = entry.file_name();
+
+                if entry_name == OsString::from(archiving_config.api_archive_name) {
+                    continue;
+                }
+
                 let Some(dst) = extract_paths.remove(&entry_name) else {
                     eprintln!(
                         "Don’t know where to extract '{src}', skipping.",
@@ -353,7 +381,13 @@ where
         ));
     }
 
-    Ok(size_bytes)
+    let api_archive = fs::File::open(tmp.path().join(archiving_config.api_archive_name))?;
+
+    Ok(RestoreSuccess {
+        restored_bytes_count: size_bytes,
+        prose_pod_api_data: api_archive,
+        tmp_dir: tmp,
+    })
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
