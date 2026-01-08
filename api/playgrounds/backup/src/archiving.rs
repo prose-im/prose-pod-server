@@ -19,7 +19,7 @@ pub(crate) const METADATA_FILE_NAME: &'static str = "metadata.json";
 #[derive(Debug)]
 pub struct ArchivingConfig {
     pub version: u8,
-    pub paths: Vec<(PathBuf, &'static str)>,
+    pub paths: Vec<(&'static str, PathBuf)>,
     _private: (),
 }
 
@@ -37,8 +37,8 @@ impl ArchivingConfig {
     pub fn new(version: u8, prefix: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
         let paths = match version {
             1 => vec![
-                (prefix.as_ref().join("var/lib/prosody"), "prosody-data"),
-                (prefix.as_ref().join("etc/prosody"), "prosody-config"),
+                ("prosody-data", prefix.as_ref().join("var/lib/prosody")),
+                ("prosody-config", prefix.as_ref().join("etc/prosody")),
             ],
             n => return Err(anyhow!("Unknown backup version: {n}")),
         };
@@ -54,11 +54,9 @@ impl ArchivingConfig {
 pub(crate) fn check_archiving_will_succeed(
     archiving_config: &ArchivingConfig,
 ) -> Result<(), CreateBackupError> {
-    for (local_path, _) in archiving_config.paths.iter() {
-        let path = Path::new(local_path);
-
-        if !path.exists() {
-            return Err(CreateBackupError::MissingFile(path.to_path_buf()));
+    for (_, local_path) in archiving_config.paths.iter() {
+        if !local_path.exists() {
+            return Err(CreateBackupError::MissingFile(local_path.to_owned()));
         }
     }
 
@@ -69,7 +67,7 @@ fn archive_writer<W: Write>(
     builder: &mut tar::Builder<W>,
     archiving_config: &ArchivingConfig,
 ) -> Result<(), anyhow::Error> {
-    for (local_path, archive_path) in archiving_config.paths.iter() {
+    for (archive_path, local_path) in archiving_config.paths.iter() {
         let path = Path::new(local_path);
 
         if path.is_file() {

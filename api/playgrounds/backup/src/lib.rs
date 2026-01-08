@@ -311,7 +311,7 @@ where
     let mut extract_paths: HashMap<OsString, PathBuf> = archiving_config
         .paths
         .into_iter()
-        .map(|(a, b)| (OsString::from(b), a))
+        .map(|(a, b)| (OsString::from(a), b))
         .collect();
 
     let mut size_bytes = 0;
