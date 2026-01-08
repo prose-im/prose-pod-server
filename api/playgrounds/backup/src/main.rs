@@ -144,7 +144,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let fs_prefix_extract = fs_prefix.join("extract");
     std::fs::create_dir_all(&fs_prefix_extract)?;
     let mut restore_result = service
-        .extract_backup(&backup_file_name, fs_prefix_extract)
+        .restore_backup(&backup_file_name, fs_prefix_extract)
         .await?;
 
     println!("\nReading Pod API data…");

@@ -174,7 +174,7 @@ where
     }
 
     #[must_use]
-    pub async fn extract_backup(
+    pub async fn restore_backup(
         &self,
         backup_name: &str,
         location: impl AsRef<Path>,
