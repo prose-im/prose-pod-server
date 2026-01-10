@@ -53,7 +53,7 @@ async fn main() -> Result<(), anyhow::Error> {
         integrity_check_store,
     };
 
-    let (backup_file_name, _integrity_check_file_name) = {
+    let (backup_file_name, integrity_check_file_name) = {
         let backup_name = "backup";
         service
             .create_backup(backup_name, prose_pod_api_data)
@@ -63,7 +63,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     print!("\n");
     let backups = service.list_backups().await?;
-    tracing::info!("Backups: {backups:?}");
+    tracing::info!("Backups: {backups:#?}");
 
     print!("\n");
     let fs_prefix_extract = fs_prefix.join("extract");
@@ -85,6 +85,11 @@ async fn main() -> Result<(), anyhow::Error> {
     restore_result
         .prose_pod_api_data
         .read_to_end(&mut prose_pod_api_data)?;
+
+    if std::env::var("NO_DELETE").is_err() {
+        fs::remove_file(fs_prefix_backups.join(backup_file_name))?;
+        fs::remove_file(fs_prefix_integrity_checks.join(integrity_check_file_name))?;
+    }
 
     Ok(())
 }

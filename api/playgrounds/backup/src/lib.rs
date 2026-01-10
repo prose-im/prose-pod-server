@@ -20,11 +20,13 @@ use std::path::Path;
 
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
+use time::format_description::well_known::Rfc3339;
 
 use crate::{
     archiving::{ExtractionSuccess, check_archiving_will_succeed, extract_archive},
     stats::{StatsReader, print_stats},
     stores::{ObjectStore, S3Store},
+    util::hash,
 };
 
 pub use self::{
@@ -69,11 +71,9 @@ pub struct ProseBackupService<BackupStore, IntegrityCheckStore> {
     pub integrity_check_store: IntegrityCheckStore,
 }
 
-impl<S1, S2> ProseBackupService<S1, S2>
-where
-    S1: ObjectStore,
-    S2: ObjectStore,
-{
+// MARK: Create backup
+
+impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     /// Everything is done in a single stream of the following shape:
     ///
     /// ```text
@@ -118,6 +118,16 @@ where
         prose_pod_api_data: Bytes,
     ) -> Result<(String, String), CreateBackupError> {
         check_archiving_will_succeed(&self.archiving_config)?;
+
+        let now = time::UtcDateTime::now();
+        let backup_name = format!(
+            "{backup_name}_{now}",
+            now = now
+                .replace_millisecond(0)
+                .unwrap()
+                .format(&Rfc3339)
+                .unwrap()
+        );
 
         let backup_file_name = if self.encryption_config.is_some() {
             format!("{backup_name}.tar.zst.gpg")
@@ -165,11 +175,195 @@ where
 
         Ok((backup_file_name, integrity_check_file_name))
     }
+}
 
-    pub async fn list_backups(&self) -> Result<Vec<String>, anyhow::Error> {
-        self.backup_store.list_all().await
+#[derive(Debug, thiserror::Error)]
+pub enum CreateBackupError {
+    #[error("Cannot create backup: '{0}' does not exist.")]
+    MissingFile(std::path::PathBuf),
+
+    #[error("Cannot create backup sink: {0:?}")]
+    CannotCreateSink(anyhow::Error),
+
+    #[error("Cannot create backup archive: {0:?}")]
+    CannotArchive(anyhow::Error),
+
+    #[error("Cannot compress backup archive: {0:?}")]
+    CannotCompress(anyhow::Error),
+
+    #[error("Backup archive compression failed: {0:?}")]
+    CompressionFailed(anyhow::Error),
+
+    #[error("Cannot encrypt backup: {0:?}")]
+    CannotEncrypt(anyhow::Error),
+
+    #[error("Backup encryption failed: {0:?}")]
+    EncryptionFailed(anyhow::Error),
+
+    #[error("Cannot compute backup integrity check: {0:?}")]
+    CannotComputeIntegrityCheck(anyhow::Error),
+
+    #[error("Failed computing backup integrity check: {0:?}")]
+    IntegrityCheckGenerationFailed(anyhow::Error),
+
+    #[error("Failed uploading backup integrity check: {0:?}")]
+    IntegrityCheckUploadFailed(std::io::Error),
+}
+
+// MARK: List
+
+#[derive(Debug)]
+pub struct BackupDto {
+    /// Instead of this being the unique name of the backup, it’s
+    pub id: u64,
+
+    pub metadata: BackupMetadataPartialDto,
+
+    /// To prevent accidental restoration of corrupted or untrusted backups,
+    /// a unique identifier used for restoration is exposed here. It is the
+    /// unique backup name out of simplicity, but this should be considered
+    /// **an implementation detail**.
+    ///
+    /// It wouldn’t be possible to restore corrupted or untrusted backups
+    /// anyway, but at least having an optional ID here makes it explicit
+    /// for UI implementators. They can then hide or grey out the “Restore”
+    /// button when this action is impossible. Note that a “tooltip” or info
+    /// message with the reason why the action is impossible can be created
+    /// by inspecting [`metadata`].
+    ///
+    /// [`metadata`]: BackupDto::metadata
+    pub restore_id: Option<String>,
+}
+
+/// ⚠️ Beware that [`can_be_restored`] is a one-sided indicator. `true` doesn’t
+/// mean a restore will succeed for sure. More computation is required to know
+/// if the backup is intact and using trusted keys for example. `false`,
+/// however, means restoring this backup is impossible and the option shouldn’t
+/// be presented to a user.
+///
+/// [`can_be_restored`]: BackupMetadataPartialDto::can_be_restored
+#[derive(Debug)]
+pub struct BackupMetadataPartialDto {
+    pub name: Box<str>,
+    pub created_at: time::UtcDateTime,
+    pub is_signed: bool,
+    pub is_encrypted: bool,
+    pub can_be_restored: bool,
+}
+
+/// [`BackupMetadataPartialDto`] with additional data that requires expensive
+/// computation.
+///
+/// ⚠️ Beware that [`BackupMetadataFullDto::can_be_restored`] might differ from
+/// [`BackupMetadataPartialDto::can_be_restored`] as the latter doesn’t know if
+/// the backup is intact or using trusted keys.
+#[derive(Debug)]
+pub struct BackupMetadataFullDto {
+    pub name: Box<str>,
+    pub created_at: time::UtcDateTime,
+    pub is_intact: bool,
+    pub is_signed: bool,
+    pub is_signature_trusted: bool,
+    pub is_signature_valid: bool,
+    pub is_encrypted: bool,
+    pub is_encryption_valid: bool,
+    pub is_trusted: bool,
+    pub can_be_restored: bool,
+}
+
+impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+    pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
+        // NOTE: S3 lists objects in alphabetically ascending order and has
+        //   no way to list in reverse order or ist by “last modified” date
+        //   (even ascending). Therefore, we have no choice but to list ALL
+        //   backups by name. It’s acceptable because backups will likely be
+        //   deleted every once in a while which means we won’t end up with a
+        //   _very_ large number. Integrity checks should never be deleted
+        //   therefore it might grow bigger, but by using `StartAfter` we can
+        //   limit the number of results to roughly the number of backups still
+        //   stored. We might get a large amount of results if backups are
+        //   created daily and deleted using tiered retention, but even then it
+        //   would still take years to reach the 1000 objects per request limit
+        //   causing a second page fetch.
+
+        let backups = self.backup_store.list_all().await?;
+
+        // NOTE: S3 results are sorted in alphabetically ascending order,
+        //   and backup names use RFC 3339 timestamps which are alphabetically
+        //   sortable. The first result is the oldest backup.
+        let Some(oldest_backup) = backups.first() else {
+            return Ok(vec![]);
+        };
+
+        let checks = self
+            .integrity_check_store
+            .list_all_after(oldest_backup)
+            .await?;
+
+        let todo = "Make this dynamic via configuration.";
+        let signing_is_mandatory = false;
+        let encryption_is_mandatory = false;
+
+        let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
+
+        for backup_name in backups.into_iter() {
+            let is_signed = checks.contains(&format!("{backup_name}.sig"));
+            let is_encrypted = backup_name.ends_with(".gpg");
+
+            let can_be_restored = true
+                && (!signing_is_mandatory || is_signed)
+                && (!encryption_is_mandatory || is_encrypted);
+
+            let created_at = match parse_timestamp(&backup_name) {
+                Ok(timestamp) => timestamp,
+                Err(err) => {
+                    tracing::warn!("Skipping `{backup_name}`: {err:?}");
+                    continue;
+                }
+            };
+
+            dtos.push(BackupDto {
+                id: hash(&backup_name),
+                metadata: BackupMetadataPartialDto {
+                    name: backup_name.clone().into_boxed_str(),
+                    created_at,
+                    is_signed,
+                    is_encrypted,
+                    can_be_restored,
+                },
+                restore_id: if can_be_restored {
+                    Some(backup_name)
+                } else {
+                    None
+                },
+            });
+        }
+
+        Ok(dtos)
     }
+}
 
+fn parse_timestamp(backup_name: &str) -> Result<time::UtcDateTime, anyhow::Error> {
+    let Some(basename) = backup_name.split(".").next() else {
+        anyhow::bail!("File has no extension.");
+    };
+    if basename.is_empty() {
+        anyhow::bail!("File has no basename.");
+    };
+    let Some(suffix) = basename.split("_").last() else {
+        anyhow::bail!("File `{basename}` is missing the timestamp suffix.");
+    };
+    match time::UtcDateTime::parse(suffix, &Rfc3339) {
+        Ok(timestamp) => Ok(timestamp),
+        Err(err) => {
+            Err(anyhow::Error::from(err).context("Could not parse timestamp from file name"))
+        }
+    }
+}
+
+// MARK: Restore
+
+impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     #[must_use]
     pub async fn restore_backup(
         &self,
@@ -253,44 +447,4 @@ where
 
         Ok(todo!())
     }
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BackupInternalMetadata {
-    version: u8,
-}
-
-// MARK: Errors
-
-#[derive(Debug, thiserror::Error)]
-pub enum CreateBackupError {
-    #[error("Cannot create backup: '{0}' does not exist.")]
-    MissingFile(std::path::PathBuf),
-
-    #[error("Cannot create backup sink: {0:?}")]
-    CannotCreateSink(anyhow::Error),
-
-    #[error("Cannot create backup archive: {0:?}")]
-    CannotArchive(anyhow::Error),
-
-    #[error("Cannot compress backup archive: {0:?}")]
-    CannotCompress(anyhow::Error),
-
-    #[error("Backup archive compression failed: {0:?}")]
-    CompressionFailed(anyhow::Error),
-
-    #[error("Cannot encrypt backup: {0:?}")]
-    CannotEncrypt(anyhow::Error),
-
-    #[error("Backup encryption failed: {0:?}")]
-    EncryptionFailed(anyhow::Error),
-
-    #[error("Cannot compute backup integrity check: {0:?}")]
-    CannotComputeIntegrityCheck(anyhow::Error),
-
-    #[error("Failed computing backup integrity check: {0:?}")]
-    IntegrityCheckGenerationFailed(anyhow::Error),
-
-    #[error("Failed uploading backup integrity check: {0:?}")]
-    IntegrityCheckUploadFailed(std::io::Error),
 }

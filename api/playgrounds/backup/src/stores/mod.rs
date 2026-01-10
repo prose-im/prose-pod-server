@@ -19,17 +19,19 @@ pub trait ObjectStore {
 
     type Reader: std::io::Read + Send + Sync;
 
-    async fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error>;
+    async fn writer(&self, key: &str) -> Result<Self::Writer, anyhow::Error>;
 
-    async fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error>;
+    async fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error>;
 
     async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
 
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
+
     async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
-        self.find("").await
+        self.list_all_after("").await
     }
 
-    async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error>;
+    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error>;
 }
 
 pub struct ObjectMetadata {

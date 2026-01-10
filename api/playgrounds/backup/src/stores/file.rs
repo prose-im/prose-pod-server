@@ -107,6 +107,33 @@ impl ObjectStore for FsStore {
             }
         }
 
+        file_names.sort();
+
+        Ok(file_names)
+    }
+
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
+        let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
+
+        let mut file_names = Vec::new();
+        for entry in files.into_iter() {
+            match entry {
+                Ok(entry) => {
+                    let file_name = entry
+                        .file_name()
+                        .into_string()
+                        .expect("File names should only contain Unicode data");
+
+                    if file_name.as_str() > prefix {
+                        file_names.push(file_name);
+                    }
+                }
+                Err(err) => tracing::error!("{err:?}"),
+            }
+        }
+
+        file_names.sort();
+
         Ok(file_names)
     }
 

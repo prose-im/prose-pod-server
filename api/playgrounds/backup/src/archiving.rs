@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, anyhow, bail};
 use bytes::Bytes;
 
+use crate::CreateBackupError;
 use crate::writer_chain::WriterChainBuilder;
-use crate::{BackupInternalMetadata, CreateBackupError};
 
 pub const CURRENT_BACKUP_VERSION: u8 = 1;
 
@@ -53,6 +53,13 @@ impl ArchivingConfig {
         }
     }
 }
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct BackupInternalMetadata {
+    version: u8,
+}
+
+// MARK: - Archiving
 
 pub(crate) fn check_archiving_will_succeed(
     archiving_config: &ArchivingConfig,

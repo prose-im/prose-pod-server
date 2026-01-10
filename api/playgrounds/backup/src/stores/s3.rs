@@ -49,6 +49,7 @@ impl ObjectStore for S3Store {
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
+                .prefix(prefix)
                 .set_continuation_token(continuation_token.clone())
                 .send()
                 .await
@@ -58,7 +59,38 @@ impl ObjectStore for S3Store {
                 resp.contents()
                     .into_iter()
                     .filter_map(|obj| obj.key())
-                    .filter(|key| key.starts_with(prefix))
+                    .map(ToOwned::to_owned),
+            );
+
+            if resp.is_truncated().unwrap_or(false) {
+                continuation_token = resp.next_continuation_token().map(|s| s.to_string());
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
+        let mut keys = Vec::new();
+        let mut continuation_token = None;
+
+        loop {
+            let resp = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .start_after(prefix)
+                .set_continuation_token(continuation_token.clone())
+                .send()
+                .await
+                .context("Failed listing S3 objects")?;
+
+            keys.extend(
+                resp.contents()
+                    .into_iter()
+                    .filter_map(|obj| obj.key())
                     .map(ToOwned::to_owned),
             );
 
