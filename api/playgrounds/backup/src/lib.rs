@@ -225,9 +225,7 @@ where
                     ));
                 }
             } else {
-                if cfg!(debug_assertions) {
-                    eprintln!("NOT DECRYPTING");
-                }
+                tracing::debug!("NOT DECRYPTING");
 
                 Either::B(backup_reader)
             };
@@ -242,31 +240,32 @@ where
                 .map_err(ExtractBackupError::ExtractionFailed)?;
             let unarchived_size = restore_result.restored_bytes_count;
 
-            println!("Stats:");
-            println!("  Read:         {raw_read_stats}");
-            println!("  Decrypted:    {decryption_stats}");
-            println!("  Decompressed: {decompression_stats}");
-            println!("  Unarchived:   {unarchived_size}B");
+            print!("\n");
+            tracing::info!("Stats:");
+            tracing::info!("  Read:         {raw_read_stats}");
+            tracing::info!("  Decrypted:    {decryption_stats}");
+            tracing::info!("  Decompressed: {decompression_stats}");
+            tracing::info!("  Unarchived:   {unarchived_size}B");
 
             fn size_ratio(read: u64, reference: &ReadStats) -> f64 {
                 let read: u32 = read.min(u64::from(u32::MAX)) as u32;
                 let reference: u32 = reference.bytes_read().min(u64::from(u32::MAX)) as u32;
                 f64::from(read) / f64::from(reference)
             }
-            println!("Size ratios:");
-            println!(
+            tracing::info!("Size ratios:");
+            tracing::info!(
                 "  Raw read:      {:.2}x",
                 size_ratio(raw_read_stats.bytes_read(), &raw_read_stats)
             );
-            println!(
+            tracing::info!(
                 "  Decryption:    {:.2}x",
                 size_ratio(decryption_stats.bytes_read(), &raw_read_stats)
             );
-            println!(
+            tracing::info!(
                 "  Decompression: {:.2}x",
                 size_ratio(decompression_stats.bytes_read(), &raw_read_stats)
             );
-            println!(
+            tracing::info!(
                 "  Unarchiving:   {:.2}x",
                 size_ratio(unarchived_size, &raw_read_stats)
             );
@@ -315,7 +314,6 @@ where
 
     let mut entries = archive.entries()?;
 
-    #[cfg(debug_assertions)]
     #[inline]
     fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
         let path = entry.path()?;
@@ -329,7 +327,7 @@ where
             _ => '?',
         };
 
-        println!("{} {:>6} {}", type_char, size, path.display());
+        tracing::debug!("{} {:>6} {}", type_char, size, path.display());
 
         Ok(())
     }
@@ -345,8 +343,9 @@ where
             extracted_bytes += entry_size;
         }
 
-        #[cfg(debug_assertions)]
-        log_extracted_entry(&entry)?;
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            log_extracted_entry(&entry)?;
+        }
 
         let path = entry.path()?;
 
@@ -391,7 +390,7 @@ where
                 }
 
                 let Some(dst) = extract_paths.remove(&entry_name) else {
-                    eprintln!(
+                    tracing::warn!(
                         "Don’t know where to extract '{src}', skipping.",
                         src = entry_name.display()
                     );
@@ -400,7 +399,7 @@ where
 
                 safe_replace(entry.path(), &dst)?;
             }
-            Err(err) => eprintln!("{err:?}"),
+            Err(err) => tracing::error!("{err:?}"),
         }
     }
 

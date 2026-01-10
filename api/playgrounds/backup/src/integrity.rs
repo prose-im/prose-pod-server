@@ -47,9 +47,7 @@ where
 
         verifier.verify(&integrity_check)?;
 
-        if cfg!(debug_assertions) {
-            println!("Integrity check passed ({integrity_check_file_name}).");
-        }
+        tracing::debug!("Integrity check passed ({integrity_check_file_name}).");
 
         Ok(())
     }

@@ -59,9 +59,7 @@ impl ObjectStore for FsStore {
 
         let path = self.directory.join(file_name);
 
-        // if cfg!(debug_assertions) {
-        //     println!("Opening {} (write)…", path.display());
-        // }
+        // tracing::debug!("Opening {} (write)…", path.display());
 
         File::options()
             .create(true)
@@ -81,9 +79,7 @@ impl ObjectStore for FsStore {
 
         let path = self.directory.join(file_name);
 
-        // if cfg!(debug_assertions) {
-        //     println!("Opening {} (read)…", path.display());
-        // }
+        // tracing::debug!("Opening {} (read)…", path.display());
 
         File::options()
             .read(true)
@@ -107,7 +103,7 @@ impl ObjectStore for FsStore {
                         file_names.push(file_name);
                     }
                 }
-                Err(err) => eprintln!("{err:?}"),
+                Err(err) => tracing::error!("{err:?}"),
             }
         }
 

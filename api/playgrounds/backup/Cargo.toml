@@ -13,8 +13,10 @@ serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false }
 tar = { version = "0.4", default-features = false }
+tempfile = { version = "3", default-features = false }
 thiserror = { version = "2", default-features = false }
 time = { version = "0.3", default-features = false }
+tracing = { version = "0.1", default-features = false }
 tokio = { version = "1", default-features = false, features = [
     "io-util",
     "macros",
@@ -32,7 +34,9 @@ aws-sdk-s3 = { optional = true, version = "1", default-features = false, feature
     "rustls",
     "sigv4a",
 ] }
-tempfile = { version = "3.24.0", default-features = false }
+
+# `main` dependencies (to remove)
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }
 
 [lib]
 name = "prose_backup"

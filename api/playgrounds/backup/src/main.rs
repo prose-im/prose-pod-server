@@ -12,6 +12,13 @@ use prose_backup::{ArchivingConfig, BackupService, CompressionConfig, Encryption
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    tracing_subscriber::fmt()
+        .compact()
+        .without_time()
+        .with_target(false)
+        .with_max_level(tracing::Level::TRACE)
+        .init();
+
     let prose_pod_api_data = Bytes::new();
 
     let archiving_config = ArchivingConfig::new(prose_backup::CURRENT_VERSION, "./data").unwrap();
@@ -52,11 +59,11 @@ async fn main() -> Result<(), anyhow::Error> {
             .create_backup(backup_name, prose_pod_api_data)
             .await?
     };
-    println!("Created backup '{backup_file_name}'.");
+    tracing::info!("Created backup '{backup_file_name}'.");
 
     print!("\n");
     let backups = service.list_backups().await?;
-    println!("Backups: {backups:?}");
+    tracing::info!("Backups: {backups:?}");
 
     print!("\n");
     let fs_prefix_extract = fs_prefix.join("extract");
@@ -65,7 +72,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .restore_backup(&backup_file_name, fs_prefix_extract)
         .await?;
 
-    println!("\nReading Pod API data…");
+    print!("\n");
+    tracing::info!("Reading Pod API data…");
     let prose_pod_api_data_len = restore_result
         .prose_pod_api_data
         .metadata()
