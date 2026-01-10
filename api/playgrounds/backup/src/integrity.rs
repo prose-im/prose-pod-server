@@ -45,7 +45,13 @@ where
             .read_to_end(&mut integrity_check)
             .context("Could not read integrity check")?;
 
-        verifier.verify(&integrity_check)
+        verifier.verify(&integrity_check)?;
+
+        if cfg!(debug_assertions) {
+            println!("Integrity check passed ({integrity_check_file_name}).");
+        }
+
+        Ok(())
     }
 }
 

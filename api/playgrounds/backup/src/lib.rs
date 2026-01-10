@@ -18,6 +18,7 @@ mod writer_chain;
 use std::{
     collections::HashMap,
     fs,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -308,9 +309,30 @@ where
 {
     use std::ffi::OsString;
 
+    let mut extracted_bytes: u64 = 0;
+
     let mut archive = tar::Archive::new(archive_reader);
 
     let mut entries = archive.entries()?;
+
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
+        let path = entry.path()?;
+        let size = entry.header().size()?;
+        let entry_type = entry.header().entry_type();
+
+        let type_char = match entry_type {
+            tar::EntryType::Directory => 'd',
+            tar::EntryType::Regular => 'f',
+            tar::EntryType::Symlink => 'l',
+            _ => '?',
+        };
+
+        println!("{} {:>6} {}", type_char, size, path.display());
+
+        Ok(())
+    }
 
     let metadata: BackupInternalMetadata = {
         let entry = match entries.next() {
@@ -318,6 +340,13 @@ where
             Some(Err(err)) => return Err(anyhow::Error::new(err).context("Backup invalid")),
             None => return Err(anyhow!("Backup empty.")),
         };
+
+        if let Ok(entry_size) = entry.header().entry_size() {
+            extracted_bytes += entry_size;
+        }
+
+        #[cfg(debug_assertions)]
+        log_extracted_entry(&entry)?;
 
         let path = entry.path()?;
 
@@ -337,8 +366,6 @@ where
         .map(|(a, b)| (OsString::from(a), b))
         .collect();
 
-    let mut size_bytes = 0;
-
     let tmp = tempfile::TempDir::new()?;
     for entry in entries {
         let mut entry = entry?;
@@ -346,8 +373,11 @@ where
         entry.unpack_in(tmp.path())?;
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            size_bytes += entry_size;
+            extracted_bytes += entry_size;
         }
+
+        #[cfg(debug_assertions)]
+        log_extracted_entry(&entry)?;
     }
 
     let extracted_files = fs::read_dir(tmp.path())?;
@@ -384,7 +414,7 @@ where
     let api_archive = fs::File::open(tmp.path().join(archiving_config.api_archive_name))?;
 
     Ok(RestoreSuccess {
-        restored_bytes_count: size_bytes,
+        restored_bytes_count: extracted_bytes,
         prose_pod_api_data: api_archive,
         tmp_dir: tmp,
     })

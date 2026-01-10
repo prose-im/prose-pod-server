@@ -142,8 +142,6 @@ impl<M, F> WriterChainBuilder<M, F> {
                     .context("Could not init archive")
                     .map_err(CreateBackupError::CannotArchive)?;
 
-                println!("Archiving finalized.");
-
                 Ok(res)
             },
         }
