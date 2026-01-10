@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -179,4 +181,143 @@ fn append_data<W: std::io::Write>(
     builder.append_data(&mut header, path, std::io::Cursor::new(data))?;
 
     Ok(())
+}
+
+// MARK: - Unarchiving
+
+pub struct ExtractionSuccess {
+    /// The total amount of data restored on the Prose Pod Server.
+    pub restored_bytes_count: u64,
+
+    /// The Prose Pod Server cannot restore Prose Pod API data as it doesn’t
+    /// have access to its file system. Here is where it’s stored before being
+    /// sent to the Prose Pod API and restored there.
+    pub prose_pod_api_data: fs::File,
+
+    /// Backups archives are unpacked in a temporary directory, that gets
+    /// deleted when this is dropped. In order for [`prose_pod_api_data`] to
+    /// stay available, this needs to stay alive. Drop when done sending data.
+    ///
+    /// [`prose_pod_api_data`]: ExtractionSuccess::prose_pod_api_data
+    pub tmp_dir: tempfile::TempDir,
+}
+
+pub(crate) fn extract_archive<R>(
+    archive_reader: R,
+    location: impl AsRef<Path>,
+) -> Result<ExtractionSuccess, anyhow::Error>
+where
+    R: std::io::Read,
+{
+    use std::ffi::OsString;
+
+    let mut extracted_bytes: u64 = 0;
+
+    let mut archive = tar::Archive::new(archive_reader);
+
+    let mut entries = archive.entries()?;
+
+    #[inline]
+    fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
+        let path = entry.path()?;
+        let size = entry.header().size()?;
+        let entry_type = entry.header().entry_type();
+
+        let type_char = match entry_type {
+            tar::EntryType::Directory => 'd',
+            tar::EntryType::Regular => 'f',
+            tar::EntryType::Symlink => 'l',
+            _ => '?',
+        };
+
+        tracing::debug!("{} {:>6} {}", type_char, size, path.display());
+
+        Ok(())
+    }
+
+    let metadata: BackupInternalMetadata = {
+        let entry = match entries.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(err)) => return Err(anyhow::Error::new(err).context("Backup invalid")),
+            None => return Err(anyhow!("Backup empty.")),
+        };
+
+        if let Ok(entry_size) = entry.header().entry_size() {
+            extracted_bytes += entry_size;
+        }
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            log_extracted_entry(&entry)?;
+        }
+
+        let path = entry.path()?;
+
+        if path != Path::new(METADATA_FILE_NAME) {
+            return Err(anyhow!(
+                "Backup invalid: Metadata file not found (first entry: {path:?})."
+            ));
+        }
+
+        serde_json::from_reader(entry)?
+    };
+
+    let archiving_config = ArchivingConfig::new(metadata.version, location)?;
+    let mut extract_paths: HashMap<OsString, PathBuf> = archiving_config
+        .paths
+        .into_iter()
+        .map(|(a, b)| (OsString::from(a), b))
+        .collect();
+
+    let tmp = tempfile::TempDir::new()?;
+    for entry in entries {
+        let mut entry = entry?;
+
+        entry.unpack_in(tmp.path())?;
+
+        if let Ok(entry_size) = entry.header().entry_size() {
+            extracted_bytes += entry_size;
+        }
+
+        #[cfg(debug_assertions)]
+        log_extracted_entry(&entry)?;
+    }
+
+    let extracted_files = fs::read_dir(tmp.path())?;
+    for entry in extracted_files.into_iter() {
+        match entry {
+            Ok(entry) => {
+                let entry_name = entry.file_name();
+
+                if entry_name == OsString::from(archiving_config.api_archive_name) {
+                    continue;
+                }
+
+                let Some(dst) = extract_paths.remove(&entry_name) else {
+                    tracing::warn!(
+                        "Don’t know where to extract '{src}', skipping.",
+                        src = entry_name.display()
+                    );
+                    continue;
+                };
+
+                crate::util::safe_replace(entry.path(), &dst)?;
+            }
+            Err(err) => tracing::error!("{err:?}"),
+        }
+    }
+
+    if !extract_paths.is_empty() {
+        return Err(anyhow!(
+            "Backup invalid: Missing data ({:?}).",
+            extract_paths.keys().collect::<Vec<_>>()
+        ));
+    }
+
+    let api_archive = fs::File::open(tmp.path().join(archiving_config.api_archive_name))?;
+
+    Ok(ExtractionSuccess {
+        restored_bytes_count: extracted_bytes,
+        prose_pod_api_data: api_archive,
+        tmp_dir: tmp,
+    })
 }

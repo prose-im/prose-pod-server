@@ -11,24 +11,20 @@ mod compression;
 mod encryption;
 mod gpg;
 mod integrity;
+mod stats;
 pub mod stores;
 mod util;
 mod writer_chain;
 
-use std::{
-    collections::HashMap,
-    fs,
-    os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
 
 use crate::{
-    archiving::{METADATA_FILE_NAME, check_archiving_will_succeed},
+    archiving::{ExtractionSuccess, check_archiving_will_succeed, extract_archive},
+    stats::{StatsReader, print_stats},
     stores::{ObjectStore, S3Store},
-    util::{safe_replace, stats_reader::StatsReader},
 };
 
 pub use self::{
@@ -179,8 +175,8 @@ where
         &self,
         backup_name: &str,
         location: impl AsRef<Path>,
-    ) -> Result<RestoreSuccess, anyhow::Error> {
-        use crate::util::stats_reader::ReadStats;
+    ) -> Result<ExtractionSuccess, anyhow::Error> {
+        use crate::stats::ReadStats;
         use crate::writer_chain::either::Either;
         use openpgp::parse::Parse as _;
         use openpgp::parse::stream::DecryptorBuilder;
@@ -203,7 +199,7 @@ where
             let backup_reader = (self.backup_store)
                 .reader(backup_name)
                 .await
-                .map_err(ExtractBackupError::CannotCreateReader)?;
+                .context("Cannot create reader")?;
 
             let mut raw_read_stats = ReadStats::new();
             let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
@@ -212,9 +208,9 @@ where
             let compressed_archive_reader = if backup_name.ends_with(".gpg") {
                 if let Some(config) = self.encryption_config.as_ref() {
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
-                        .context("Failed creating decryptor")?
+                        .context("Failed creating decryptor builder")?
                         .with_policy(config.policy.as_ref(), None, config)
-                        .map_err(ExtractBackupError::DecryptionFailed)?;
+                        .context("Failed creating decryptor")?;
 
                     let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
 
@@ -236,38 +232,15 @@ where
             let mut decompression_stats = ReadStats::new();
             let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-            let restore_result = extract_archive(archive_bytes, location)
-                .map_err(ExtractBackupError::ExtractionFailed)?;
-            let unarchived_size = restore_result.restored_bytes_count;
+            let restore_result =
+                extract_archive(archive_bytes, location).context("Backup extraction failed")?;
 
             print!("\n");
-            tracing::info!("Stats:");
-            tracing::info!("  Read:         {raw_read_stats}");
-            tracing::info!("  Decrypted:    {decryption_stats}");
-            tracing::info!("  Decompressed: {decompression_stats}");
-            tracing::info!("  Unarchived:   {unarchived_size}B");
-
-            fn size_ratio(read: u64, reference: &ReadStats) -> f64 {
-                let read: u32 = read.min(u64::from(u32::MAX)) as u32;
-                let reference: u32 = reference.bytes_read().min(u64::from(u32::MAX)) as u32;
-                f64::from(read) / f64::from(reference)
-            }
-            tracing::info!("Size ratios:");
-            tracing::info!(
-                "  Raw read:      {:.2}x",
-                size_ratio(raw_read_stats.bytes_read(), &raw_read_stats)
-            );
-            tracing::info!(
-                "  Decryption:    {:.2}x",
-                size_ratio(decryption_stats.bytes_read(), &raw_read_stats)
-            );
-            tracing::info!(
-                "  Decompression: {:.2}x",
-                size_ratio(decompression_stats.bytes_read(), &raw_read_stats)
-            );
-            tracing::info!(
-                "  Unarchiving:   {:.2}x",
-                size_ratio(unarchived_size, &raw_read_stats)
+            print_stats(
+                &raw_read_stats,
+                &decryption_stats,
+                &decompression_stats,
+                restore_result.restored_bytes_count,
             );
 
             return Ok(restore_result);
@@ -280,143 +253,6 @@ where
 
         Ok(todo!())
     }
-}
-
-pub struct RestoreSuccess {
-    /// The total amount of data restored on the Prose Pod Server.
-    pub restored_bytes_count: u64,
-
-    /// The Prose Pod Server cannot restore Prose Pod API data as it doesn’t
-    /// have access to its file system. Here is where it’s stored before being
-    /// sent to the Prose Pod API and restored there.
-    pub prose_pod_api_data: fs::File,
-
-    /// Backups archives are unpacked in a temporary directory, that gets
-    /// deleted when this is dropped. In order for [`prose_pod_api_data`] to
-    /// stay available, this needs to stay alive. Drop when done sending data.
-    ///
-    /// [`prose_pod_api_data`]: RestoreSuccess::prose_pod_api_data
-    pub tmp_dir: tempfile::TempDir,
-}
-
-fn extract_archive<R>(
-    archive_reader: R,
-    location: impl AsRef<Path>,
-) -> Result<RestoreSuccess, anyhow::Error>
-where
-    R: std::io::Read,
-{
-    use std::ffi::OsString;
-
-    let mut extracted_bytes: u64 = 0;
-
-    let mut archive = tar::Archive::new(archive_reader);
-
-    let mut entries = archive.entries()?;
-
-    #[inline]
-    fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
-        let path = entry.path()?;
-        let size = entry.header().size()?;
-        let entry_type = entry.header().entry_type();
-
-        let type_char = match entry_type {
-            tar::EntryType::Directory => 'd',
-            tar::EntryType::Regular => 'f',
-            tar::EntryType::Symlink => 'l',
-            _ => '?',
-        };
-
-        tracing::debug!("{} {:>6} {}", type_char, size, path.display());
-
-        Ok(())
-    }
-
-    let metadata: BackupInternalMetadata = {
-        let entry = match entries.next() {
-            Some(Ok(entry)) => entry,
-            Some(Err(err)) => return Err(anyhow::Error::new(err).context("Backup invalid")),
-            None => return Err(anyhow!("Backup empty.")),
-        };
-
-        if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes += entry_size;
-        }
-
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            log_extracted_entry(&entry)?;
-        }
-
-        let path = entry.path()?;
-
-        if path != Path::new(METADATA_FILE_NAME) {
-            return Err(anyhow!(
-                "Backup invalid: Metadata file not found (first entry: {path:?})."
-            ));
-        }
-
-        serde_json::from_reader(entry)?
-    };
-
-    let archiving_config = ArchivingConfig::new(metadata.version, location)?;
-    let mut extract_paths: HashMap<OsString, PathBuf> = archiving_config
-        .paths
-        .into_iter()
-        .map(|(a, b)| (OsString::from(a), b))
-        .collect();
-
-    let tmp = tempfile::TempDir::new()?;
-    for entry in entries {
-        let mut entry = entry?;
-
-        entry.unpack_in(tmp.path())?;
-
-        if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes += entry_size;
-        }
-
-        #[cfg(debug_assertions)]
-        log_extracted_entry(&entry)?;
-    }
-
-    let extracted_files = fs::read_dir(tmp.path())?;
-    for entry in extracted_files.into_iter() {
-        match entry {
-            Ok(entry) => {
-                let entry_name = entry.file_name();
-
-                if entry_name == OsString::from(archiving_config.api_archive_name) {
-                    continue;
-                }
-
-                let Some(dst) = extract_paths.remove(&entry_name) else {
-                    tracing::warn!(
-                        "Don’t know where to extract '{src}', skipping.",
-                        src = entry_name.display()
-                    );
-                    continue;
-                };
-
-                safe_replace(entry.path(), &dst)?;
-            }
-            Err(err) => tracing::error!("{err:?}"),
-        }
-    }
-
-    if !extract_paths.is_empty() {
-        return Err(anyhow!(
-            "Backup invalid: Missing data ({:?}).",
-            extract_paths.keys().collect::<Vec<_>>()
-        ));
-    }
-
-    let api_archive = fs::File::open(tmp.path().join(archiving_config.api_archive_name))?;
-
-    Ok(RestoreSuccess {
-        restored_bytes_count: extracted_bytes,
-        prose_pod_api_data: api_archive,
-        tmp_dir: tmp,
-    })
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -457,22 +293,4 @@ pub enum CreateBackupError {
 
     #[error("Failed uploading backup integrity check: {0:?}")]
     IntegrityCheckUploadFailed(std::io::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ExtractBackupError {
-    #[error("Cannot create reader: {0:?}")]
-    CannotCreateReader(anyhow::Error),
-
-    #[error("Cannot decrypt backup: {0:?}")]
-    CannotDecrypt(&'static str),
-
-    #[error("Backup decryption failed: {0:?}")]
-    DecryptionFailed(anyhow::Error),
-
-    #[error("Backup decompression failed: {0:?}")]
-    DecompressionFailed(std::io::Error),
-
-    #[error("Backup extraction failed: {0:?}")]
-    ExtractionFailed(anyhow::Error),
 }

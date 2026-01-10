@@ -3,8 +3,6 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-pub mod stats_reader;
-
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.
 pub fn saturating_i64_to_u64(value: i64) -> u64 {
