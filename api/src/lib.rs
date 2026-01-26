@@ -3,6 +3,9 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+extern crate serde_json as json;
+
+mod analytics;
 mod app_config;
 mod errors;
 mod extractors;

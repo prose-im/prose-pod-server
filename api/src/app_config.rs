@@ -4,10 +4,12 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
 
+use anyhow::anyhow;
 use figment::Figment;
 use serde::Deserialize;
 
@@ -29,10 +31,10 @@ pub mod defaults {
     pub(super) const DEFAULT_MAIN_TEAM_NAME: &'static str = "Team";
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[error("Invalid '{CONFIG_FILE_NAME}' configuration file: {0}")]
 #[repr(transparent)]
-pub struct InvalidConfiguration(figment::Error);
+pub struct InvalidConfiguration(anyhow::Error);
 
 fn default_config_static() -> Figment {
     use self::defaults::*;
@@ -92,6 +94,39 @@ fn default_config_static() -> Figment {
 
         [service_accounts.prose_workspace]
         xmpp_node = "prose-workspace"
+
+        [vendor_analytics]
+        preset = "default"
+
+        [vendor_analytics.presets.all]
+        enabled = true
+        // Product usage analytics
+        usage.enabled = true
+        usage.meta_user_count.enabled = true
+        usage.pod_version.enabled = true
+        usage.user_app_version.enabled = true
+        usage.user_lang.enabled = true
+        usage.user_platform.enabled = true
+        // Acquisition analytics
+        acquisition.enabled = true
+        acquisition.pod_domain.enabled = true
+
+        [vendor_analytics.presets.default]
+        inherits = "all"
+        // Make identifying data points opt-in
+        acquisition.pod_domain.enabled = false
+
+        [vendor_analytics.presets.gdpr]
+        inherits = "default"
+        // Disable all analytics events if the Prose Workspace has less than 20
+        // users. After that, companies are forced to provide KYC information
+        // and our per-seat billing system has to know the exact user count.
+        min_cohort_size = 20
+        // Limit locales to reduce identifiability.
+        usage.user_lang.max_locales = 2
+
+        [vendor_analytics.presets.lgpd]
+        inherits = "gdpr"
     }
     .to_string();
 
@@ -101,9 +136,7 @@ fn default_config_static() -> Figment {
 fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfiguration> {
     use figment::providers::*;
 
-    let server_domain = figment
-        .extract_inner::<String>("server.domain")
-        .map_err(InvalidConfiguration)?;
+    let server_domain = figment.extract_inner::<String>("server.domain")?;
 
     let PodAddress {
         domain: pod_domain,
@@ -129,6 +162,18 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfigu
         ));
     }
 
+    // Apply analytics presets.
+    if let Ok(preset_name) = figment.extract_inner::<String>("vendor_analytics.preset") {
+        figment = apply_analytics_preset(preset_name.as_str(), figment)?;
+    }
+
+    // Apply analytics defaults.
+    figment = apply_analytics_preset("default", figment)?;
+
+    // Remove analytics presets (useless afterwards).
+    // NOTE: `Figments` are additive by construction so we cannot remove a key.
+    figment = figment.merge(("vendor_analytics.presets", ()));
+
     Ok(figment)
 }
 
@@ -149,7 +194,7 @@ impl AppConfig {
     pub fn from_figment(figment: Figment) -> Result<Self, InvalidConfiguration> {
         with_dynamic_defaults(figment)?
             .extract()
-            .map_err(InvalidConfiguration)
+            .map_err(InvalidConfiguration::from)
     }
 
     #[allow(unused)]
@@ -278,6 +323,7 @@ pub(crate) struct AppConfig {
     pub server_api: ServerApiConfig,
     pub service_accounts: ServiceAccountsConfig,
     pub teams: TeamsConfig,
+    pub vendor_analytics: VendorAnalyticsConfig,
 }
 
 pub use auth::*;
@@ -558,6 +604,361 @@ pub mod teams {
     }
 }
 
+pub use vendor_analytics::*;
+pub mod vendor_analytics {
+    use std::collections::HashSet;
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct VendorAnalyticsConfig {
+        pub enabled: bool,
+
+        pub preset: String,
+
+        // NOTE: Just so `deny_unknown_fields` doesn’t complain about it
+        //   but still catches other unknown keys. Also so `serde` generates
+        //   correct error messages.
+        #[serde(default)]
+        pub presets: (),
+
+        #[serde(default)]
+        pub min_cohort_size: Option<u8>,
+
+        pub usage: VendorAnalyticsUsageConfig,
+        pub acquisition: VendorAnalyticsAcquisitionConfig,
+        // pub performance: todo,
+        // pub operations: todo,
+        // pub security: todo,
+        // pub crash_reports: todo,
+        // pub diagnostics: todo,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct EnabledConfig {
+        pub enabled: bool,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct VendorAnalyticsUsageConfig {
+        pub enabled: bool,
+
+        pub meta_user_count: EnabledConfig,
+
+        pub pod_version: EnabledConfig,
+
+        pub user_app_version: EnabledConfig,
+
+        pub user_lang: UserLangConfig,
+
+        pub user_platform: UserPlatformConfig,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct UserLangConfig {
+        pub enabled: bool,
+
+        #[serde(default)]
+        pub max_locales: Option<usize>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct UserPlatformConfig {
+        pub enabled: bool,
+
+        #[serde(default)]
+        pub allow_list: Option<HashSet<String>>,
+
+        #[serde(default)]
+        pub deny_list: Option<HashSet<String>>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct VendorAnalyticsAcquisitionConfig {
+        pub enabled: bool,
+
+        pub pod_domain: EnabledConfig,
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use figment::providers::{Format, Toml};
+        use toml::toml;
+
+        use crate::app_config::*;
+
+        #[test]
+        fn test_analytics_defaults() {
+            let minimal_config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+            })
+            .unwrap();
+
+            let expected = VendorAnalyticsConfig {
+                enabled: true,
+                preset: "default".to_owned(),
+                presets: (),
+                min_cohort_size: None,
+                usage: VendorAnalyticsUsageConfig {
+                    enabled: true,
+                    meta_user_count: EnabledConfig { enabled: true },
+                    pod_version: EnabledConfig { enabled: true },
+                    user_app_version: EnabledConfig { enabled: true },
+                    user_lang: UserLangConfig {
+                        enabled: true,
+                        max_locales: None,
+                    },
+                    user_platform: UserPlatformConfig {
+                        enabled: true,
+                        allow_list: None,
+                        deny_list: None,
+                    },
+                },
+                acquisition: VendorAnalyticsAcquisitionConfig {
+                    enabled: true,
+                    pod_domain: EnabledConfig { enabled: false },
+                },
+            };
+
+            assert_eq!(minimal_config.vendor_analytics, expected);
+        }
+
+        #[test]
+        fn test_analytics_defaults_overridable() {
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, true);
+
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                usage.user_lang.enabled = false
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, false);
+        }
+
+        #[test]
+        fn test_analytics_presets_override_defaults() {
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, true);
+
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                preset = "test"
+
+                [vendor_analytics.presets.test]
+                usage.user_lang.enabled = false
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, false);
+        }
+
+        /// To detect cycles, we remove already used presets. If `default`
+        /// inherits the same preset as a custom one that’s used, we might
+        /// encounter an error. This test ensures our code is written in a
+        /// way that supports this case.
+        #[test]
+        fn test_analytics_presets_can_reuse_default_inherited_preset() {
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics.presets.default]
+                inherits = "all"
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, true);
+
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics.presets.default]
+                inherits = "all"
+
+                [vendor_analytics]
+                preset = "test"
+
+                [vendor_analytics.presets.test]
+                inherits = "all"
+                usage.user_lang.enabled = false
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, false);
+        }
+
+        #[test]
+        fn test_analytics_presets_overridable() {
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                preset = "gdpr"
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, true);
+
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                preset = "gdpr"
+
+                [vendor_analytics.presets.gdpr]
+                usage.user_lang.enabled = false
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_lang.enabled, false);
+        }
+
+        #[test]
+        fn test_analytics_presets_inheritance_nested() {
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics.presets.default]
+                usage.user_lang.max_locales = 1
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_platform.enabled, true);
+            assert_eq!(config.vendor_analytics.usage.user_lang.max_locales, Some(1));
+
+            let config = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics.presets.default]
+                usage.user_lang.max_locales = 3
+
+                [vendor_analytics]
+                preset = "custom2"
+
+                [vendor_analytics.presets.custom2]
+                inherits = "custom1"
+                usage.user_lang.max_locales = 2
+
+                [vendor_analytics.presets.custom1]
+                usage.user_platform.enabled = false
+                usage.user_lang.max_locales = 1
+            })
+            .unwrap();
+
+            assert_eq!(config.vendor_analytics.usage.user_platform.enabled, false);
+            assert_eq!(config.vendor_analytics.usage.user_lang.max_locales, Some(2));
+        }
+
+        #[test]
+        fn test_error_on_unknown_analytics_key() {
+            let res1 = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                foo = "bar"
+            });
+
+            assert_eq!(res1.err(), Some(r#"Invalid 'prose.toml' configuration file: unknown field: found `foo`, expected `one of `enabled`, `preset`, `presets`, `min_cohort_size`, `usage`, `acquisition`` for key "default.vendor_analytics.foo" in TOML source string"#.to_owned()));
+
+            let res2 = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                usage = { foo = "bar" }
+            });
+
+            assert_eq!(res2.err(), Some(r#"Invalid 'prose.toml' configuration file: unknown field: found `foo`, expected `one of `enabled`, `meta_user_count`, `pod_version`, `user_app_version`, `user_lang`, `user_platform`` for key "default.vendor_analytics.usage.foo" in TOML source string"#.to_owned()));
+
+            let res3 = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                acquisition = { foo = "bar" }
+            });
+
+            assert_eq!(res3.err(), Some(r#"Invalid 'prose.toml' configuration file: unknown field: found `foo`, expected ``enabled` or `pod_domain`` for key "default.vendor_analytics.acquisition.foo" in TOML source string"#.to_owned()));
+        }
+
+        #[test]
+        fn test_error_on_unknown_analytics_preset() {
+            let res1 = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                preset = "custom"
+            });
+
+            assert_eq!(res1.err(), Some(r#"Invalid 'prose.toml' configuration file: Invalid preset 'custom'. Expected one of: ["all", "default", "gdpr", "lgpd"]"#.to_owned()));
+
+            let res1 = config_from_toml(&toml! {
+                [server]
+                domain = "example.org"
+
+                [vendor_analytics]
+                preset = "custom3"
+
+                [vendor_analytics.presets.custom3]
+                inherits = "custom2"
+
+                [vendor_analytics.presets.custom2]
+                inherits = "custom"
+            });
+
+            assert_eq!(res1.err(), Some(r#"Invalid 'prose.toml' configuration file: Invalid preset 'custom' inherited by 'custom3 -> custom2'. Expected one of: ["all", "default", "gdpr", "lgpd"] (removing cyclic references)"#.to_owned()));
+        }
+
+        #[inline]
+        fn config_from_toml(toml: &toml::Table) -> Result<AppConfig, String> {
+            let toml = toml::to_string(&toml).unwrap();
+
+            let figment = default_config_static().merge(Toml::string(&toml));
+
+            match AppConfig::from_figment(figment) {
+                Ok(app_config) => Ok(app_config),
+                Err(err) => Err(format!("{err:#}")),
+            }
+        }
+    }
+}
+
 pub use pod::PodAddress;
 pub mod pod {
     use serde::Deserialize;
@@ -573,6 +974,62 @@ pub mod pod {
     }
 }
 
+// MARK: - Helpers
+
+#[must_use]
+fn apply_analytics_preset(
+    preset_name: &str,
+    figment: Figment,
+) -> Result<Figment, InvalidConfiguration> {
+    use figment::providers::Serialized;
+
+    let presets = figment
+        .extract_inner::<HashMap<String, toml::Table>>("vendor_analytics.presets")
+        .unwrap_or_default();
+
+    fn get_preset(
+        preset_name: &str,
+        mut presets: HashMap<String, toml::Table>,
+        mut stack: Vec<String>,
+    ) -> Result<Figment, InvalidConfiguration> {
+        // NOTE: Remove preset to avoid reference cycles.
+        if let Some(mut preset) = presets.remove(preset_name) {
+            if let Some(inherited_preset_name) = preset.remove("inherits") {
+                let Some(inherited_preset_name) = inherited_preset_name.as_str() else {
+                    return Err(InvalidConfiguration(anyhow!(
+                        "Invalid preset '{preset_name}'. `inherits` should be a string."
+                    )));
+                };
+
+                stack.push(preset_name.to_owned());
+                let inherited_preset = get_preset(inherited_preset_name, presets, stack)?;
+                Ok(Figment::from(Serialized::defaults(preset)).join(inherited_preset))
+            } else {
+                Ok(Figment::from(Serialized::defaults(preset)))
+            }
+        } else {
+            let mut available_presets = presets.keys().collect::<Vec<_>>();
+            available_presets.sort();
+            if stack.is_empty() {
+                Err(InvalidConfiguration(anyhow!(
+                    "Invalid preset '{preset_name}'. \
+                    Expected one of: {available_presets:?}"
+                )))
+            } else {
+                Err(InvalidConfiguration(anyhow!(
+                    "Invalid preset '{preset_name}' inherited by '{stack}'. \
+                    Expected one of: {available_presets:?} (removing cyclic references)",
+                    stack = stack.join(" -> ")
+                )))
+            }
+        }
+    }
+
+    let preset = get_preset(preset_name, presets, Vec::new())?.extract::<toml::Table>()?;
+
+    Ok(figment.join(Serialized::default("vendor_analytics", preset)))
+}
+
 // MARK: - Boilerplate
 
 impl AsRef<ServiceAccountsConfig> for AppConfig {
@@ -584,5 +1041,11 @@ impl AsRef<ServiceAccountsConfig> for AppConfig {
 impl AsRef<TeamsConfig> for AppConfig {
     fn as_ref(&self) -> &TeamsConfig {
         &self.teams
+    }
+}
+
+impl From<figment::Error> for InvalidConfiguration {
+    fn from(error: figment::Error) -> Self {
+        Self(anyhow::Error::from(error))
     }
 }
