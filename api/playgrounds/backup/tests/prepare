@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+set -e
+
+KEYS_DIR=tests/keys
+mkdir -p $KEYS_DIR
+
+# Configuration
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+KEY_ID=""
+NAME="Test User"
+EMAIL="test@example.com"
+
+echo "Using temporary GNUPGHOME: $GNUPGHOME"
+
+# Generate primary key (default is sign+certify)
+echo "Generating primary key..."
+gpg --batch --passphrase '' --quick-generate-key "$NAME <$EMAIL>" rsa2048 default 0
+
+# Get the key fingerprint
+KEY_ID=$(gpg --list-keys --with-colons "$EMAIL" | awk -F: '/^fpr:/ {print $10; exit}')
+echo "Generated key: $KEY_ID"
+
+# Add encryption subkey
+echo "Adding encryption subkey..."
+gpg --batch --passphrase '' --quick-add-key "$KEY_ID" rsa2048 encr 0
+
+# Add signing subkey (if you want a separate one, though primary can sign)
+echo "Adding signing subkey..."
+gpg --batch --passphrase '' --quick-add-key "$KEY_ID" rsa2048 sign 0
+
+# Export the keys
+echo "Exporting keys..."
+gpg --batch --passphrase '' --armor --export "$KEY_ID" > $KEYS_DIR/public.asc
+gpg --batch --passphrase '' --armor --export-secret-keys "$KEY_ID" > $KEYS_DIR/secret.asc
+# gpg --batch --passphrase '' --export "$KEY_ID" > $KEYS_DIR/public.pgp
+# gpg --batch --passphrase '' --export-secret-keys "$KEY_ID" > $KEYS_DIR/secret.pgp
+
+echo "Keys exported:"
+echo "  - public.asc (ASCII armored public key)"
+echo "  - secret.asc (ASCII armored secret key)"
+# echo "  - public.pgp (binary public key)"
+# echo "  - secret.pgp (binary secret key)"
+
+# Show key info
+echo -e "\nKey information:"
+gpg --list-keys "$EMAIL"
+gpg --list-secret-keys "$EMAIL"
+
+echo -e "\nGNUPGHOME: $GNUPGHOME"
+echo "Clean up with: rm -rf $GNUPGHOME"

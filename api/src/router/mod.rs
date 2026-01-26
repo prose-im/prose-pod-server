@@ -4,6 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod analytics;
+mod backups;
 mod cloud_api_proxy;
 mod health;
 mod init;
@@ -96,6 +97,8 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
                 "/prose-files-proxy/{*path}",
                 any(prose_files_proxy::proxy_prose_files),
             )
+            .route("/lifecycle/backup", post(lifecycle::backup))
+            .route("/lifecycle/restore", put(lifecycle::restore))
             .merge(workspace::router())
             .with_state(self)
     }

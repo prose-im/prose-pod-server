@@ -7,6 +7,8 @@ extern crate serde_json as json;
 
 mod analytics;
 mod app_config;
+mod auth;
+mod backups;
 mod errors;
 mod extractors;
 mod models;

@@ -230,21 +230,26 @@ pub mod sync {
 pub const PROSODY_JIDS_ARE_VALID: &'static str = "JIDs coming from Prosody should always be valid";
 
 /// NOTE: Inspired by [`anyhow::Context`].
-pub trait Context<Res> {
-    fn context(self, internal_error_code: &'static str, public_description: &str) -> Res;
+pub trait PublicContext<Res> {
+    // TODO: Get rid of it by using macros to auto-log and keep call site info.
+    fn public_context(self, internal_error_code: &'static str, public_description: &str) -> Res;
 }
 
-impl<T, E1: Context<E2>, E2> Context<Result<T, E2>> for Result<T, E1> {
-    fn context(self, internal_error_code: &'static str, public_description: &str) -> Result<T, E2> {
+impl<T, E1: PublicContext<E2>, E2> PublicContext<Result<T, E2>> for Result<T, E1> {
+    fn public_context(
+        self,
+        internal_error_code: &'static str,
+        public_description: &str,
+    ) -> Result<T, E2> {
         match self {
             Ok(val) => Ok(val),
-            Err(err) => Err(err.context(internal_error_code, public_description)),
+            Err(err) => Err(err.public_context(internal_error_code, public_description)),
         }
     }
 }
 
-impl Context<crate::responders::Error> for prosody_http::oauth2::Error {
-    fn context(
+impl PublicContext<crate::responders::Error> for prosody_http::oauth2::Error {
+    fn public_context(
         self,
         internal_error_code: &'static str,
         public_description: &str,
@@ -266,18 +271,18 @@ impl Context<crate::responders::Error> for prosody_http::oauth2::Error {
     }
 }
 
-impl Context<crate::responders::Error> for anyhow::Error {
-    fn context(
+impl PublicContext<crate::responders::Error> for anyhow::Error {
+    fn public_context(
         self,
         internal_error_code: &'static str,
         public_description: &str,
     ) -> crate::responders::Error {
-        Context::context(&self, internal_error_code, public_description)
+        PublicContext::public_context(&self, internal_error_code, public_description)
     }
 }
 
-impl Context<crate::responders::Error> for &anyhow::Error {
-    fn context(
+impl PublicContext<crate::responders::Error> for &anyhow::Error {
+    fn public_context(
         self,
         internal_error_code: &'static str,
         public_description: &str,
@@ -286,8 +291,8 @@ impl Context<crate::responders::Error> for &anyhow::Error {
     }
 }
 
-impl Context<crate::responders::Error> for std::io::Error {
-    fn context(
+impl PublicContext<crate::responders::Error> for std::io::Error {
+    fn public_context(
         self,
         internal_error_code: &'static str,
         public_description: &str,
@@ -319,27 +324,27 @@ impl Context<crate::responders::Error> for reqwest::Error {
 /// NOTE: Not using `impl From<anyhow::Error> for crate::responders::Error`
 ///   to make conversions explicit (and to remind one that they should add
 ///   context for the user if possible).
-pub trait NoContext<Res> {
-    fn no_context(self) -> Res;
+pub trait NoPublicContext<Res> {
+    fn no_public_context(self) -> Res;
 }
 
-impl<E2> NoContext<E2> for &anyhow::Error
+impl<E2> NoPublicContext<E2> for &anyhow::Error
 where
-    for<'a> &'a anyhow::Error: Context<E2>,
+    for<'a> &'a anyhow::Error: PublicContext<E2>,
 {
-    fn no_context(self) -> E2 {
-        Context::context(self, crate::errors::ERROR_CODE_INTERNAL, "Internal error")
+    fn no_public_context(self) -> E2 {
+        PublicContext::public_context(self, crate::errors::ERROR_CODE_INTERNAL, "Internal error")
     }
 }
 
-impl<T, E1, E2> NoContext<Result<T, E2>> for Result<T, E1>
+impl<T, E1, E2> NoPublicContext<Result<T, E2>> for Result<T, E1>
 where
-    E1: Context<E2>,
+    E1: PublicContext<E2>,
 {
-    fn no_context(self) -> Result<T, E2> {
+    fn no_public_context(self) -> Result<T, E2> {
         match self {
             Ok(val) => Ok(val),
-            Err(err) => Err(Context::context(
+            Err(err) => Err(PublicContext::public_context(
                 err,
                 crate::errors::ERROR_CODE_INTERNAL,
                 "Internal error",

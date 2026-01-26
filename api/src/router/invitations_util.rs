@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::NoContext as _;
+use crate::util::NoPublicContext as _;
 
 pub async fn invitations_stats(
     State(AppState {
@@ -22,7 +22,7 @@ pub async fn invitations_stats(
 
     let mut prosodyctl = backend.prosodyctl.write().await;
 
-    let invites = prosodyctl.invite_list(domain).await.no_context()?;
+    let invites = prosodyctl.invite_list(domain).await.no_public_context()?;
 
     // Release lock ASAP.
     drop(prosodyctl);

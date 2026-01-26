@@ -7,7 +7,7 @@ use axum::extract::State;
 
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::{NoContext as _, debug_panic_or_log_error};
+use crate::util::{NoPublicContext as _, debug_panic_or_log_error};
 
 // MARK: - Routes
 
@@ -45,7 +45,7 @@ impl AppState<f::Running, b::Running> {
 
                 debug_panic_or_log_error!("{error:?}");
 
-                return Err(self.with_error(error.no_context()));
+                return Err(self.with_error(error.no_public_context()));
             }
         }
 
@@ -69,7 +69,7 @@ impl AppState<f::Running, b::Running> {
 
                 debug_panic_or_log_error!("{error:?}");
 
-                return Err(self.with_error(error.no_context()));
+                return Err(self.with_error(error.no_public_context()));
             }
         }
 

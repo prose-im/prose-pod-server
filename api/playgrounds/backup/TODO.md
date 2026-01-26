@@ -10,3 +10,5 @@
   restoration fails we end up in an incorrect state. To prevent that we should
   let the Pod API try to restoration first and only then finish the Pod Server
   restoration.
+- A hash must always be stored alongside the signature, in case signing gets
+  disabled in the future.

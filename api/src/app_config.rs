@@ -178,6 +178,10 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfigu
     // NOTE: `Figments` are additive by construction so we cannot remove a key.
     figment = figment.merge(("vendor_analytics.presets", ()));
 
+    if figment.contains("backups") {
+        figment = figment.join(Serialized::default("backups.zstd.compression_level", 3))
+    }
+
     Ok(figment)
 }
 
@@ -319,15 +323,27 @@ impl AppConfig {
 #[derive(Deserialize)]
 pub(crate) struct AppConfig {
     pub auth: AuthConfig,
+
+    #[serde(default)]
+    pub backups: Option<BackupsConfig>,
+
     pub dashboard: DashboardConfig,
+
     pub log: LogConfig,
+
     #[serde(default)]
     pub policies: PoliciesConfig,
+
     pub proxy: ProxyConfig,
+
     pub server: ServerConfig,
+
     pub server_api: ServerApiConfig,
+
     pub service_accounts: ServiceAccountsConfig,
+
     pub teams: TeamsConfig,
+
     pub vendor_analytics: VendorAnalyticsConfig,
 }
 
@@ -344,6 +360,51 @@ pub mod auth {
         pub token_ttl: Duration,
 
         pub oauth2_registration_key: SecretString,
+    }
+}
+
+pub use backups::*;
+mod backups {
+    use serde::Deserialize;
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct BackupsConfig {
+        pub backend: BackupBackend,
+
+        pub s3: Option<S3Config>,
+
+        pub zstd: ZstdConfig,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum BackupBackend {
+        S3,
+    }
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct S3Config {
+        pub endpoint: String,
+
+        pub bucket: String,
+
+        pub region: String,
+
+        pub access_key_id: String,
+
+        pub secret_access_key: String,
+    }
+
+    #[derive(Debug)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct ZstdConfig {
+        pub compression_level: i32,
     }
 }
 

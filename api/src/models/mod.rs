@@ -62,51 +62,6 @@ pub mod password {
     }
 }
 
-pub use auth::*;
-pub mod auth {
-    use secrecy::SecretString;
-    use serde::Serialize;
-
-    use crate::models::BareJid;
-
-    #[derive(Debug, Clone)]
-    #[repr(transparent)]
-    pub struct AuthToken(pub SecretString);
-
-    /// Information about who made the API call.
-    #[derive(Debug, Clone)]
-    #[derive(Serialize)]
-    pub struct CallerInfo {
-        pub jid: BareJid,
-        pub primary_role: String,
-    }
-
-    // MARK: Boilerplate
-
-    impl std::ops::Deref for AuthToken {
-        type Target = SecretString;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl AuthToken {
-        pub fn inner(&self) -> &SecretString {
-            &self.0
-        }
-    }
-
-    impl<T> From<T> for AuthToken
-    where
-        SecretString: From<T>,
-    {
-        fn from(value: T) -> Self {
-            Self(SecretString::from(value))
-        }
-    }
-}
-
 pub use color::*;
 pub mod color;
 

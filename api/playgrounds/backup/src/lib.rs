@@ -8,36 +8,44 @@ extern crate sequoia_openpgp as openpgp;
 
 mod archiving;
 mod compression;
+pub mod config;
+mod decryption;
 mod encryption;
 mod gpg;
 mod integrity;
+mod signing;
 mod stats;
 pub mod stores;
 mod util;
+mod verification;
 mod writer_chain;
 
-use std::path::Path;
+use std::{borrow::Cow, io::Read as _, path::Path};
 
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
-use time::format_description::well_known::Rfc3339;
 
 use crate::{
-    archiving::{ExtractionSuccess, check_archiving_will_succeed, extract_archive},
+    archiving::{
+        ArchivingBlueprint, ExtractionSuccess, check_archiving_will_succeed, extract_archive,
+    },
     stats::{StatsReader, print_stats},
     stores::{ObjectStore, S3Store},
-    util::hash,
+    util::unix_timestamp,
+    verification::{IntegrityCheck, VerificationHelper, pre_validate_integrity_checks},
 };
 
 pub use self::{
-    archiving::ArchivingConfig, archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
-    compression::CompressionConfig, encryption::EncryptionConfig, integrity::IntegrityConfig,
+    archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
+    config::{ArchivingConfig, BackupConfig, CompressionConfig, EncryptionConfig, IntegrityConfig},
+    decryption::DecryptionHelper,
+    encryption::EncryptionHelper,
 };
 
 // MARK: Service
 
-pub type BackupService<BackupStore = S3Store, IntegrityCheckStore = S3Store> =
-    ProseBackupService<BackupStore, IntegrityCheckStore>;
+pub type BackupService<'s, BackupStore = S3Store, CheckStore = S3Store> =
+    ProseBackupService<'s, BackupStore, CheckStore>;
 
 /// ```text
 /// ## Create backup
@@ -62,18 +70,22 @@ pub type BackupService<BackupStore = S3Store, IntegrityCheckStore = S3Store> =
 /// Tests:
 ///   -> FileSink
 /// ```
-pub struct ProseBackupService<BackupStore, IntegrityCheckStore> {
+pub struct ProseBackupService<'s, BackupStore, CheckStore> {
+    pub fs_root: std::path::PathBuf,
     pub archiving_config: ArchivingConfig,
     pub compression_config: CompressionConfig,
-    pub encryption_config: Option<EncryptionConfig>,
+    pub encryption_config: EncryptionConfig,
     pub integrity_config: Option<IntegrityConfig>,
+    pub encryption_helper: Option<EncryptionHelper<'s>>,
+    pub verification_helper: VerificationHelper<'s>,
+    pub decryption_helper: DecryptionHelper,
     pub backup_store: BackupStore,
-    pub integrity_check_store: IntegrityCheckStore,
+    pub check_store: CheckStore,
 }
 
 // MARK: Create backup
 
-impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+impl<'s, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'s, S1, S2> {
     /// Everything is done in a single stream of the following shape:
     ///
     /// ```text
@@ -117,20 +129,55 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         backup_name: &str,
         prose_pod_api_data: Bytes,
     ) -> Result<(String, String), CreateBackupError> {
-        check_archiving_will_succeed(&self.archiving_config)?;
+        // Arbitrary safety limits.
+        assert!(backup_name.len() <= 256);
+        // NOTE: Provide a default value instead of passing an empty string.
+        assert!(backup_name.len() > 0);
 
-        let now = time::UtcDateTime::now();
-        let backup_name = format!(
-            "{backup_name}_{now}",
-            now = now
-                .replace_millisecond(0)
-                .unwrap()
-                .format(&Rfc3339)
-                .unwrap()
+        // ///
+        use openpgp::parse::Parse as _;
+
+        let cert = openpgp::Cert::from_file(&config.key)
+            .context("Cannot read OpenPGP cert")
+            .map_err(CreateBackupError::CannotEncrypt)?;
+        let helper = GpgHelper::new(cert);
+        // ///
+
+        let archiving_blueprint =
+            ArchivingBlueprint::new(self.archiving_config.version, &self.fs_root)
+                .context("Invalid archiving version in configuration")
+                .map_err(CreateBackupError::Other)?;
+        check_archiving_will_succeed(&archiving_blueprint)?;
+
+        // “URL encode” the backup name to get rid of spaces, emojis, etc.
+        let backup_name = urlencoding::encode(backup_name);
+        // Also percent-encode `.` to prevent incorrect file extensions.
+        debug_assert_eq!(
+            urlencoding::decode("test%2Eext"),
+            Ok(Cow::Borrowed("test.ext"))
         );
+        let backup_name = backup_name.replace(".", "%2E");
+        // Also percent-encode `/` to prevent incorrect parsing of HTTP
+        // requests when a backup ID is used in the path.
+        debug_assert_eq!(
+            urlencoding::decode("test%2Ffoo"),
+            Ok(Cow::Borrowed("test/foo"))
+        );
+        let backup_name = backup_name.replace("/", "%2F");
 
-        let backup_file_name = if self.encryption_config.is_some() {
-            format!("{backup_name}.tar.zst.gpg")
+        // Unix timestamp with second precision as 10 chars covers 2001-09-09
+        // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
+        // For correctness, we’ll still format the number as 10 digits with
+        // leading zeros (even if not necessary).
+        let now = unix_timestamp();
+        assert!(now < 99_999_999_999);
+        debug_assert!(now > 999_999_999);
+        let backup_name = format!("{now:010}-{backup_name}");
+
+        let backup_file_name = if self.encryption_config.enabled {
+            match self.encryption_config.mode {
+                config::EncryptionMode::Gpg => format!("{backup_name}.tar.zst.gpg"),
+            }
         } else {
             format!("{backup_name}.tar.zst")
         };
@@ -144,13 +191,13 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         let mut integrity_check: Vec<u8> = Vec::new();
 
         let (mut gen_integrity_check, finalize_integrity_check) = writer_chain::builder()
-            .integrity_check(self.integrity_config.as_ref())
+            .digest(self.integrity_config.as_ref())
             .build(&mut integrity_check)?;
 
         let (writer, finalize_backup) = writer_chain::builder()
-            .archive(prose_pod_api_data, &self.archiving_config)
+            .archive(prose_pod_api_data, &archiving_blueprint)
             .compress(&self.compression_config)
-            .encrypt_if_possible(self.encryption_config.as_ref())
+            .encrypt_if_possible(self.encryption_helper.as_ref())
             .tee(&mut gen_integrity_check)
             .build(upload_backup)?;
 
@@ -164,7 +211,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         };
 
         let mut upload_integrity_check = self
-            .integrity_check_store
+            .check_store
             .writer(&integrity_check_file_name)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
@@ -208,31 +255,17 @@ pub enum CreateBackupError {
 
     #[error("Failed uploading backup integrity check: {0:?}")]
     IntegrityCheckUploadFailed(std::io::Error),
+
+    #[error("{0:?}")]
+    Other(anyhow::Error),
 }
 
 // MARK: List
 
 #[derive(Debug)]
 pub struct BackupDto {
-    /// Instead of this being the unique name of the backup, it’s
-    pub id: u64,
-
+    pub id: Box<str>,
     pub metadata: BackupMetadataPartialDto,
-
-    /// To prevent accidental restoration of corrupted or untrusted backups,
-    /// a unique identifier used for restoration is exposed here. It is the
-    /// unique backup name out of simplicity, but this should be considered
-    /// **an implementation detail**.
-    ///
-    /// It wouldn’t be possible to restore corrupted or untrusted backups
-    /// anyway, but at least having an optional ID here makes it explicit
-    /// for UI implementators. They can then hide or grey out the “Restore”
-    /// button when this action is impossible. Note that a “tooltip” or info
-    /// message with the reason why the action is impossible can be created
-    /// by inspecting [`metadata`].
-    ///
-    /// [`metadata`]: BackupDto::metadata
-    pub restore_id: Option<String>,
 }
 
 /// ⚠️ Beware that [`can_be_restored`] is a one-sided indicator. `true` doesn’t
@@ -244,7 +277,7 @@ pub struct BackupDto {
 /// [`can_be_restored`]: BackupMetadataPartialDto::can_be_restored
 #[derive(Debug)]
 pub struct BackupMetadataPartialDto {
-    pub name: Box<str>,
+    pub description: String,
     pub created_at: time::UtcDateTime,
     pub is_signed: bool,
     pub is_encrypted: bool,
@@ -259,14 +292,16 @@ pub struct BackupMetadataPartialDto {
 /// the backup is intact or using trusted keys.
 #[derive(Debug)]
 pub struct BackupMetadataFullDto {
-    pub name: Box<str>,
+    pub description: String,
     pub created_at: time::UtcDateTime,
     pub is_intact: bool,
     pub is_signed: bool,
-    pub is_signature_trusted: bool,
-    pub is_signature_valid: bool,
+    pub signing_key: Option<openpgp::Fingerprint>,
+    pub is_signature_trusted: Option<bool>,
+    pub is_signature_valid: Option<bool>,
     pub is_encrypted: bool,
-    pub is_encryption_valid: bool,
+    pub encryption_key: Option<openpgp::Fingerprint>,
+    pub is_encryption_valid: Option<bool>,
     pub is_trusted: bool,
     pub can_be_restored: bool,
 }
@@ -295,10 +330,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
             return Ok(vec![]);
         };
 
-        let checks = self
-            .integrity_check_store
-            .list_all_after(oldest_backup)
-            .await?;
+        let checks = self.check_store.list_all_after(oldest_backup).await?;
 
         let todo = "Make this dynamic via configuration.";
         let signing_is_mandatory = false;
@@ -306,35 +338,41 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 
-        for backup_name in backups.into_iter() {
-            let is_signed = checks.contains(&format!("{backup_name}.sig"));
-            let is_encrypted = backup_name.ends_with(".gpg");
+        for backup_file_name in backups.into_iter() {
+            let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
+            let is_encrypted = backup_file_name.ends_with(".gpg");
 
             let can_be_restored = true
                 && (!signing_is_mandatory || is_signed)
                 && (!encryption_is_mandatory || is_encrypted);
 
-            let created_at = match parse_timestamp(&backup_name) {
-                Ok(timestamp) => timestamp,
+            let BackupNameComponents {
+                created_at,
+                description,
+                ..
+            } = match parse_backup_file_name(&backup_file_name) {
+                Ok(components) => components,
                 Err(err) => {
-                    tracing::warn!("Skipping `{backup_name}`: {err:?}");
+                    tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
                     continue;
                 }
             };
 
+            let backup_name = match urlencoding::decode(&backup_file_name) {
+                Ok(backup_name) => backup_name,
+                Err(err) => {
+                    tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
+                    continue;
+                }
+            };
             dtos.push(BackupDto {
-                id: hash(&backup_name),
+                id: Box::from(backup_name),
                 metadata: BackupMetadataPartialDto {
-                    name: backup_name.clone().into_boxed_str(),
+                    description: description.into_owned(),
                     created_at,
                     is_signed,
                     is_encrypted,
                     can_be_restored,
-                },
-                restore_id: if can_be_restored {
-                    Some(backup_name)
-                } else {
-                    None
                 },
             });
         }
@@ -343,22 +381,46 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     }
 }
 
-fn parse_timestamp(backup_name: &str) -> Result<time::UtcDateTime, anyhow::Error> {
-    let Some(basename) = backup_name.split(".").next() else {
-        anyhow::bail!("File has no extension.");
+struct BackupNameComponents<'a> {
+    created_at: time::UtcDateTime,
+    description: Cow<'a, str>,
+    extensions: Vec<&'a str>,
+}
+
+fn parse_backup_file_name<'a>(
+    file_name: &'a str,
+) -> Result<BackupNameComponents<'a>, anyhow::Error> {
+    let Some((prefix, suffix)) = file_name.split_once('-') else {
+        anyhow::bail!("File `{file_name}` is missing the timestamp prefix.");
     };
-    if basename.is_empty() {
-        anyhow::bail!("File has no basename.");
-    };
-    let Some(suffix) = basename.split("_").last() else {
-        anyhow::bail!("File `{basename}` is missing the timestamp suffix.");
-    };
-    match time::UtcDateTime::parse(suffix, &Rfc3339) {
-        Ok(timestamp) => Ok(timestamp),
+
+    let secs: i64 = prefix
+        .parse()
+        .with_context(|| format!("Could not read integer from `{prefix}`"))?;
+
+    let created_at = match time::UtcDateTime::from_unix_timestamp(secs) {
+        Ok(timestamp) => timestamp,
         Err(err) => {
-            Err(anyhow::Error::from(err).context("Could not parse timestamp from file name"))
+            return Err(
+                anyhow::Error::from(err).context("Could not parse timestamp from file name")
+            );
         }
-    }
+    };
+
+    let Some((description, extensions)) = suffix.split_once('.') else {
+        todo!();
+    };
+
+    let description = urlencoding::decode(description)
+        .with_context(|| format!("Backup description `{description}` contains invalid UTF-8"))?;
+
+    let extensions = extensions.split(".").collect::<Vec<_>>();
+
+    Ok(BackupNameComponents {
+        created_at,
+        description,
+        extensions,
+    })
 }
 
 // MARK: Restore
@@ -375,10 +437,49 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         use openpgp::parse::Parse as _;
         use openpgp::parse::stream::DecryptorBuilder;
 
-        let integrity_checks = (self.integrity_check_store)
+        let BackupNameComponents {
+            created_at,
+            description,
+            extensions,
+        } = parse_backup_file_name(backup_name)?;
+
+        // TODO: List integrity checks.
+        // TODO: Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
+        //   read of the whole backup file if something is wrong (i.e. fetch
+        //   fails, corrupted signature, no supported check…). Integrity checks
+        //   are quite small so loading all in memory is better than saving to
+        //   temporary files (less I/O).
+        // TODO: Check signature for corruption (just in case).
+        // TODO: Read backup to temporary file. It will have to be downloaded
+        //   at some point anyway, and doing it this early allows us not to
+        //   fetch it twice. It also allows us to easily performing integrity
+        //   checks in parallel by opening multiple file descriptors (instead
+        //   of writing a lot of overly complicated reading logic to reuse the
+        //   same in-memory reader).
+        // TODO: Run integrity checks.
+        // TODO: Restore backup.
+
+        let integrity_check_names = (self.check_store)
             .find(backup_name)
             .await
             .context("Failed listing integrity checks")?;
+
+        let mut integrity_checks = Vec::with_capacity(integrity_check_names.len());
+        for key in integrity_check_names {
+            let mut reader = (self.check_store)
+                .reader(&key)
+                .await
+                .context(format!("Could not open integrity check reader for '{key}'"))?;
+            let mut buf: Vec<u8> = Vec::new();
+            reader.read_to_end(&mut buf);
+
+            integrity_checks.push(IntegrityCheck {
+                name: key,
+                value: buf,
+            });
+        }
+
+        pre_validate_integrity_checks(&integrity_checks)?;
 
         // Check signature first.
         let signature_name = integrity_checks
@@ -398,12 +499,14 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
             let mut raw_read_stats = ReadStats::new();
             let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
 
+            // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
+            //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
             let mut decryption_stats = ReadStats::new();
             let compressed_archive_reader = if backup_name.ends_with(".gpg") {
-                if let Some(config) = self.encryption_config.as_ref() {
+                if let Some(config) = self.encryption_config.gpg.as_ref() {
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
                         .context("Failed creating decryptor builder")?
-                        .with_policy(config.policy.as_ref(), None, config)
+                        .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
                         .context("Failed creating decryptor")?;
 
                     let decryptor = StatsReader::new(decryptor, &mut decryption_stats);

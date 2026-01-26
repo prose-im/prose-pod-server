@@ -3,90 +3,64 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use std::sync::Arc;
+
 use openpgp::{
-    crypto::SessionKey, packet::prelude::*, parse::stream::*, types::SymmetricAlgorithm,
+    cert::amalgamation::ValidAmalgamation,
+    crypto::SessionKey,
+    packet::prelude::*,
+    parse::stream::*,
+    types::{ReasonForRevocation, RevocationStatus, SymmetricAlgorithm},
 };
 
-#[derive(Debug)]
-pub struct GpgConfig {
-    pub cert: openpgp::Cert,
-    pub policy: Box<dyn openpgp::policy::Policy>,
-}
-
-impl GpgConfig {
-    pub fn new(cert: openpgp::Cert) -> Self {
-        use openpgp::policy::StandardPolicy;
-
-        Self {
-            cert,
-            policy: Box::new(StandardPolicy::new()),
-        }
-    }
-}
-
-impl DecryptionHelper for &GpgConfig {
-    /// NOTE: Inspired by [`DecryptionHelper`] docs.
-    fn decrypt(
-        &mut self,
-        pkesks: &[PKESK],
-        _skesks: &[SKESK],
-        sym_algo: Option<SymmetricAlgorithm>,
-        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
-    ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
-        let cert = self.cert.clone();
-
-        // Second, we try those keys that we can use without
-        // prompting for a password.
-        for pkesk in pkesks {
-            for key in cert
-                .keys()
-                .with_policy(self.policy.as_ref(), None)
-                .for_storage_encryption()
-                .secret()
-            {
-                let mut keypair = key.key().to_owned().into_keypair()?;
-                if pkesk
-                    .decrypt(&mut keypair, sym_algo)
-                    .map(|(algo, sk)| decrypt(algo, &sk))
-                    .unwrap_or(false)
-                {
-                    drop(key);
-                    return Ok(Some(cert));
-                }
-            }
-        }
-
-        Err(openpgp::Error::MissingSessionKey("No matching key found".into()).into())
-    }
-}
-
-impl VerificationHelper for &GpgConfig {
-    fn get_certs(
-        &mut self,
-        _ids: &[openpgp::KeyHandle],
-    ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-        Ok(vec![self.cert.clone()])
-    }
-
-    fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
-        for (i, layer) in structure.into_iter().enumerate() {
-            match layer {
-                MessageLayer::SignatureGroup { ref results } if i == 0 => {
-                    if !results.iter().any(|r| r.is_ok()) {
-                        return Err(anyhow::anyhow!("No valid signature"));
+fn is_ever_compromised<P>(ka: &openpgp::cert::prelude::ValidErasedKeyAmalgamation<'_, P>) -> bool
+where
+    P: key::KeyParts,
+{
+    match ka.revocation_status() {
+        RevocationStatus::Revoked(signatures) => {
+            for signature in signatures {
+                if let Some((reason, message)) = signature.reason_for_revocation() {
+                    match reason {
+                        ReasonForRevocation::KeyCompromised => {
+                            tracing::debug!(
+                                "Key '{key}' was compromised: {reason:?}",
+                                key = ka.key(),
+                                reason = String::from_utf8_lossy(message)
+                            );
+                            return true;
+                        }
+                        ReasonForRevocation::KeyRetired => {
+                            tracing::debug!(
+                                "Key '{key}' was retired (soft revocation)",
+                                key = ka.key()
+                            );
+                        }
+                        ReasonForRevocation::KeySuperseded => {
+                            tracing::debug!(
+                                "Key '{key}' was superseded (soft revocation)",
+                                key = ka.key()
+                            );
+                        }
+                        reason => {
+                            tracing::debug!("Key '{key}' was revoked: {reason:?}", key = ka.key());
+                        }
                     }
                 }
-
-                MessageLayer::Encryption { .. } if i == 0 => {
-                    // FIXME: Do something?
-                }
-
-                layer => {
-                    return Err(anyhow::anyhow!("Unexpected message structure ({layer:?})",));
-                }
             }
-        }
 
-        Ok(())
+            // Suppose it hasn’t been compromised otherwise.
+            false
+        }
+        RevocationStatus::CouldBe(_signatures) => {
+            tracing::debug!(
+                "Key '{key}' might be revoked externally. Not checking.",
+                key = ka.key()
+            );
+
+            // TODO: Check for external revocation?
+            false
+        }
+        RevocationStatus::NotAsFarAsWeKnow => false,
     }
 }

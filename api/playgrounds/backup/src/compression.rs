@@ -7,12 +7,7 @@ use std::io::Write;
 
 use anyhow::Context as _;
 
-use crate::{CreateBackupError, writer_chain::WriterChainBuilder};
-
-#[derive(Debug)]
-pub struct CompressionConfig {
-    pub zstd_compression_level: i32,
-}
+use crate::{CreateBackupError, config::CompressionConfig, writer_chain::WriterChainBuilder};
 
 impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn compress<InnerWriter, OuterWriter>(

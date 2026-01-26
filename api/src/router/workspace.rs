@@ -12,11 +12,12 @@ use prosody_rest::prose_xmpp::stanza::VCard4;
 use prosody_rest::prose_xmpp::stanza::vcard4::PropertyContainer;
 use serde::{Deserialize, Serialize};
 
+use crate::auth::CallerInfo;
 use crate::errors::prelude::*;
-use crate::models::{Avatar, BareJid, CallerInfo, Color};
+use crate::models::{Avatar, BareJid, Color};
 use crate::responders;
 use crate::state::prelude::*;
-use crate::util::NoContext;
+use crate::util::NoPublicContext as _;
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
 const PROSE_POD_DASHBOARD_URL_EXTENSION_KEY: &'static str = "x-prose-pod-dashboard-url";
@@ -89,7 +90,7 @@ async fn init_workspace(
     let user_count = prosodyctl
         .user_get_jids_with_role(server_domain, "prosody:member")
         .await
-        .no_context()?
+        .no_public_context()?
         .len();
 
     if user_count > 0 {
@@ -371,7 +372,7 @@ pub async fn set_workspace_icon(
         .set_own_avatar(icon.into_bytes(), ctx)
         .await
         .context("Could not set Workspace icon")
-        .no_context()?;
+        .no_public_context()?;
 
     Ok(())
 }
@@ -383,8 +384,12 @@ pub async fn set_workspace_icon(
 pub(crate) async fn service_account_credentials(
     backend: &backend::Running,
     jid: &BareJid,
-) -> Result<prosody_rest::CallerCredentials, anyhow::Error> {
-    let token = backend.secrets_service.get_token(jid).await?;
+) -> Result<prosody_rest::CallerCredentials, Error> {
+    let token = backend
+        .secrets_service
+        .get_token(jid)
+        .await
+        .no_public_context()?;
     Ok(prosody_rest::CallerCredentials {
         bare_jid: jid.to_owned(),
         auth_token: token.inner().to_owned(),
@@ -396,12 +401,13 @@ pub(crate) async fn service_account_credentials(
 async fn service_account_vcard(
     backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
-) -> Result<Option<VCard4>, anyhow::Error> {
+) -> Result<Option<VCard4>, Error> {
     backend
         .prosody_rest
         .get_vcard(&creds.bare_jid, creds)
         .await
         .context("Could not get service account vCard")
+        .no_public_context()
 }
 
 /// NOTE: Avatars are not stored in vCards, we need to query them separately.
@@ -416,7 +422,7 @@ async fn service_account_avatar(
         .get_avatar(&creds.bare_jid, creds)
         .await
         .context("Could not get service account avatar")
-        .no_context()?
+        .no_public_context()?
     {
         Some(avatar_data) => Ok(Some(Avatar::try_from(avatar_data)?)),
         None => Ok(None),
@@ -448,7 +454,7 @@ pub(crate) async fn patch_workspace_vcard_unchecked(
         prose_pod_api_url,
         auto_update_enabled,
     }: PatchWorkspaceCommand,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), Error> {
     use prosody_rest::minidom::Element;
     use prosody_rest::prose_xmpp::ns;
     use prosody_rest::prose_xmpp::stanza::vcard4;
@@ -538,7 +544,8 @@ pub(crate) async fn patch_workspace_vcard_unchecked(
             .prosody_rest
             .set_own_vcard(vcard, creds)
             .await
-            .context("Could not set Workspace vCard")?;
+            .context("Could not set Workspace vCard")
+            .no_public_context()?;
     }
 
     Ok(())

@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+pub mod serde;
+
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.
 pub fn saturating_i64_to_u64(value: i64) -> u64 {
@@ -49,11 +51,23 @@ pub fn safe_replace(
     }
 }
 
-pub fn hash(str: &str) -> u64 {
-    use std::hash::{Hash as _, Hasher as _};
-    let mut hasher = std::hash::DefaultHasher::new();
-    str.hash(&mut hasher);
-    hasher.finish()
+pub fn unix_timestamp() -> u64 {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
+}
+
+pub fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
 }
 
 #[cfg(test)]

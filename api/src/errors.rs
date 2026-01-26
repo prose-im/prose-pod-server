@@ -11,6 +11,7 @@ pub mod prelude {
     pub use crate::responders::Error;
 }
 
+use anyhow::anyhow;
 use prelude::*;
 
 // NOTE: I(@RemiBardon) don’t like that we have functions named as HTTP status
@@ -48,6 +49,22 @@ pub fn internal_server_error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "Internal server error",
         auto_log(error, public_description),
+    )
+}
+
+#[must_use]
+#[inline]
+pub fn missing_configuration(config_key: &'static str) -> Error {
+    use crate::app_config::CONFIG_FILE_NAME;
+
+    self::internal_server_error(
+        &anyhow!(
+            "Missing key `{config_key}` in the app configuration. \
+            Add it to `{CONFIG_FILE_NAME}` or use environment variables."
+        ),
+        "MISSING_CONFIGURATION",
+        "Your Prose Server is misconfigured. \
+        Contact an administrator to fix this.",
     )
 }
 

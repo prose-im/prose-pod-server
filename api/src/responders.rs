@@ -20,7 +20,7 @@ impl IntoResponse for crate::models::Password {
     }
 }
 
-impl IntoResponse for crate::models::AuthToken {
+impl IntoResponse for crate::auth::AuthToken {
     fn into_response(self) -> Response {
         use secrecy::ExposeSecret as _;
 

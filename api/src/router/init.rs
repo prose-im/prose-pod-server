@@ -13,7 +13,7 @@ use crate::errors;
 use crate::models::{BareJid, JidNode, Password};
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::NoContext as _;
+use crate::util::NoPublicContext as _;
 
 #[serde_with::serde_as]
 #[derive(Debug, Deserialize)]
@@ -54,7 +54,7 @@ pub async fn init_first_account(
     let user_count = prosodyctl
         .user_get_jids_with_role(server_domain, first_account_role)
         .await
-        .no_context()?
+        .no_public_context()?
         .len();
     if user_count > 0 {
         return Err(crate::errors::conflict_error(
@@ -82,7 +82,7 @@ pub async fn init_first_account(
                     "Choose another username.",
                 )
             }
-            UserCreateError::Internal(error) => error.no_context(),
+            UserCreateError::Internal(error) => error.no_public_context(),
         })?;
     tracing::info!("{summary}");
 
@@ -91,7 +91,7 @@ pub async fn init_first_account(
     let summary = prosodyctl
         .groups_add_member(server_domain, MAIN_TEAM_GROUP_ID, &dto.username, None)
         .await
-        .no_context()?;
+        .no_public_context()?;
     tracing::info!("{summary}");
 
     // Release lock ASAP.

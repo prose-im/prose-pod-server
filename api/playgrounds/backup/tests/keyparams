@@ -1,0 +1,20 @@
+%echo Generating a modern Ed25519 primary + signing + encryption subkeys
+Key-Type: EDDSA
+Key-Curve: ed25519
+Key-Usage: cert
+Name-Real: Alice Example
+Name-Email: alice@example.org
+Expire-Date: 1y
+
+# Signing subkey (ed25519)
+Subkey-Type: EDDSA
+Subkey-Curve: ed25519
+Subkey-Usage: sign
+
+# Encryption subkey (Curve25519 / cv25519)
+Subkey-Type: ECDH
+Subkey-Curve: cv25519
+Subkey-Usage: encrypt
+
+%commit
+%echo done

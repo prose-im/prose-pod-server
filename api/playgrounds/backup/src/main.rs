@@ -5,10 +5,18 @@
 
 extern crate sequoia_openpgp as openpgp;
 
-use std::{fs, io::Read as _, path::Path};
+use std::{
+    fs,
+    io::Read as _,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use bytes::Bytes;
-use prose_backup::{ArchivingConfig, BackupService, CompressionConfig, EncryptionConfig};
+use prose_backup::{
+    ArchivingConfig, BackupService, CompressionConfig, EncryptionConfig, GpgHelper,
+    encryption::EncryptionMode,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -21,11 +29,19 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let prose_pod_api_data = Bytes::new();
 
-    let archiving_config = ArchivingConfig::new(prose_backup::CURRENT_VERSION, "./data").unwrap();
+    let archiving_config = ArchivingConfig {
+        version: prose_backup::CURRENT_VERSION,
+    };
     let compression_config = CompressionConfig {
         zstd_compression_level: 5,
     };
-    let encryption_config = Some(EncryptionConfig::new(generate_test_cert()?));
+    let gpg_config = Arc::new(GpgHelper::new(generate_test_cert()?));
+    let encryption_config = EncryptionConfig {
+        enabled: true,
+        mandatory: true,
+        mode: EncryptionMode::Gpg,
+        gpg: gpg_config,
+    };
     // let encryption_config = None;
     let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
     // let integrity_config = None;
@@ -45,12 +61,13 @@ async fn main() -> Result<(), anyhow::Error> {
         .directory(&fs_prefix_integrity_checks);
 
     let service = BackupService {
+        fs_root: PathBuf::from("./data"),
         archiving_config,
         compression_config,
         encryption_config,
         integrity_config,
         backup_store,
-        integrity_check_store,
+        check_store,
     };
 
     let (backup_file_name, integrity_check_file_name) = {

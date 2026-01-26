@@ -19,21 +19,21 @@ pub const CURRENT_BACKUP_VERSION: u8 = 1;
 // WARN: Do not change as doing so would break backwards compatibility.
 pub(crate) const METADATA_FILE_NAME: &'static str = "metadata.json";
 
+#[non_exhaustive]
 #[derive(Debug)]
-pub struct ArchivingConfig {
+pub struct ArchivingBlueprint {
     pub version: u8,
     pub paths: Vec<(&'static str, PathBuf)>,
     pub api_archive_name: &'static str,
-    _private: (),
 }
 
-impl Default for ArchivingConfig {
+impl Default for ArchivingBlueprint {
     fn default() -> Self {
         Self::version(CURRENT_BACKUP_VERSION).unwrap()
     }
 }
 
-impl ArchivingConfig {
+impl ArchivingBlueprint {
     pub fn version(version: u8) -> Result<Self, anyhow::Error> {
         Self::new(version, "/")
     }
@@ -47,7 +47,6 @@ impl ArchivingConfig {
                     ("prosody-config", prefix.as_ref().join("etc/prosody")),
                 ],
                 api_archive_name: "prose-pod-api-data",
-                _private: (),
             }),
             n => Err(anyhow!("Unknown backup version: {n}")),
         }
@@ -62,9 +61,9 @@ struct BackupInternalMetadata {
 // MARK: - Archiving
 
 pub(crate) fn check_archiving_will_succeed(
-    archiving_config: &ArchivingConfig,
+    blueprint: &ArchivingBlueprint,
 ) -> Result<(), CreateBackupError> {
-    for (_, local_path) in archiving_config.paths.iter() {
+    for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
             return Err(CreateBackupError::MissingFile(local_path.to_owned()));
         }
@@ -75,9 +74,9 @@ pub(crate) fn check_archiving_will_succeed(
 
 fn archive_writer<W: Write>(
     builder: &mut tar::Builder<W>,
-    archiving_config: &ArchivingConfig,
+    blueprint: &ArchivingBlueprint,
 ) -> Result<(), anyhow::Error> {
-    for (archive_path, local_path) in archiving_config.paths.iter() {
+    for (archive_path, local_path) in blueprint.paths.iter() {
         let path = Path::new(local_path);
 
         if path.is_file() {
@@ -105,7 +104,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn archive<InnerWriter, OuterWriter>(
         self,
         prose_pod_api_data: Bytes,
-        archiving_config: &ArchivingConfig,
+        blueprint: &ArchivingBlueprint,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
@@ -123,20 +122,16 @@ impl<M, F> WriterChainBuilder<M, F> {
 
                 add_metadata_file(
                     &BackupInternalMetadata {
-                        version: archiving_config.version,
+                        version: blueprint.version,
                     },
                     &mut builder,
                 )
                 .map_err(CreateBackupError::CannotArchive)?;
 
-                append_data(
-                    prose_pod_api_data,
-                    archiving_config.api_archive_name,
-                    &mut builder,
-                )
-                .map_err(CreateBackupError::CannotArchive)?;
+                append_data(prose_pod_api_data, blueprint.api_archive_name, &mut builder)
+                    .map_err(CreateBackupError::CannotArchive)?;
 
-                archive_writer(&mut builder, archiving_config)
+                archive_writer(&mut builder, blueprint)
                     .map_err(CreateBackupError::CannotArchive)?;
 
                 make(builder)
@@ -268,8 +263,8 @@ where
         serde_json::from_reader(entry)?
     };
 
-    let archiving_config = ArchivingConfig::new(metadata.version, location)?;
-    let mut extract_paths: HashMap<OsString, PathBuf> = archiving_config
+    let blueprint = ArchivingBlueprint::new(metadata.version, location)?;
+    let mut extract_paths: HashMap<OsString, PathBuf> = blueprint
         .paths
         .into_iter()
         .map(|(a, b)| (OsString::from(a), b))
@@ -295,7 +290,7 @@ where
             Ok(entry) => {
                 let entry_name = entry.file_name();
 
-                if entry_name == OsString::from(archiving_config.api_archive_name) {
+                if entry_name == OsString::from(blueprint.api_archive_name) {
                     continue;
                 }
 
@@ -320,7 +315,7 @@ where
         ));
     }
 
-    let api_archive = fs::File::open(tmp.path().join(archiving_config.api_archive_name))?;
+    let api_archive = fs::File::open(tmp.path().join(blueprint.api_archive_name))?;
 
     Ok(ExtractionSuccess {
         restored_bytes_count: extracted_bytes,
