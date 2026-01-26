@@ -272,6 +272,8 @@ pub(crate) struct AppConfig {
     pub auth: AuthConfig,
     pub dashboard: DashboardConfig,
     pub log: LogConfig,
+    #[serde(default)]
+    pub policies: PoliciesConfig,
     pub server: ServerConfig,
     pub server_api: ServerApiConfig,
     pub service_accounts: ServiceAccountsConfig,
@@ -318,6 +320,20 @@ pub mod dashboard {
             crate::util::append_path_segment(&self.dashboard.url, "api")
                 .context("Failed creating Pod API URL")
         }
+    }
+}
+
+pub use policies::*;
+pub mod policies {
+    use serde::Deserialize;
+
+    /// NOTE: Read optional values instead of having defaults to properly
+    ///   interpret user intentions.
+    #[derive(Debug, Default)]
+    #[derive(Deserialize)]
+    pub struct PoliciesConfig {
+        #[serde(default)]
+        pub auto_update_enabled: Option<bool>,
     }
 }
 

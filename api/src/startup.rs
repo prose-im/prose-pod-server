@@ -550,6 +550,7 @@ async fn run_migrations(
             PatchWorkspaceCommand {
                 prose_pod_dashboard_url: Some(Some(dashboard_url.to_owned())),
                 prose_pod_api_url: Some(Some(api_url)),
+                auto_update_enabled: Some(app_config.policies.auto_update_enabled),
                 ..Default::default()
             },
         )
