@@ -389,22 +389,37 @@ async fn patch_workspace_vcard_unchecked(
         vcard.fn_ = vec![vcard4::Fn_ { value: name }];
     }
 
-    if let Some(color_opt) = req.accent_color {
-        // FIXME: Do not override all unknown properties! Improve the `prose_xmpp`
-        //   API to expose mutating methods and use it here instead.
+    let new_unknown_properties = if let Some(color_opt) = req.accent_color {
+        // TODO: Improve the `prose_xmpp` API to expose mutating methods not to
+        //   force a new value to be created (potentially removing values by
+        //   mistake!) and use it here instead.
         match color_opt {
-            Some(color) => {
-                vcard.unknown_properties = vec![
-                    Element::builder(ACCENT_COLOR_EXTENSION_KEY, ns::VCARD4)
-                        .append(Element::builder("text", ns::VCARD4).append(color.to_string()))
-                        .build(),
-                ]
+            // Replace accent color with new value.
+            Some(color) => vcard
+                .unknown_properties
                 .into_iter()
-                .collect()
-            }
-            None => vcard.unknown_properties = Default::default(),
-        };
-    }
+                .filter(|e| e.name() != ACCENT_COLOR_EXTENSION_KEY)
+                .chain(
+                    vec![
+                        Element::builder(ACCENT_COLOR_EXTENSION_KEY, ns::VCARD4)
+                            .append(Element::builder("text", ns::VCARD4).append(color.to_string()))
+                            .build(),
+                    ]
+                    .into_iter(),
+                )
+                .collect(),
+            // Remove accent color (reset to default value).
+            None => vcard
+                .unknown_properties
+                .into_iter()
+                .filter(|e| e.name() != ACCENT_COLOR_EXTENSION_KEY)
+                .collect(),
+        }
+    } else {
+        vcard.unknown_properties
+    };
+
+    vcard.unknown_properties = new_unknown_properties;
 
     backend
         .prosody_rest
