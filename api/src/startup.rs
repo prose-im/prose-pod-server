@@ -1,6 +1,6 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::collections::HashMap;
@@ -118,9 +118,7 @@ impl AppState<f::Running, b::Starting> {
             synchronize_rosters(&mut prosodyctl, group_ids, server_domain).await?;
         }
 
-        run_migrations(&mut prosodyctl).await?;
-
-        Ok(b::Running {
+        let backend = b::Running {
             state: Arc::new(b::Operational {
                 prosody: Arc::new(RwLock::new(prosody)),
                 prosodyctl: Arc::new(RwLock::new(prosodyctl)),
@@ -129,7 +127,11 @@ impl AppState<f::Running, b::Starting> {
                 secrets_service: secrets,
                 cancellation_token: AutoCancelToken(cancellation_token),
             }),
-        })
+        };
+
+        run_migrations(app_config, &backend).await?;
+
+        Ok(backend)
     }
 
     /// Try bootstrapping the backend, but do not transition if an error occurs.
@@ -505,8 +507,14 @@ where
     Ok(())
 }
 
-async fn run_migrations(prosodyctl: &mut Prosodyctl) -> Result<(), anyhow::Error> {
-    let prosody_data_dir = prosodyctl.prosody_paths_data().await?;
+async fn run_migrations(
+    app_config: &AppConfig,
+    backend: &backend::Running,
+) -> Result<(), anyhow::Error> {
+    let prosody_data_dir = {
+        let mut prosodyctl = backend.prosodyctl.write().await;
+        prosodyctl.prosody_paths_data().await?
+    };
 
     // Delete foundations of the previous architecture.
     {
@@ -522,6 +530,30 @@ async fn run_migrations(prosodyctl: &mut Prosodyctl) -> Result<(), anyhow::Error
                 path = path.display()
             );
         }
+    }
+
+    // Update Workspace vCard
+    {
+        use crate::router::workspace::{
+            PatchWorkspaceCommand, patch_workspace_vcard_unchecked, service_account_credentials,
+        };
+
+        let ref jid = app_config.workspace_jid();
+        let ref creds = service_account_credentials(backend, jid).await?;
+
+        let dashboard_url = app_config.dashboard_url();
+        let api_url = app_config.pod_api_url()?;
+
+        patch_workspace_vcard_unchecked(
+            backend,
+            creds,
+            PatchWorkspaceCommand {
+                prose_pod_dashboard_url: Some(Some(dashboard_url.to_owned())),
+                prose_pod_api_url: Some(Some(api_url)),
+                ..Default::default()
+            },
+        )
+        .await?;
     }
 
     Ok(())

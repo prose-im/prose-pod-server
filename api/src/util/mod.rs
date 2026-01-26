@@ -1,6 +1,6 @@
 // prose-pod-server
 //
-// Copyright: 2024–2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2024–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 //! Utilities.
@@ -87,6 +87,29 @@ pub fn empty_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn append_path_segment(
+    uri: &axum::http::Uri,
+    segment: &str,
+) -> Result<axum::http::Uri, axum::http::Error> {
+    use axum::http::uri::PathAndQuery;
+
+    let mut path = uri.path().to_owned();
+
+    if !path.ends_with('/') && !segment.starts_with('/') {
+        path.push('/');
+    }
+    path.push_str(segment);
+
+    let new_path_and_query = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+
+    axum::http::uri::Builder::from(uri.to_owned())
+        .path_and_query(PathAndQuery::from_maybe_shared(new_path_and_query)?)
+        .build()
 }
 
 // MARK: - Random generators

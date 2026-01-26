@@ -1,6 +1,6 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::{
@@ -98,8 +98,36 @@ fn default_config_static() -> Figment {
     Figment::from(Toml::string(&static_defaults))
 }
 
-fn with_dynamic_defaults(figment: Figment) -> Result<Figment, InvalidConfiguration> {
-    // NOTE: At the moment, the Server API doesn’t add dynamic defaults.
+fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfiguration> {
+    use figment::providers::*;
+
+    let server_domain = figment
+        .extract_inner::<String>("server.domain")
+        .map_err(InvalidConfiguration)?;
+
+    let PodAddress {
+        domain: pod_domain,
+        ipv4: pod_ipv4,
+        ipv6: pod_ipv6,
+        ..
+    } = figment
+        .extract_inner::<PodAddress>("pod.address")
+        .unwrap_or_default();
+    if (pod_ipv4, pod_ipv6) == (None, None) {
+        // If no static address has been defined, add a default for the Pod domain.
+        let default_server_domain = format!("prose.{server_domain}");
+        figment = figment.join(Serialized::default(
+            "pod.address.domain",
+            &default_server_domain,
+        ));
+
+        // If possible, add a default for the Dashboard URL.
+        let pod_domain = pod_domain.map_or(default_server_domain, |name| name.to_string());
+        figment = figment.join(Serialized::default(
+            "dashboard.url",
+            format!("https://admin.{pod_domain}"),
+        ));
+    }
 
     Ok(figment)
 }
@@ -242,6 +270,7 @@ impl AppConfig {
 #[derive(Deserialize)]
 pub(crate) struct AppConfig {
     pub auth: AuthConfig,
+    pub dashboard: DashboardConfig,
     pub log: LogConfig,
     pub server: ServerConfig,
     pub server_api: ServerApiConfig,
@@ -262,6 +291,33 @@ pub mod auth {
         pub token_ttl: Duration,
 
         pub oauth2_registration_key: SecretString,
+    }
+}
+
+use dashboard::*;
+pub mod dashboard {
+    use axum::http::Uri;
+    use serde::Deserialize;
+
+    #[derive(Debug)]
+    #[serde_with::serde_as]
+    #[derive(Deserialize)]
+    pub struct DashboardConfig {
+        #[serde_as(as = "serde_with::DisplayFromStr")]
+        pub url: Uri,
+    }
+
+    impl super::AppConfig {
+        pub fn dashboard_url(&self) -> &Uri {
+            &self.dashboard.url
+        }
+
+        pub fn pod_api_url(&self) -> Result<Uri, anyhow::Error> {
+            use anyhow::Context as _;
+
+            crate::util::append_path_segment(&self.dashboard.url, "api")
+                .context("Failed creating Pod API URL")
+        }
     }
 }
 
@@ -483,6 +539,21 @@ pub mod teams {
     #[derive(Deserialize)]
     pub struct TeamsConfig {
         pub main_team_name: String,
+    }
+}
+
+pub use pod::PodAddress;
+pub mod pod {
+    use serde::Deserialize;
+
+    #[derive(Debug, Clone, Default)]
+    #[derive(Deserialize)]
+    pub struct PodAddress {
+        pub domain: Option<String>,
+
+        pub ipv4: Option<String>,
+
+        pub ipv6: Option<String>,
     }
 }
 

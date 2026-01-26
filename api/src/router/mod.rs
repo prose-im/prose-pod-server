@@ -1,6 +1,6 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod health;
@@ -8,7 +8,7 @@ mod init;
 mod invitations_util;
 mod lifecycle;
 mod users_util;
-mod workspace;
+pub(crate) mod workspace;
 
 use std::sync::{Arc, Weak};
 
