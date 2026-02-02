@@ -16,6 +16,7 @@ axum = { version = "=0.8.4", default-features = false, features = ["tokio", "htt
 axum-hot-swappable-router = { git = "https://github.com/RemiBardon/axum-hot-swappable-router.git", rev = "26b1a3324dafaa7df05355275c9b878045aebd2d", default-features = false }
 base64 = { version = "=0.22.1", default-features = false }
 figment = { version = "=0.10.19", default-features = false, features = ["env", "toml"] }
+hex = { version = "=0.4.3", default-features = false, features = ["alloc"] }
 init-tracing-opentelemetry = { git = "https://github.com/RemiBardon/rust-tracing-opentelemetry-instrumentation-sdk.git", rev = "85ab4b32e987710f618fa8e4b0f37ea2f3a9f77e", default-features = false, features = [
     "tracing_subscriber_ext",
 ] }
@@ -31,6 +32,7 @@ secrecy = { version = "=0.10.3", default-features = false }
 serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
 serde_json = { version = "=1.0.145", default-features = false }
 serde_with = { version = "=3.14.1", default-features = false, features = ["base64"] }
+sha2 = { version = "=0.10.9", default-features = false }
 strum = { version = "=0.27.2", default-features = false, features = ["derive", "std"] }
 thiserror = { version = "=2.0.17", default-features = false }
 tokio = { version = "=1.47.1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "io-util", "process", "sync", "time"] }
