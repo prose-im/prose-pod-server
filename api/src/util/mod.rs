@@ -6,11 +6,13 @@
 //! Utilities.
 
 mod cache;
+mod proxy;
 mod rw_lock_guards;
 pub mod serde;
 pub mod tracing_subscriber_ext;
 
 pub use cache::Cache;
+pub use proxy::proxy;
 pub use rw_lock_guards::OptionRwLockReadGuard;
 
 #[must_use]
@@ -138,6 +140,16 @@ pub mod rand {
     #[inline]
     pub fn random_id(length: usize) -> String {
         self::random_string_alphanumeric(length)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn random_bytes<const N: usize>() -> [u8; N] {
+        use rand::RngCore as _;
+
+        let mut buf = [0u8; N];
+        rand::rng().fill_bytes(&mut buf);
+        buf
     }
 }
 
@@ -275,6 +287,20 @@ impl Context<crate::responders::Error> for &anyhow::Error {
 }
 
 impl Context<crate::responders::Error> for std::io::Error {
+    fn context(
+        self,
+        internal_error_code: &'static str,
+        public_description: &str,
+    ) -> crate::responders::Error {
+        crate::errors::internal_server_error(
+            &anyhow::Error::new(self),
+            internal_error_code,
+            public_description,
+        )
+    }
+}
+
+impl Context<crate::responders::Error> for reqwest::Error {
     fn context(
         self,
         internal_error_code: &'static str,

@@ -127,6 +127,9 @@ fn default_config_static() -> Figment {
 
         [vendor_analytics.presets.lgpd]
         inherits = "gdpr"
+
+        [proxy]
+        cloud_api_url = "https://prose.org/_api/cloud"
     }
     .to_string();
 
@@ -319,6 +322,7 @@ pub(crate) struct AppConfig {
     pub log: LogConfig,
     #[serde(default)]
     pub policies: PoliciesConfig,
+    pub proxy: ProxyConfig,
     pub server: ServerConfig,
     pub server_api: ServerApiConfig,
     pub service_accounts: ServiceAccountsConfig,
@@ -380,6 +384,20 @@ pub mod policies {
     pub struct PoliciesConfig {
         #[serde(default)]
         pub auto_update_enabled: Option<bool>,
+    }
+}
+
+pub use proxy::*;
+pub mod proxy {
+    use axum::http::Uri;
+    use serde::Deserialize;
+
+    #[derive(Debug)]
+    #[serde_with::serde_as]
+    #[derive(Deserialize)]
+    pub struct ProxyConfig {
+        #[serde_as(as = "serde_with::DisplayFromStr")]
+        pub cloud_api_url: Uri,
     }
 }
 

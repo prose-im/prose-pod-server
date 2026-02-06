@@ -3,6 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use secrecy::SecretSlice;
 use sha2::{Digest, Sha256};
 
 use crate::app_config::{
@@ -13,6 +14,28 @@ use crate::app_config::{
 /// every time we want to add an anallytics event in a client app, the
 /// Prose Pod Server does not parse analytics events. It reads it as JSON
 /// and only overrides what it knows about.
+///
+/// FYI currently events look like:
+///
+/// ```json
+/// {
+///   "name": "account:signin",
+///   "data": {
+///     "credential_type": "password"
+///   },
+///   "origin": {
+///     "app": {
+///       "name": "prose-app-web",
+///       "version": "1.0.1",
+///       "platform": "macos-aarch64"
+///     },
+///     "pod": {
+///       "domain_hash": "f4ce232118cee9d2",
+///       "user_hash": "19a124bd2f89edfe"
+///     }
+///   }
+/// }
+/// ```
 pub type AnalyticsEvent = json::Value;
 
 pub(crate) fn process_event(
@@ -20,7 +43,7 @@ pub(crate) fn process_event(
     config: &VendorAnalyticsConfig,
     pod_domain_value: &str,
     user_count: u64,
-    server_salt: &[u8],
+    server_salt: &SecretSlice<u8>,
 ) -> Option<AnalyticsEvent> {
     // Deconstruct and map names cleverly so
     // `rustc` ensures we don’t forget one key.
@@ -178,13 +201,15 @@ fn user_count_range(user_count: u64) -> (u64, u64) {
     }
 }
 
-fn anonymize(user_hash: &[u8], server_salt: &[u8]) -> String {
+fn anonymize(user_hash: &[u8], server_salt: &SecretSlice<u8>) -> String {
+    use secrecy::ExposeSecret as _;
+
     debug_assert_eq!(user_hash.len(), 16);
 
     let anonymous_hash = {
         let mut hasher = Sha256::new();
         hasher.update(user_hash);
-        hasher.update(server_salt);
+        hasher.update(server_salt.expose_secret());
         hasher.finalize()
     };
     debug_assert!(anonymous_hash.len() > 16);
@@ -245,21 +270,18 @@ mod tests {
 
     #[test]
     fn test_anonymize_user_id() {
-        use secrecy::ExposeSecret as _;
-
-        let server_salt = crate::util::random_secret(256);
-        let server_salt: &[u8] = server_salt.expose_secret().as_bytes();
+        let server_salt: SecretSlice<u8> = crate::util::random_bytes::<256>().to_vec().into();
 
         fn is_lower_hex(s: &str) -> bool {
             s.len() % 2 == 0 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         }
 
         let user1: &[u8] = "d1c2e691c1a0f256".as_bytes();
-        let hash1: String = anonymize(user1, server_salt);
+        let hash1: String = anonymize(user1, &server_salt);
         assert!(is_lower_hex(hash1.as_str()));
 
         let user2: &[u8] = "d4fb3752f9a55da7".as_bytes();
-        let hash2: String = anonymize(user2, server_salt);
+        let hash2: String = anonymize(user2, &server_salt);
         assert!(is_lower_hex(hash2.as_str()));
 
         // Ensure `user_hash` is used (not just `server_hash`).
