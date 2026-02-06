@@ -1,16 +1,18 @@
 // prose-pod-server
 //
-// Copyright: 2024–2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2024–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 //! Utilities.
 
 mod cache;
+mod proxy;
 mod rw_lock_guards;
 pub mod serde;
 pub mod tracing_subscriber_ext;
 
 pub use cache::Cache;
+pub use proxy::proxy;
 pub use rw_lock_guards::OptionRwLockReadGuard;
 
 #[must_use]
@@ -89,6 +91,29 @@ pub fn empty_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     Ok(())
 }
 
+pub fn append_path_segment(
+    uri: &axum::http::Uri,
+    segment: &str,
+) -> Result<axum::http::Uri, axum::http::Error> {
+    use axum::http::uri::PathAndQuery;
+
+    let mut path = uri.path().to_owned();
+
+    if !path.ends_with('/') && !segment.starts_with('/') {
+        path.push('/');
+    }
+    path.push_str(segment);
+
+    let new_path_and_query = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+
+    axum::http::uri::Builder::from(uri.to_owned())
+        .path_and_query(PathAndQuery::from_maybe_shared(new_path_and_query)?)
+        .build()
+}
+
 // MARK: - Random generators
 
 pub use rand::*;
@@ -115,6 +140,16 @@ pub mod rand {
     #[inline]
     pub fn random_id(length: usize) -> String {
         self::random_string_alphanumeric(length)
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn random_bytes<const N: usize>() -> [u8; N] {
+        use rand::RngCore as _;
+
+        let mut buf = [0u8; N];
+        rand::rng().fill_bytes(&mut buf);
+        buf
     }
 }
 
@@ -252,6 +287,20 @@ impl Context<crate::responders::Error> for &anyhow::Error {
 }
 
 impl Context<crate::responders::Error> for std::io::Error {
+    fn context(
+        self,
+        internal_error_code: &'static str,
+        public_description: &str,
+    ) -> crate::responders::Error {
+        crate::errors::internal_server_error(
+            &anyhow::Error::new(self),
+            internal_error_code,
+            public_description,
+        )
+    }
+}
+
+impl Context<crate::responders::Error> for reqwest::Error {
     fn context(
         self,
         internal_error_code: &'static str,

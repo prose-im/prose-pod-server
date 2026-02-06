@@ -377,6 +377,8 @@ pub mod backend {
             pub prosody_rest: ProsodyRest,
             pub oauth2_client: Arc<ProsodyOAuth2>,
             pub secrets_service: SecretsService,
+            pub server_salt: secrecy::SecretSlice<u8>,
+            pub http_client: reqwest::Client,
             #[allow(dead_code)]
             pub cancellation_token: AutoCancelToken,
         }

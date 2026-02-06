@@ -1,13 +1,15 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use anyhow::Context as _;
 use axum::extract::State;
+use axum::http::Uri;
 use axum::routing::{MethodRouter, put};
 use axum::{Json, Router};
 use prosody_rest::prose_xmpp::stanza::VCard4;
+use prosody_rest::prose_xmpp::stanza::vcard4::PropertyContainer;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::prelude::*;
@@ -17,6 +19,9 @@ use crate::state::prelude::*;
 use crate::util::NoContext;
 
 const ACCENT_COLOR_EXTENSION_KEY: &'static str = "x-accent-color";
+const PROSE_POD_DASHBOARD_URL_EXTENSION_KEY: &'static str = "x-prose-pod-dashboard-url";
+const PROSE_POD_API_URL_EXTENSION_KEY: &'static str = "x-prose-pod-api-url";
+const PROSE_AUTO_UPDATE_ENABLED_EXTENSION_KEY: &'static str = "x-prose-auto-update-enabled";
 
 pub(in crate::router) fn router() -> axum::Router<AppState<f::Running, b::Running>> {
     Router::<AppState>::new()
@@ -48,11 +53,22 @@ pub(in crate::router) fn router() -> axum::Router<AppState<f::Running, b::Runnin
 }
 
 #[derive(Debug)]
+#[serde_with::serde_as]
 #[derive(Serialize)]
 struct WorkspaceProfile {
     name: String,
+
     icon: Option<Avatar>,
+
     accent_color: Option<Color>,
+
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>")]
+    prose_pod_dashboard_url: Option<Uri>,
+
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>")]
+    prose_pod_api_url: Option<Uri>,
+
+    auto_update_enabled: Option<bool>,
 }
 
 /// In the Dashboard, one can set the name of their Workspace before creating
@@ -85,17 +101,32 @@ async fn init_workspace(
     }
 
     let ref jid = frontend.config.workspace_jid();
-    let ref creds = service_account_credentials(backend, jid).await?;
+    let ref creds = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
+
+    let dashboard_url = frontend.config.dashboard_url();
+    let api_url = frontend.config.pod_api_url().map_err(|error| {
+        errors::internal_server_error(
+            &error,
+            "WORKSPACE_INITIALIZATION_FAILED",
+            "Could not initialize the Workspace.",
+        )
+    })?;
 
     patch_workspace_vcard_unchecked(
         backend,
         creds,
-        PatchWorkspaceRequest {
+        PatchWorkspaceCommand {
             name: Some(req.name),
             accent_color: req.accent_color.map(Some),
+            prose_pod_dashboard_url: Some(Some(dashboard_url.to_owned())),
+            prose_pod_api_url: Some(Some(api_url)),
+            auto_update_enabled: None,
         },
     )
     .await
+    .no_context()
 }
 
 #[derive(Debug)]
@@ -115,7 +146,9 @@ async fn get_workspace(
     }): State<AppState>,
 ) -> Result<Json<WorkspaceProfile>, Error> {
     let ref jid = frontend.config.workspace_jid();
-    let ref ctx = service_account_credentials(backend, jid).await?;
+    let ref ctx = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     let mut workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
@@ -149,12 +182,18 @@ pub async fn patch_workspace(
     }
 
     let ref jid = frontend.config.workspace_jid();
-    let ref creds = service_account_credentials(backend, jid).await?;
+    let ref creds = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
-    patch_workspace_vcard_unchecked(backend, creds, req).await
+    patch_workspace_vcard_unchecked(backend, creds, req.into())
+        .await
+        .no_context()
 }
 
-#[derive(Debug, Default)]
+/// The body of a HTTP `PATCH` request.
+/// It contains only what a user can change in the Workspace vCard.
+#[derive(Debug)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatchWorkspaceRequest {
@@ -163,6 +202,20 @@ pub struct PatchWorkspaceRequest {
 
     #[serde(default, with = "crate::util::serde::null_as_some_none")]
     pub accent_color: Option<Option<Color>>,
+
+    #[serde(default, with = "crate::util::serde::null_as_some_none")]
+    pub auto_update_enabled: Option<Option<bool>>,
+}
+
+/// What the API itself can change in the Workspace vCard.
+/// This is a superset of [`PatchWorkspaceRequest`].
+#[derive(Debug, Default)]
+pub struct PatchWorkspaceCommand {
+    pub name: Option<String>,
+    pub accent_color: Option<Option<Color>>,
+    pub prose_pod_dashboard_url: Option<Option<Uri>>,
+    pub prose_pod_api_url: Option<Option<Uri>>,
+    pub auto_update_enabled: Option<Option<bool>>,
 }
 
 pub async fn get_workspace_name(
@@ -173,7 +226,9 @@ pub async fn get_workspace_name(
     }): State<AppState>,
 ) -> Result<Json<String>, Error> {
     let ref jid = frontend.config.workspace_jid();
-    let ref ctx = service_account_credentials(backend, jid).await?;
+    let ref ctx = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     let workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
@@ -198,17 +253,20 @@ pub async fn set_workspace_name(
     }
 
     let ref jid = frontend.config.workspace_jid();
-    let ref creds = service_account_credentials(backend, jid).await?;
+    let ref creds = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     patch_workspace_vcard_unchecked(
         backend,
         creds,
-        PatchWorkspaceRequest {
+        PatchWorkspaceCommand {
             name: Some(name),
             ..Default::default()
         },
     )
     .await
+    .no_context()
 }
 
 pub async fn get_workspace_accent_color(
@@ -219,7 +277,9 @@ pub async fn get_workspace_accent_color(
     }): State<AppState>,
 ) -> Result<Json<Option<Color>>, Error> {
     let ref jid = frontend.config.workspace_jid();
-    let ref ctx = service_account_credentials(backend, jid).await?;
+    let ref ctx = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     let workspace = get_workspace_profile_minimal(backend, ctx).await?;
 
@@ -244,17 +304,20 @@ pub async fn set_workspace_accent_color(
     }
 
     let ref jid = frontend.config.workspace_jid();
-    let ref creds = service_account_credentials(backend, jid).await?;
+    let ref creds = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     patch_workspace_vcard_unchecked(
         backend,
         creds,
-        PatchWorkspaceRequest {
+        PatchWorkspaceCommand {
             accent_color: Some(color_opt),
             ..Default::default()
         },
     )
     .await
+    .no_context()
 }
 
 pub async fn get_workspace_icon(
@@ -265,7 +328,9 @@ pub async fn get_workspace_icon(
     }): State<AppState>,
 ) -> Result<Json<Option<Avatar>>, Error> {
     let ref jid = frontend.config.workspace_jid();
-    let ref ctx = service_account_credentials(backend, jid).await?;
+    let ref ctx = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     let icon = match service_account_avatar(backend, ctx).await {
         Ok(Some(avatar)) => Some(avatar),
@@ -297,7 +362,9 @@ pub async fn set_workspace_icon(
     }
 
     let ref jid = frontend.config.workspace_jid();
-    let ref ctx = service_account_credentials(backend, jid).await?;
+    let ref ctx = service_account_credentials(backend, jid)
+        .await
+        .no_context()?;
 
     backend
         .prosody_rest
@@ -313,11 +380,11 @@ pub async fn set_workspace_icon(
 
 #[must_use]
 #[inline]
-async fn service_account_credentials(
+pub(crate) async fn service_account_credentials(
     backend: &backend::Running,
     jid: &BareJid,
-) -> Result<prosody_rest::CallerCredentials, Error> {
-    let token = backend.secrets_service.get_token(jid).await.no_context()?;
+) -> Result<prosody_rest::CallerCredentials, anyhow::Error> {
+    let token = backend.secrets_service.get_token(jid).await?;
     Ok(prosody_rest::CallerCredentials {
         bare_jid: jid.to_owned(),
         auth_token: token.inner().to_owned(),
@@ -329,13 +396,12 @@ async fn service_account_credentials(
 async fn service_account_vcard(
     backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
-) -> Result<Option<VCard4>, Error> {
+) -> Result<Option<VCard4>, anyhow::Error> {
     backend
         .prosody_rest
         .get_vcard(&creds.bare_jid, creds)
         .await
         .context("Could not get service account vCard")
-        .no_context()
 }
 
 /// NOTE: Avatars are not stored in vCards, we need to query them separately.
@@ -364,7 +430,7 @@ async fn get_workspace_profile_minimal(
     backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
 ) -> Result<WorkspaceProfile, Error> {
-    match service_account_vcard(backend, creds).await? {
+    match service_account_vcard(backend, creds).await.no_context()? {
         Some(vcard) => WorkspaceProfile::try_from(vcard),
         None => Err(workspace_not_initialized_error("No vCard.")),
     }
@@ -372,11 +438,17 @@ async fn get_workspace_profile_minimal(
 
 #[must_use]
 #[inline]
-async fn patch_workspace_vcard_unchecked(
+pub(crate) async fn patch_workspace_vcard_unchecked(
     backend: &backend::Running,
     creds: &prosody_rest::CallerCredentials,
-    req: PatchWorkspaceRequest,
-) -> Result<(), Error> {
+    PatchWorkspaceCommand {
+        name,
+        accent_color,
+        prose_pod_dashboard_url,
+        prose_pod_api_url,
+        auto_update_enabled,
+    }: PatchWorkspaceCommand,
+) -> Result<(), anyhow::Error> {
     use prosody_rest::minidom::Element;
     use prosody_rest::prose_xmpp::ns;
     use prosody_rest::prose_xmpp::stanza::vcard4;
@@ -384,34 +456,90 @@ async fn patch_workspace_vcard_unchecked(
     let mut vcard = service_account_vcard(backend, creds)
         .await?
         .unwrap_or_default();
+    let vcard_before = vcard.clone();
 
-    if let Some(name) = req.name {
+    if let Some(name) = name {
         vcard.fn_ = vec![vcard4::Fn_ { value: name }];
     }
 
-    if let Some(color_opt) = req.accent_color {
-        // FIXME: Do not override all unknown properties! Improve the `prose_xmpp`
-        //   API to expose mutating methods and use it here instead.
-        match color_opt {
-            Some(color) => {
-                vcard.unknown_properties = vec![
-                    Element::builder(ACCENT_COLOR_EXTENSION_KEY, ns::VCARD4)
-                        .append(Element::builder("text", ns::VCARD4).append(color.to_string()))
-                        .build(),
-                ]
-                .into_iter()
-                .collect()
+    #[must_use]
+    fn replace(
+        unknown_properties: PropertyContainer,
+        key: &'static str,
+        new_value: Option<Option<impl ToString>>,
+    ) -> PropertyContainer {
+        match new_value {
+            // Set to a new value.
+            Some(Some(new_value)) => {
+                let new_element = || {
+                    Element::builder(key, ns::VCARD4)
+                        .append(Element::builder("text", ns::VCARD4).append(new_value.to_string()))
+                        .build()
+                };
+
+                let mut found = false;
+                let mut unknown_properties = unknown_properties
+                    .into_iter()
+                    // Replace existing value to keep ordering intact.
+                    // NOTE: This is important so we can check if changes have
+                    //   been made to the vCard to skip unnecessary updates.
+                    .map(|element| {
+                        if element.name() == key {
+                            found = true;
+                            new_element()
+                        } else {
+                            element
+                        }
+                    })
+                    .collect::<PropertyContainer>();
+
+                if !found {
+                    unknown_properties.push(new_element());
+                }
+
+                unknown_properties
             }
-            None => vcard.unknown_properties = Default::default(),
-        };
+
+            // Remove existing value.
+            Some(None) => unknown_properties
+                .into_iter()
+                .filter(|e| e.name() != key)
+                .collect::<PropertyContainer>(),
+
+            // Do nothing.
+            None => unknown_properties,
+        }
     }
 
-    backend
-        .prosody_rest
-        .set_own_vcard(vcard, creds)
-        .await
-        .context("Could not set Workspace vCard")
-        .no_context()?;
+    // TODO: Improve the `prose_xmpp` API to expose mutating methods not to
+    //   force a new value to be created (potentially removing values by
+    //   mistake!) and use it instead.
+    let mut unknown_properties = vcard.unknown_properties;
+    unknown_properties = replace(unknown_properties, ACCENT_COLOR_EXTENSION_KEY, accent_color);
+    unknown_properties = replace(
+        unknown_properties,
+        PROSE_POD_DASHBOARD_URL_EXTENSION_KEY,
+        prose_pod_dashboard_url,
+    );
+    unknown_properties = replace(
+        unknown_properties,
+        PROSE_POD_API_URL_EXTENSION_KEY,
+        prose_pod_api_url,
+    );
+    unknown_properties = replace(
+        unknown_properties,
+        PROSE_AUTO_UPDATE_ENABLED_EXTENSION_KEY,
+        auto_update_enabled,
+    );
+    vcard.unknown_properties = unknown_properties;
+
+    if vcard != vcard_before {
+        backend
+            .prosody_rest
+            .set_own_vcard(vcard, creds)
+            .await
+            .context("Could not set Workspace vCard")?;
+    }
 
     Ok(())
 }
@@ -430,32 +558,72 @@ pub fn workspace_not_initialized_error(error: impl std::fmt::Display) -> Error {
 
 // MARK: - Plumbing
 
+impl From<PatchWorkspaceRequest> for PatchWorkspaceCommand {
+    fn from(
+        PatchWorkspaceRequest {
+            name,
+            accent_color,
+            auto_update_enabled,
+        }: PatchWorkspaceRequest,
+    ) -> Self {
+        Self {
+            name,
+            accent_color,
+            prose_pod_dashboard_url: None,
+            prose_pod_api_url: None,
+            auto_update_enabled,
+        }
+    }
+}
+
 impl TryFrom<prosody_rest::prose_xmpp::stanza::VCard4> for WorkspaceProfile {
     type Error = responders::Error;
 
     fn try_from(vcard: prosody_rest::prose_xmpp::stanza::VCard4) -> Result<Self, Self::Error> {
-        use std::str::FromStr as _;
-
         let Some(name) = vcard.fn_.first() else {
             return Err(workspace_not_initialized_error("Missing name."));
         };
+
+        fn get_unknown_property<T: std::str::FromStr>(
+            unknown_properties: &PropertyContainer,
+            key: &'static str,
+        ) -> Option<T>
+        where
+            T::Err: std::fmt::Display,
+        {
+            unknown_properties
+                .get(ACCENT_COLOR_EXTENSION_KEY)
+                .first()
+                .map(|v| {
+                    T::from_str(&v.text())
+                        .inspect_err(|err| {
+                            tracing::warn!("Invalid value for '{key}' in Workspace vCard: {err}")
+                        })
+                        .ok()
+                })
+                .flatten()
+        }
 
         Ok(Self {
             name: name.value.to_owned(),
             // Avatars are not stored in vCards.
             icon: None,
-            accent_color: vcard
-                .unknown_properties
-                .get(ACCENT_COLOR_EXTENSION_KEY)
-                .first()
-                .map(|v| {
-                    Color::from_str(&v.text())
-                        .inspect_err(|err| {
-                            tracing::warn!("Invalid accent color stored in Workspace vCard: {err}")
-                        })
-                        .ok()
-                })
-                .flatten(),
+            accent_color: get_unknown_property(
+                &vcard.unknown_properties,
+                ACCENT_COLOR_EXTENSION_KEY,
+            ),
+            prose_pod_dashboard_url: get_unknown_property(
+                &vcard.unknown_properties,
+                PROSE_POD_DASHBOARD_URL_EXTENSION_KEY,
+            ),
+            prose_pod_api_url: get_unknown_property(
+                &vcard.unknown_properties,
+                PROSE_POD_API_URL_EXTENSION_KEY,
+            ),
+            auto_update_enabled: get_unknown_property(
+                &vcard.unknown_properties,
+                PROSE_AUTO_UPDATE_ENABLED_EXTENSION_KEY,
+            ),
         })
     }
 }

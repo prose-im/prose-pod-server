@@ -1,12 +1,12 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::collections::HashMap;
 use std::fs::{self, remove_dir_all};
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -16,6 +16,7 @@ use prosody_http::ProsodyHttpConfig;
 use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2};
 use prosody_rest::ProsodyRest;
 use prosodyctl::Prosodyctl;
+use secrecy::SecretSlice;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,7 @@ use crate::state::prelude::*;
 use crate::util::unix_timestamp;
 use crate::{AppConfig, errors};
 
+pub(crate) const SERVER_DATA_DIR: &'static str = "/var/lib/prose-pod-server";
 const PROSODY_CONFIG_FILE_PATH: &'static str = "/etc/prosody/prosody.cfg.lua";
 const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
@@ -45,6 +47,8 @@ impl AppState<f::Running, b::Starting> {
         let ref server_domain = app_config.server.domain;
 
         create_required_dirs()?;
+
+        let server_salt = generate_server_salt_if_needed()?;
 
         backup_prosody_conf_if_needed()?;
 
@@ -118,18 +122,22 @@ impl AppState<f::Running, b::Starting> {
             synchronize_rosters(&mut prosodyctl, group_ids, server_domain).await?;
         }
 
-        run_migrations(&mut prosodyctl).await?;
-
-        Ok(b::Running {
+        let backend = b::Running {
             state: Arc::new(b::Operational {
                 prosody: Arc::new(RwLock::new(prosody)),
                 prosodyctl: Arc::new(RwLock::new(prosodyctl)),
                 prosody_rest,
                 oauth2_client,
                 secrets_service: secrets,
+                http_client: reqwest::Client::new(),
+                server_salt,
                 cancellation_token: AutoCancelToken(cancellation_token),
             }),
-        })
+        };
+
+        run_migrations(app_config, &backend).await?;
+
+        Ok(backend)
     }
 
     /// Try bootstrapping the backend, but do not transition if an error occurs.
@@ -188,12 +196,46 @@ impl AppState<f::Running, b::Starting> {
 // MARK: - Steps
 
 fn create_required_dirs() -> Result<(), anyhow::Error> {
+    fs::create_dir_all(SERVER_DATA_DIR).context(format!(
+        "Could not create Prose Pod Server data dir at <{path}>",
+        path = SERVER_DATA_DIR,
+    ))?;
     fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
         "Could not create Prosody certs dir at <{path}>",
         path = PROSODY_CERTS_DIR,
     ))?;
 
     Ok(())
+}
+
+#[must_use]
+fn generate_server_salt_if_needed() -> Result<SecretSlice<u8>, anyhow::Error> {
+    use crate::util::random_bytes;
+    use std::fs::File;
+    use std::io::{Read as _, Write as _};
+
+    let salt_path = server_salt_path();
+
+    const SALT_LENGTH: usize = 256;
+
+    if salt_path.exists() {
+        let mut file = File::open(salt_path).context("Error opening Server salt file")?;
+
+        // COMPAT: Read to `Vec` and not `[u8; 256]` as length might change
+        //   in a future version.
+        let mut salt = Vec::with_capacity(SALT_LENGTH);
+        file.read_to_end(&mut salt)
+            .context("Error reading Server salt")?;
+
+        Ok(SecretSlice::from(salt))
+    } else {
+        let salt = random_bytes::<SALT_LENGTH>();
+
+        let mut file = File::create_new(salt_path).context("Error opening Server salt file")?;
+        file.write_all(&salt).context("Error writing Server salt")?;
+
+        Ok(SecretSlice::from(salt.to_vec()))
+    }
 }
 
 fn backup_prosody_conf_if_needed() -> Result<(), anyhow::Error> {
@@ -505,8 +547,14 @@ where
     Ok(())
 }
 
-async fn run_migrations(prosodyctl: &mut Prosodyctl) -> Result<(), anyhow::Error> {
-    let prosody_data_dir = prosodyctl.prosody_paths_data().await?;
+async fn run_migrations(
+    app_config: &AppConfig,
+    backend: &backend::Running,
+) -> Result<(), anyhow::Error> {
+    let prosody_data_dir = {
+        let mut prosodyctl = backend.prosodyctl.write().await;
+        prosodyctl.prosody_paths_data().await?
+    };
 
     // Delete foundations of the previous architecture.
     {
@@ -522,6 +570,31 @@ async fn run_migrations(prosodyctl: &mut Prosodyctl) -> Result<(), anyhow::Error
                 path = path.display()
             );
         }
+    }
+
+    // Update Workspace vCard
+    {
+        use crate::router::workspace::{
+            PatchWorkspaceCommand, patch_workspace_vcard_unchecked, service_account_credentials,
+        };
+
+        let ref jid = app_config.workspace_jid();
+        let ref creds = service_account_credentials(backend, jid).await?;
+
+        let dashboard_url = app_config.dashboard_url();
+        let api_url = app_config.pod_api_url()?;
+
+        patch_workspace_vcard_unchecked(
+            backend,
+            creds,
+            PatchWorkspaceCommand {
+                prose_pod_dashboard_url: Some(Some(dashboard_url.to_owned())),
+                prose_pod_api_url: Some(Some(api_url)),
+                auto_update_enabled: Some(app_config.policies.auto_update_enabled),
+                ..Default::default()
+            },
+        )
+        .await?;
     }
 
     Ok(())
@@ -552,6 +625,12 @@ impl Groups {
 
         Self(data)
     }
+}
+
+// MARK: - Helpers
+
+pub(crate) fn server_salt_path() -> PathBuf {
+    Path::new(SERVER_DATA_DIR).join("salt.bin")
 }
 
 // MARK: - Boilerplate

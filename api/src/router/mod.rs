@@ -1,19 +1,21 @@
 // prose-pod-server
 //
-// Copyright: 2025, Rémi Bardon <remi@remibardon.name>
+// Copyright: 2025–2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod analytics;
+mod cloud_api_proxy;
 mod health;
 mod init;
 mod invitations_util;
 mod lifecycle;
 mod users_util;
-mod workspace;
+pub(crate) mod workspace;
 
 use std::sync::{Arc, Weak};
 
 use axum::Router;
-use axum::routing::{get, post, put};
+use axum::routing::{MethodRouter, any, get, post, put};
 use prosody_child_process::ProsodyChildProcess;
 use tokio::sync::RwLock;
 
@@ -79,6 +81,16 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             )
             .route("/lifecycle/reload", post(lifecycle::reload))
             .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
+            .route(
+                "/cloud-api-proxy/v1/analytics/event",
+                MethodRouter::new()
+                    .post(analytics::proxy_analytics_event)
+                    .fallback(cloud_api_proxy::proxy_cloud_api),
+            )
+            .route(
+                "/cloud-api-proxy/{*path}",
+                any(cloud_api_proxy::proxy_cloud_api),
+            )
             .merge(workspace::router())
             .with_state(self)
     }
