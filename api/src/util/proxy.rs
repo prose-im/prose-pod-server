@@ -54,7 +54,7 @@ pub async fn proxy(
             }
         }
 
-        tracing::debug!("Reverse proxying `{request_uri}` to `{upstream_url}`: {req:#?}");
+        tracing::debug!("Proxying `{request_uri}` to `{upstream_url}`: {req:#?}");
 
         req.body(reqwest::Body::wrap_stream(request_body.into_data_stream()))
     };
