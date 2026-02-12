@@ -99,7 +99,7 @@ fn should_forward_header(name: &HeaderName) -> bool {
 /// [“hop-by-hop headers” on HackTricks]: https://book.hacktricks.wiki/en/pentesting-web/abusing-hop-by-hop-headers.html
 fn is_hop_by_hop(name: &HeaderName) -> bool {
     matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
+        name.as_str(),
         "connection"
             | "keep-alive"
             | "proxy-authenticate"
@@ -112,8 +112,5 @@ fn is_hop_by_hop(name: &HeaderName) -> bool {
 }
 
 fn has_source_ip(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
-        "x-forwarded-for" | "x-real-ip"
-    )
+    matches!(name.as_str(), "x-forwarded-for" | "x-real-ip")
 }
