@@ -44,6 +44,16 @@ tower = { version = "=0.5.2", default-features = false }
 tracing = { version = "=0.1.41", default-features = false }
 tracing-subscriber = { version = "=0.3.20", default-features = false, features = ["fmt", "env-filter", "ansi", "tracing-log"] }
 
+[dependencies.bytes]
+# https://github.com/advisories/GHSA-434x-w66g-qw3r
+version = "=1.11.1"
+optional = true
+
+[dependencies.time]
+# https://github.com/advisories/GHSA-r6v5-fh4h-64xc
+version = "=0.3.47"
+optional = true
+
 [dev-dependencies]
 axum = { version = "*", features = ["macros"] }
 
