@@ -130,6 +130,7 @@ fn default_config_static() -> Figment {
 
         [proxy]
         cloud_api_url = "https://prose.org/_api/cloud"
+        prose_files_url = "https://files.prose.org"
     }
     .to_string();
 
@@ -398,6 +399,9 @@ pub mod proxy {
     pub struct ProxyConfig {
         #[serde_as(as = "serde_with::DisplayFromStr")]
         pub cloud_api_url: Uri,
+
+        #[serde_as(as = "serde_with::DisplayFromStr")]
+        pub prose_files_url: Uri,
     }
 }
 
