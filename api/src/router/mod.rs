@@ -9,6 +9,7 @@ mod health;
 mod init;
 mod invitations_util;
 mod lifecycle;
+mod prose_files_proxy;
 mod users_util;
 pub(crate) mod workspace;
 
@@ -90,6 +91,10 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             .route(
                 "/cloud-api-proxy/{*path}",
                 any(cloud_api_proxy::proxy_cloud_api),
+            )
+            .route(
+                "/prose-files-proxy/{*path}",
+                any(prose_files_proxy::proxy_prose_files),
             )
             .merge(workspace::router())
             .with_state(self)

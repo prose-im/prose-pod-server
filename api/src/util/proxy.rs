@@ -46,13 +46,15 @@ pub async fn proxy(
             }
         };
 
-        let mut req = backend.http_client.request(request_method, upstream_url);
+        let mut req = backend.http_client.request(request_method, &upstream_url);
 
         for (name, value) in request_headers.iter() {
             if should_forward_header(name) {
                 req = req.header(name, value);
             }
         }
+
+        tracing::debug!("Reverse proxying `{request_uri}` to `{upstream_url}`: {req:#?}");
 
         req.body(reqwest::Body::wrap_stream(request_body.into_data_stream()))
     };
@@ -86,7 +88,11 @@ pub async fn proxy(
 }
 
 fn should_forward_header(name: &HeaderName) -> bool {
-    !is_hop_by_hop(name) && !has_source_ip(name)
+    !is_hop_by_hop(name)
+        && !has_source_ip(name)
+        // Do not forward `Host` as the destination might reject it (e.g.
+        // `files.prose.org` rejects `Host:127.0.0.1:8080` when running tests).
+        && !matches!(name.as_str(), "host")
 }
 
 /// Whether or not a header is a hop-by-hop header.
@@ -99,7 +105,7 @@ fn should_forward_header(name: &HeaderName) -> bool {
 /// [“hop-by-hop headers” on HackTricks]: https://book.hacktricks.wiki/en/pentesting-web/abusing-hop-by-hop-headers.html
 fn is_hop_by_hop(name: &HeaderName) -> bool {
     matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
+        name.as_str(),
         "connection"
             | "keep-alive"
             | "proxy-authenticate"
@@ -112,8 +118,5 @@ fn is_hop_by_hop(name: &HeaderName) -> bool {
 }
 
 fn has_source_ip(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
-        "x-forwarded-for" | "x-real-ip"
-    )
+    matches!(name.as_str(), "x-forwarded-for" | "x-real-ip")
 }
