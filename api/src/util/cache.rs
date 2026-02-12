@@ -4,6 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 
@@ -66,14 +67,14 @@ where
         Poll::Ready(())
     }
 
-    pub async fn purge_task(cache: Arc<tokio::sync::RwLock<Self>>) {
+    pub async fn purge_task(cache: Arc<tokio::sync::RwLock<Self>>) -> Result<(), Infallible> {
         use std::task::Waker;
 
         let ttl = cache.read().await.ttl.clone();
 
         // NOTE: A TTL of 0 is used in tests.
         if ttl.is_zero() {
-            return;
+            return Ok(());
         }
 
         let mut interval = tokio::time::interval(ttl);
