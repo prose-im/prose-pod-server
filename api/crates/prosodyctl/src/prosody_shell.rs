@@ -57,15 +57,25 @@ impl ProsodyShell {
         }
     }
 
-    /// 200ms is enough: Prosody is fast and running on the same machine.
+    /// Prosody is fast and running on the same machine; most commands should
+    /// run in less than 200ms. To avoid over-triggering crashes in production,
+    /// we put a higher limit in release builds. Inversely, this limit is quite
+    /// low in debug builds to help us catch issues which might get lost in logs
+    /// otherwise.
+    #[cfg(debug_assertions)]
     const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
+    #[cfg(not(debug_assertions))]
+    const DEFAULT_TIMEOUT: Duration = Duration::from_millis(5000);
 
     /// Some actions are O(n^2) and take longer. This timeout can be used then.
+    #[cfg(debug_assertions)]
     const LONG_TIMEOUT: Duration = Duration::from_secs(10);
+    #[cfg(not(debug_assertions))]
+    const LONG_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// If a command takes more than this duration to execute,
     /// log execution time.
-    const EXEC_LOG_THRESHOLD: Duration = Duration::from_millis(1000);
+    const EXEC_LOG_THRESHOLD: Duration = Duration::from_millis(500);
 
     /// Execute a command.
     #[must_use]
