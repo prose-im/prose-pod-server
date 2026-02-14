@@ -52,6 +52,12 @@ impl AppState<f::Running, b::Running> {
         // Reload Prosody modules (not done automatically).
         let main_host = self.frontend.config.server.domain.as_str();
         let mut prosodyctl = self.backend.prosodyctl.write().await;
+
+        prosodyctl
+            .wait_for_readiness()
+            .await
+            .unwrap_or_else(|err| debug_panic_or_log_error!("{err:?}"));
+
         // TODO: Impact of runnning every time?
         match prosodyctl.module_load_modules_for_host(main_host).await {
             Ok(()) => drop(prosodyctl),

@@ -70,6 +70,8 @@ impl AppState<f::Running, b::Starting> {
 
         let mut prosodyctl = Prosodyctl::new();
 
+        prosodyctl.wait_for_readiness().await?;
+
         let cancellation_token = CancellationToken::new();
 
         let prosody_rest = ProsodyRest::standard(app_config.server.http_url());

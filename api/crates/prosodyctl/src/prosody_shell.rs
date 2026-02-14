@@ -304,6 +304,25 @@ impl ProsodyShell {
 
         Ok(response.result.map_err(anyhow::Error::msg)?)
     }
+
+    /// Waits for Prosody to be ready after it starts.
+    ///
+    /// While starting up, Prosody loads modules and runs some initialization
+    /// logic. Sometimes, if a command which should be instantaneous is ran too
+    /// soon it ends up timing out.
+    /// This ensures Prosody is ready to receive shell commands.
+    ///
+    /// Note that this method is empirical and might not work reliably.
+    /// It seems to work, but I (@RemiBardon) don’t really know why.
+    #[tracing::instrument(level = "trace", skip_all, err)]
+    pub async fn wait_for_readiness(&mut self) -> anyhow::Result<()> {
+        let command = format!(r#"> not not prosody"#);
+
+        self.exec_with_timeout(&command, Self::LONG_TIMEOUT)
+            .await
+            .context("Error waiting for Prosody readiness")
+            .map(drop)
+    }
 }
 
 // usermanager
