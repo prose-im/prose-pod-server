@@ -229,7 +229,7 @@ fn generate_server_salt_if_needed() -> Result<SecretSlice<u8>, anyhow::Error> {
     } else {
         let salt = random_bytes::<SALT_LENGTH>();
 
-        let mut file = File::create_new(salt_path).context("Error opening Server salt file")?;
+        let mut file = File::create_new(salt_path).context("Error creating Server salt file")?;
         file.write_all(&salt).context("Error writing Server salt")?;
 
         Ok(SecretSlice::from(salt.to_vec()))
