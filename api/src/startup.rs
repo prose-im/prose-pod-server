@@ -198,10 +198,6 @@ impl AppState<f::Running, b::Starting> {
 // MARK: - Steps
 
 fn create_required_dirs() -> Result<(), anyhow::Error> {
-    fs::create_dir_all(SERVER_DATA_DIR).context(format!(
-        "Could not create Prose Pod Server data dir at <{path}>",
-        path = SERVER_DATA_DIR,
-    ))?;
     fs::create_dir_all(PROSODY_CERTS_DIR).context(format!(
         "Could not create Prosody certs dir at <{path}>",
         path = PROSODY_CERTS_DIR,
