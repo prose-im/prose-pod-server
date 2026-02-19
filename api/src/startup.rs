@@ -343,6 +343,12 @@ async fn register_oauth2_client(
     Ok(client_metadata.into_credentials())
 }
 
+// NOTE: [Prosody’s built-in roles](https://prosody.im/doc/roles#built-in-roles)
+//   don’t have a concept of non-user account. Until we have our own roles,
+//   we will create service accounts as if it were normal users.
+// TODO: Use special role for service accounts.
+pub(crate) const SERVICE_ACCOUNT_ROLE: &'static str = "prosody:registered";
+
 /// Creates the “prose-workspace” user for now, maybe more later.
 async fn create_service_accounts(
     app_config: &AppConfig,
@@ -353,11 +359,7 @@ async fn create_service_accounts(
 ) -> Result<Vec<BareJid>, anyhow::Error> {
     use prosody_rest::prose_xmpp::stanza::{VCard4, vcard4};
 
-    // NOTE: [Prosody’s built-in roles](https://prosody.im/doc/roles#built-in-roles)
-    //   don’t have a concept of non-user account. Until we have our own roles,
-    //   we will create service accounts as if it were normal users.
-    // TODO: Use special role for service accounts.
-    let role = "prosody:registered";
+    let role = SERVICE_ACCOUNT_ROLE;
 
     // Read service accounts credentials from app configuration.
     let accounts: Vec<(BareJid, String, Option<Password>)> = vec![(
