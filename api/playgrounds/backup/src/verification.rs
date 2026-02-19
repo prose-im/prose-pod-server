@@ -322,7 +322,7 @@ mod sha {
     }
 }
 
-mod pgp {
+pub mod pgp {
     use std::{
         fs::File,
         io::{self, Write},

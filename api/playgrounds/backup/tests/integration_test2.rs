@@ -28,7 +28,7 @@ fn backup_enc_none_sig_hash() -> Result<(), Box<dyn Error>> {
         archiving_config,
         compression_config,
         encryption_config,
-        integrity_config,
+        hashing_config: integrity_config,
         sink,
         source,
     };

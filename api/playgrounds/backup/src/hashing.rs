@@ -14,14 +14,14 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{CreateBackupError, ObjectStore, ProseBackupService, writer_chain::WriterChainBuilder};
 
-pub(crate) enum IntegrityWriterBuilder {
+pub(crate) enum DigestWriterBuilder {
     Sha256,
 }
 
 impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn digest<'w, W, OuterWriter>(
         self,
-        config: &IntegrityWriterBuilder,
+        config: &DigestWriterBuilder,
     ) -> WriterChainBuilder<
         impl FnOnce(W) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,
@@ -36,7 +36,7 @@ impl<M, F> WriterChainBuilder<M, F> {
         WriterChainBuilder {
             make: move |writer| {
                 let writer = match config {
-                    IntegrityWriterBuilder::Sha256 => IntegrityWriter::Sha256 {
+                    DigestWriterBuilder::Sha256 => IntegrityWriter::Sha256 {
                         hasher: Sha256::new(),
                         writer,
                     },

@@ -20,14 +20,14 @@
 /// # Default is `3`.
 /// zstd_compression_level = 3
 ///
-/// [integrity]
+/// [hashing]
 /// algorithm = "SHA-256"
 ///
 /// # By default, backups are not signed as it requires an
 /// # signing key to be configured. This is where it is done.
-/// [signature]
-/// # Default is `false` (opt-in). Also configure `signature.mode`
-/// # and `signature.<mode>` when enabling signing.
+/// [signing]
+/// # Default is `false` (opt-in). Also configure `signing.mode`
+/// # and `signing.<mode>` when enabling signing.
 /// enabled = true
 /// # `true` makes it impossible to restore a non-signed backup.
 /// # Default is `false` (opt-in).
@@ -69,8 +69,8 @@
 pub struct BackupConfig {
     pub archiving: ArchivingConfig,
     pub compression: CompressionConfig,
-    pub intergity: IntegrityConfig,
-    pub signature: SignatureConfig,
+    pub hashing: HashingConfig,
+    pub signing: SigningConfig,
     pub encryption: EncryptionConfig,
 }
 
@@ -90,36 +90,36 @@ pub struct CompressionConfig {
     pub zstd_compression_level: i32,
 }
 
-// MARK: Integrity
+// MARK: Hashing
 
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub struct IntegrityConfig {
-    pub algorithm: IntegrityAlgorithm,
+pub struct HashingConfig {
+    pub algorithm: HashingAlgorithm,
 }
 
 #[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub enum IntegrityAlgorithm {
+pub enum HashingAlgorithm {
     #[serde(rename = "SHA-256")]
     Sha256,
 }
 
-// MARK: Signature
+// MARK: Signing
 
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub struct SignatureConfig {
+pub struct SigningConfig {
     pub enabled: bool,
     pub mandatory: bool,
-    pub mode: SignatureMode,
+    pub mode: SigningMode,
 }
 
 #[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub enum SignatureMode {
+pub enum SigningMode {
     #[serde(rename = "gpg")]
     Gpg,
 }

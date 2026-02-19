@@ -10,16 +10,16 @@
 use std::io::{self, Write};
 
 use anyhow::Context as _;
-use openpgp::parse::stream::*;
 
 use crate::{
     CreateBackupError, ObjectStore, ProseBackupService,
-    signing::gpg::{PgpSignatureWriter, PgpVerificationHelper},
+    signing::gpg::PgpSignatureWriter,
+    verification::{BackupVerifier, pgp::PgpVerificationHelper},
     writer_chain::WriterChainBuilder,
 };
 
 pub(crate) enum SignatureWriterBuilder<'a> {
-    Gpg(&'a PgpVerificationHelper),
+    Gpg(&'a PgpVerificationHelper<'a>),
 }
 
 impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
@@ -40,7 +40,7 @@ where
             .await
             .context("Could not open backup reader")?;
 
-        let mut verifier = BackupVerifier::new(self.integrity_config.as_ref());
+        let mut verifier = BackupVerifier::new(self.hashing_config.as_ref());
         std::io::copy(&mut backup_reader, &mut verifier.writer).context("Could not read backup")?;
 
         let mut integrity_check_reader = self
@@ -133,7 +133,7 @@ impl<'a> Write for SignatureWriter<'a> {
 enum Signer<'a> {
     /// Integrity and authenticity using an OpenPGP key.
     Gpg {
-        helper: &'a PgpVerificationHelper,
+        helper: &'a PgpVerificationHelper<'a>,
         buffer: std::io::Cursor<Vec<u8>>,
     },
 }
@@ -182,13 +182,9 @@ impl<'a> Write for Signer<'a> {
 // }
 
 mod gpg {
-    use std::{
-        io::{self, Write},
-        sync::Arc,
-    };
+    use std::io::{self, Write};
 
     use anyhow::Context as _;
-    use openpgp::parse::stream::*;
 
     /// OpenPGP signature writer.
     pub struct PgpSignatureWriter<'a> {
@@ -196,7 +192,7 @@ mod gpg {
     }
 
     impl<'a> PgpSignatureWriter<'a> {
-        fn new<W>(writer: W, cert: &openpgp::Cert) -> Result<Self, anyhow::Error>
+        pub fn new<W>(writer: W, cert: &openpgp::Cert) -> Result<Self, anyhow::Error>
         where
             W: Write + Send + Sync + 'a,
         {
@@ -221,7 +217,7 @@ mod gpg {
     }
 
     impl<'a> PgpSignatureWriter<'a> {
-        fn finalize(self) -> Result<(), anyhow::Error> {
+        pub fn finalize(self) -> Result<(), anyhow::Error> {
             // TODO: Try to `.build()` before? Would it work?
             //   Try and make sure nothing breaks.
             self.signer.build()?.finalize()

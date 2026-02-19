@@ -65,7 +65,7 @@ async fn main() -> Result<(), anyhow::Error> {
         archiving_config,
         compression_config,
         encryption_config,
-        integrity_config,
+        hashing_config,
         backup_store,
         check_store,
     };
