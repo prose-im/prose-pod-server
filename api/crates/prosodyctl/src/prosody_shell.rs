@@ -138,6 +138,7 @@ impl ProsodyShellHandle {
         let imports = vec![
             r#"> it = require"prosody.util.iterators""#,
             r#"> dump = require"prosody.util.serialization".new({ preset = "oneline" })"#,
+            r#"> array = require"prosody.util.array""#,
             r#"> mm = require"core.modulemanager""#,
             r#"> um = require"core.usermanager""#,
         ];
