@@ -4,11 +4,13 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 extern crate aws_sdk_s3 as s3;
-extern crate sequoia_openpgp as openpgp;
+pub extern crate sequoia_openpgp as openpgp;
+extern crate serde_json as json;
 
 mod archiving;
 mod compression;
 pub mod config;
+#[cfg(false)]
 mod decryption;
 mod encryption;
 mod gpg;
@@ -17,36 +19,34 @@ mod signing;
 mod stats;
 pub mod stores;
 mod util;
+#[cfg(false)]
 mod verification;
 mod writer_chain;
 
-use std::{borrow::Cow, io::Read as _, path::Path};
+use std::borrow::Cow;
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use bytes::Bytes;
 
 use crate::{
-    archiving::{
-        ArchivingBlueprint, ExtractionSuccess, check_archiving_will_succeed, extract_archive,
-    },
+    archiving::{ArchivingBlueprint, check_archiving_will_succeed},
     config::SigningConfig,
-    stats::{StatsReader, print_stats},
+    hashing::Sha256DigestWriter,
+    signing::PgpSignatureWriter,
     stores::{ObjectStore, S3Store},
-    util::unix_timestamp,
-    verification::{IntegrityCheck, VerificationHelper, pre_validate_integrity_checks},
 };
 
 pub use self::{
     archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
     config::{ArchivingConfig, BackupConfig, CompressionConfig, EncryptionConfig, HashingConfig},
-    decryption::DecryptionHelper,
     encryption::EncryptionHelper,
+    signing::SigningHelper,
 };
 
 // MARK: Service
 
-pub type BackupService<'s, BackupStore = S3Store, CheckStore = S3Store> =
-    ProseBackupService<'s, BackupStore, CheckStore>;
+pub type BackupService<'service, BackupStore = S3Store, CheckStore = S3Store> =
+    ProseBackupService<'service, BackupStore, CheckStore>;
 
 /// ```text
 /// ## Create backup
@@ -71,23 +71,36 @@ pub type BackupService<'s, BackupStore = S3Store, CheckStore = S3Store> =
 /// Tests:
 ///   -> FileSink
 /// ```
-pub struct ProseBackupService<'s, BackupStore, CheckStore> {
+pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub fs_root: std::path::PathBuf,
+
     pub archiving_config: ArchivingConfig,
     pub compression_config: CompressionConfig,
     pub encryption_config: EncryptionConfig,
     pub hashing_config: HashingConfig,
     pub signing_config: Option<SigningConfig>,
-    pub encryption_helper: Option<EncryptionHelper<'s>>,
-    pub verification_helper: VerificationHelper<'s>,
+
+    pub encryption_helper: Option<EncryptionHelper<'service>>,
+    pub signing_helper: Option<SigningHelper<'service>>,
+    #[cfg(false)]
     pub decryption_helper: DecryptionHelper,
+    #[cfg(false)]
+    pub verification_helper: VerificationHelper<'service>,
+
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
 }
 
 // MARK: Create backup
 
-impl<'s, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'s, S1, S2> {
+#[derive(Debug)]
+pub struct CreateBackupOutput {
+    pub backup_id: String,
+    pub digest_ids: Vec<String>,
+    pub signature_ids: Vec<String>,
+}
+
+impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
     /// Everything is done in a single stream of the following shape:
     ///
     /// ```text
@@ -131,16 +144,16 @@ impl<'s, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'s, S1, S2> {
     /// ```
     pub async fn create_backup(
         &self,
-        backup_name: &str,
+        description: &str,
         prose_pod_api_data: Bytes,
-    ) -> Result<(String, String), CreateBackupError> {
+    ) -> Result<CreateBackupOutput, CreateBackupError> {
         // ///
-        use openpgp::parse::Parse as _;
+        // use openpgp::parse::Parse as _;
 
-        let cert = openpgp::Cert::from_file(&config.key)
-            .context("Cannot read OpenPGP cert")
-            .map_err(CreateBackupError::CannotEncrypt)?;
-        let helper = GpgHelper::new(cert);
+        // let cert = openpgp::Cert::from_file(&config.key)
+        //     .context("Cannot read OpenPGP cert")
+        //     .map_err(CreateBackupError::CannotEncrypt)?;
+        // let helper = GpgHelper::new(cert);
         // ///
 
         let archiving_blueprint =
@@ -149,7 +162,9 @@ impl<'s, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'s, S1, S2> {
                 .map_err(CreateBackupError::Other)?;
         check_archiving_will_succeed(&archiving_blueprint)?;
 
-        let backup_name = BackupName::from(backup_name);
+        let created_at = std::time::SystemTime::now();
+
+        let backup_name = BackupName::from(description, &created_at);
 
         let backup_file_name = if self.encryption_config.enabled {
             match self.encryption_config.mode {
@@ -165,56 +180,70 @@ impl<'s, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'s, S1, S2> {
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        let mut integrity_check: Vec<u8> = Vec::new();
-
-        let (mut gen_integrity_check, finalize_integrity_check) = writer_chain::builder()
-            .digest(self.hashing_config.as_ref())
-            .build(&mut integrity_check)?;
+        let mut sha256_digest_writer = Sha256DigestWriter::new();
 
         let mut signature: Vec<u8> = Vec::new();
 
-        let (mut gen_signature, finalize_signature) = writer_chain::builder()
-            .sign(self.signing_config.as_ref())
-            .build(&mut signature)?;
+        let mut sig_opt = match self.signing_helper.as_ref() {
+            Some(SigningHelper::Gpg { cert, policy }) => {
+                let writer = PgpSignatureWriter::new(&mut signature, *cert, *policy, created_at)
+                    .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
+                let fixme = "Error case";
+                Some(writer)
+            }
+            None => None,
+        };
 
         let (writer, finalize_backup) = writer_chain::builder()
             .archive(prose_pod_api_data, &archiving_blueprint)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_helper.as_ref())
-            .tee(&mut gen_integrity_check)
-            .tee(&mut gen_signature)
+            .tee(&mut sha256_digest_writer)
+            .opt_tee(sig_opt.as_mut())
             .build(upload_backup)?;
 
         () = finalize_backup(writer)?;
-        () = finalize_integrity_check(gen_integrity_check)?;
-        () = finalize_signature(finalize_signature)?;
 
-        let integrity_check_file_name = match self.hashing_config.algorithm {
-            config::HashingAlgorithm::Sha256 => backup_name.with_extension("sha256"),
-        };
-        let signature_file_name = match self.signing_config.algorithm {
-            config::HashingAlgorithm::Sha256 => backup_name.with_extension("sha256"),
-        };
-        let integrity_check_file_name = if self.hashing_config.is_some() {
-            format!("{backup_file_name}.sig")
-        } else {
-            format!("{backup_file_name}.sha256")
-        };
+        let integrity_check = sha256_digest_writer
+            .finalize()
+            .map_err(CreateBackupError::CannotComputeIntegrityCheck)?;
+        todo!("Upload");
 
-        // Upload integrity check.
-        {
-            let mut upload_integrity_check = self
+        if let Some(sig_writer) = sig_opt {
+            () = sig_writer
+                .finalize()
+                .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
+            let fixme = "Error case";
+
+            // NOTE: OpenPGP will likely forever be the only signing protocol
+            //   we support, but if we ever add one that also uses the `.sig`
+            //   extension we can just use `.<protocol>.sig` for it.
+            let file_name = backup_name.with_extension("sig");
+            todo!("Upload signature");
+        }
+
+        // Upload SHA-256 digest.
+        let sha_256_digest_id = {
+            let file_name = backup_name.with_extension("sha256");
+
+            let mut uploader = self
                 .check_store
-                .writer(&integrity_check_file_name)
+                .writer(&file_name)
                 .await
                 .map_err(CreateBackupError::CannotCreateSink)?;
 
             let mut cursor = std::io::Cursor::new(integrity_check);
-            std::io::copy(&mut cursor, &mut upload_integrity_check)
+            std::io::copy(&mut cursor, &mut uploader)
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-        }
 
-        Ok((backup_file_name, integrity_check_file_name))
+            file_name.to_string()
+        };
+
+        Ok(CreateBackupOutput {
+            backup_id: backup_file_name.to_string(),
+            digest_ids: vec![sha_256_digest_id],
+            signature_ids: todo!(),
+        })
     }
 }
 
@@ -300,7 +329,7 @@ pub struct BackupMetadataFullDto {
     pub can_be_restored: bool,
 }
 
-impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
     pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
         //   no way to list in reverse order or ist by “last modified” date
@@ -385,15 +414,17 @@ struct BackupNameComponents<'a> {
 #[repr(transparent)]
 pub struct BackupName(String);
 
-impl<'a> From<&'a str> for BackupName {
-    fn from(backup_name: &'a str) -> Self {
+impl BackupName {
+    pub fn from(description: &str, created_at: &std::time::SystemTime) -> Self {
+        use crate::util::SystemTimeExt as _;
+
         // Arbitrary safety limits.
-        assert!(backup_name.len() <= 256);
+        assert!(description.len() <= 256);
         // NOTE: Provide a default value instead of passing an empty string.
-        assert!(backup_name.len() > 0);
+        assert!(description.len() > 0);
 
         // “URL encode” the backup name to get rid of spaces, emojis, etc.
-        let backup_name = urlencoding::encode(backup_name);
+        let backup_name = urlencoding::encode(description);
         // Also percent-encode `.` to prevent incorrect file extension parsing.
         debug_assert_eq!(
             urlencoding::decode("test%2Eext"),
@@ -412,10 +443,10 @@ impl<'a> From<&'a str> for BackupName {
         // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
         // For correctness, we’ll still format the number as 10 digits with
         // leading zeros (even if not necessary).
-        let now = unix_timestamp();
-        assert!(now < 99_999_999_999);
-        debug_assert!(now > 999_999_999);
-        let backup_name = format!("{now:010}-{backup_name}");
+        let created_at = created_at.unix_timestamp();
+        assert!(created_at < 99_999_999_999);
+        debug_assert!(created_at > 999_999_999);
+        let backup_name = format!("{created_at:010}-{backup_name}");
 
         Self(backup_name)
     }
@@ -430,6 +461,12 @@ impl BackupName {
             value: format!("{self}.{extension}"),
             suffix_start_idx,
         }
+    }
+}
+
+impl std::fmt::Display for BackupName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -461,7 +498,7 @@ impl BackupFileName {
     /// assert_eq!(file_name.extension(), "foo.bar");
     /// ```
     fn extension(&self) -> &str {
-        &self.0[(self.suffix_start_idx + 1)..]
+        &self.value[(self.suffix_start_idx + 1)..]
     }
 }
 
@@ -517,129 +554,132 @@ fn parse_backup_file_name<'a>(
 
 // MARK: Restore
 
-impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
-    #[must_use]
-    pub async fn restore_backup(
-        &self,
-        backup_name: &str,
-        location: impl AsRef<Path>,
-    ) -> Result<ExtractionSuccess, anyhow::Error> {
-        use crate::stats::ReadStats;
-        use crate::writer_chain::either::Either;
-        use openpgp::parse::Parse as _;
-        use openpgp::parse::stream::DecryptorBuilder;
+#[cfg(false)]
+mod restore {
+    impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+        #[must_use]
+        pub async fn restore_backup(
+            &self,
+            backup_name: &str,
+            location: impl AsRef<Path>,
+        ) -> Result<ExtractionSuccess, anyhow::Error> {
+            use crate::stats::ReadStats;
+            use crate::writer_chain::either::Either;
+            use openpgp::parse::Parse as _;
+            use openpgp::parse::stream::DecryptorBuilder;
 
-        let BackupNameComponents {
-            created_at,
-            description,
-            extensions,
-        } = parse_backup_file_name(backup_name)?;
+            let BackupNameComponents {
+                created_at,
+                description,
+                extensions,
+            } = parse_backup_file_name(backup_name)?;
 
-        // TODO: List integrity checks.
-        // TODO: Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
-        //   read of the whole backup file if something is wrong (i.e. fetch
-        //   fails, corrupted signature, no supported check…). Integrity checks
-        //   are quite small so loading all in memory is better than saving to
-        //   temporary files (less I/O).
-        // TODO: Check signature for corruption (just in case).
-        // TODO: Read backup to temporary file. It will have to be downloaded
-        //   at some point anyway, and doing it this early allows us not to
-        //   fetch it twice. It also allows us to easily performing integrity
-        //   checks in parallel by opening multiple file descriptors (instead
-        //   of writing a lot of overly complicated reading logic to reuse the
-        //   same in-memory reader).
-        // TODO: Run integrity checks.
-        // TODO: Restore backup.
+            // TODO: List integrity checks.
+            // TODO: Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
+            //   read of the whole backup file if something is wrong (i.e. fetch
+            //   fails, corrupted signature, no supported check…). Integrity checks
+            //   are quite small so loading all in memory is better than saving to
+            //   temporary files (less I/O).
+            // TODO: Check signature for corruption (just in case).
+            // TODO: Read backup to temporary file. It will have to be downloaded
+            //   at some point anyway, and doing it this early allows us not to
+            //   fetch it twice. It also allows us to easily performing integrity
+            //   checks in parallel by opening multiple file descriptors (instead
+            //   of writing a lot of overly complicated reading logic to reuse the
+            //   same in-memory reader).
+            // TODO: Run integrity checks.
+            // TODO: Restore backup.
 
-        let integrity_check_names = (self.check_store)
-            .find(backup_name)
-            .await
-            .context("Failed listing integrity checks")?;
-
-        let mut integrity_checks = Vec::with_capacity(integrity_check_names.len());
-        for key in integrity_check_names {
-            let mut reader = (self.check_store)
-                .reader(&key)
+            let integrity_check_names = (self.check_store)
+                .find(backup_name)
                 .await
-                .context(format!("Could not open integrity check reader for '{key}'"))?;
-            let mut buf: Vec<u8> = Vec::new();
-            reader.read_to_end(&mut buf);
+                .context("Failed listing integrity checks")?;
 
-            integrity_checks.push(IntegrityCheck {
-                name: key,
-                value: buf,
-            });
-        }
+            let mut integrity_checks = Vec::with_capacity(integrity_check_names.len());
+            for key in integrity_check_names {
+                let mut reader = (self.check_store)
+                    .reader(&key)
+                    .await
+                    .context(format!("Could not open integrity check reader for '{key}'"))?;
+                let mut buf: Vec<u8> = Vec::new();
+                reader.read_to_end(&mut buf);
 
-        pre_validate_integrity_checks(&integrity_checks)?;
+                integrity_checks.push(IntegrityCheck {
+                    name: key,
+                    value: buf,
+                });
+            }
 
-        // Check signature first.
-        let signature_name = integrity_checks
-            .iter()
-            .find(|name| name.as_str() == format!("{backup_name}.sig").as_str());
+            pre_validate_integrity_checks(&integrity_checks)?;
 
-        if let Some(signature_name) = signature_name {
-            self.check_backup_integrity(&backup_name, &signature_name)
-                .await
-                .context("Integrity check failed")?;
+            // Check signature first.
+            let signature_name = integrity_checks
+                .iter()
+                .find(|name| name.as_str() == format!("{backup_name}.sig").as_str());
 
-            let backup_reader = (self.backup_store)
-                .reader(backup_name)
-                .await
-                .context("Cannot create reader")?;
+            if let Some(signature_name) = signature_name {
+                self.check_backup_integrity(&backup_name, &signature_name)
+                    .await
+                    .context("Integrity check failed")?;
 
-            let mut raw_read_stats = ReadStats::new();
-            let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
+                let backup_reader = (self.backup_store)
+                    .reader(backup_name)
+                    .await
+                    .context("Cannot create reader")?;
 
-            // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
-            //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
-            let mut decryption_stats = ReadStats::new();
-            let compressed_archive_reader = if backup_name.ends_with(".gpg") {
-                if let Some(config) = self.encryption_config.gpg.as_ref() {
-                    let decryptor = DecryptorBuilder::from_reader(backup_reader)
-                        .context("Failed creating decryptor builder")?
-                        .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
-                        .context("Failed creating decryptor")?;
+                let mut raw_read_stats = ReadStats::new();
+                let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
 
-                    let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
+                // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
+                //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
+                let mut decryption_stats = ReadStats::new();
+                let compressed_archive_reader = if backup_name.ends_with(".gpg") {
+                    if let Some(config) = self.encryption_config.gpg.as_ref() {
+                        let decryptor = DecryptorBuilder::from_reader(backup_reader)
+                            .context("Failed creating decryptor builder")?
+                            .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
+                            .context("Failed creating decryptor")?;
 
-                    Either::A(decryptor)
+                        let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
+
+                        Either::A(decryptor)
+                    } else {
+                        return Err(anyhow!(
+                            "Encryption not configured. Cannot find private keys.",
+                        ));
+                    }
                 } else {
-                    return Err(anyhow!(
-                        "Encryption not configured. Cannot find private keys.",
-                    ));
-                }
-            } else {
-                tracing::debug!("NOT DECRYPTING");
+                    tracing::debug!("NOT DECRYPTING");
 
-                Either::B(backup_reader)
-            };
+                    Either::B(backup_reader)
+                };
 
-            let archive_bytes =
-                zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
+                let archive_bytes =
+                    zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
 
-            let mut decompression_stats = ReadStats::new();
-            let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
+                let mut decompression_stats = ReadStats::new();
+                let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-            let restore_result =
-                extract_archive(archive_bytes, location).context("Backup extraction failed")?;
+                let restore_result =
+                    extract_archive(archive_bytes, location).context("Backup extraction failed")?;
 
-            print!("\n");
-            print_stats(
-                &raw_read_stats,
-                &decryption_stats,
-                &decompression_stats,
-                restore_result.restored_bytes_count,
-            );
+                print!("\n");
+                print_stats(
+                    &raw_read_stats,
+                    &decryption_stats,
+                    &decompression_stats,
+                    restore_result.restored_bytes_count,
+                );
 
-            return Ok(restore_result);
+                return Ok(restore_result);
+            }
+
+            // FIXME: Do not look for hash if signature is mandatory.
+
+            // Check hash if no signature exist.
+            let todo = "Hash check";
+
+            Ok(todo!())
         }
-
-        // FIXME: Do not look for hash if signature is mandatory.
-
-        // Check hash if no signature exist.
-        let todo = "Hash check";
-
-        Ok(todo!())
     }
 }

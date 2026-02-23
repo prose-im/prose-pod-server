@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use figment::Figment;
+
 /// Example full configuration (all keys have default values):
 ///
 /// ```toml
@@ -32,14 +34,14 @@
 /// # `true` makes it impossible to restore a non-signed backup.
 /// # Default is `false` (opt-in).
 /// mandatory = true
-/// # How to sign backups. Default is `"gpg"`.
-/// # Mostly there to allow non-breaking changes in the future.
-/// mode = "gpg"
+/// # Default is `true`. Use only if you need a global override
+/// # (e.g. in tests).
+/// pgp.enabled = true
 /// # Path to the key to use when signing new backups.
-/// gpg.key = "/keys/prose-backup.asc"
+/// pgp.key = "/keys/prose-backup.asc"
 /// # Optional. Use if you changed the primary keys instead of
 /// # rotating subkeys. Those SHOULD NOT contain private key material.
-/// gpg.additional_trusted_keys = ["/keys/prose-backup-old.pub.asc"]
+/// pgp.additional_trusted_keys = ["/keys/prose-backup-old.pub.asc"]
 ///
 /// # By default, backups are not encrypted as it requires an
 /// # encryption key to be configured. This is where it is done.
@@ -68,10 +70,59 @@
 #[derive(serde::Deserialize)]
 pub struct BackupConfig {
     pub archiving: ArchivingConfig,
+
     pub compression: CompressionConfig,
+
     pub hashing: HashingConfig,
+
     pub signing: SigningConfig,
+
     pub encryption: EncryptionConfig,
+}
+
+// MARK: Parsing
+
+fn default_config_static() -> Figment {
+    use figment::providers::*;
+    use toml::toml;
+
+    let static_defaults = toml! {
+        [archiving]
+        version = 1
+
+        [compression]
+        zstd_compression_level = 3
+
+        [hashing]
+        algorithm = "SHA-256"
+
+        [signing]
+        enabled = false
+        mandatory = false
+
+        [encryption]
+        enabled = false
+        mandatory = false
+        mode = "gpg"
+    }
+    .to_string();
+
+    Figment::from(Toml::string(&static_defaults))
+}
+
+fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
+    use figment::providers::*;
+
+    let signing_enabled = figment.extract_inner::<bool>("signing.enabled")?;
+
+    figment = figment.join(Serialized::default("signing.pgp.enabled", &signing_enabled));
+
+    let signing_pgp_enabled = figment.extract_inner::<bool>("signing.pgp.enabled")?;
+    if !signing_pgp_enabled {
+        figment = figment.merge(Serialized::default("signing.pgp", json::Value::Null));
+    }
+
+    Ok(figment)
 }
 
 // MARK: Archiving
@@ -108,20 +159,26 @@ pub enum HashingAlgorithm {
 
 // MARK: Signing
 
-#[derive(Debug)]
-#[derive(serde::Deserialize)]
-pub struct SigningConfig {
-    pub enabled: bool,
-    pub mandatory: bool,
-    pub mode: SigningMode,
-}
-
 #[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub enum SigningMode {
-    #[serde(rename = "gpg")]
-    Gpg,
+pub struct SigningConfig {
+    pub mandatory: bool,
+
+    #[serde(default, alias = "gpg")]
+    pub pgp: Option<SigningPgpConfig>,
+}
+
+#[derive(Debug)]
+#[derive(serde::Deserialize)]
+pub struct SigningPgpConfig {
+    pub key: std::path::PathBuf,
+
+    #[serde(default)]
+    pub additional_encryption_keys: Vec<std::path::PathBuf>,
+
+    #[serde(default)]
+    pub additional_decryption_keys: Vec<std::path::PathBuf>,
 }
 
 // MARK: Encryption
@@ -130,8 +187,11 @@ pub enum SigningMode {
 #[derive(serde::Deserialize)]
 pub struct EncryptionConfig {
     pub enabled: bool,
+
     pub mandatory: bool,
+
     pub mode: EncryptionMode,
+
     pub gpg: Option<EncryptionGpgConfig>,
 }
 
@@ -139,7 +199,7 @@ pub struct EncryptionConfig {
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub enum EncryptionMode {
-    #[serde(rename = "gpg")]
+    #[serde(rename = "gpg", alias = "pgp")]
     Gpg,
 }
 
@@ -153,4 +213,42 @@ pub struct EncryptionGpgConfig {
 
     #[serde(default)]
     pub additional_decryption_keys: Vec<std::path::PathBuf>,
+}
+
+// MARK: Tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_signing_defaults() {
+        // NOTE(RemiBardon): I guess I have to explain this. Basically the way
+        //   configuration defaults are implemented we might forget to apply a
+        //   “enabled”. Here I’m leveraging Rust’s type system to ensure we
+        //   update the test everytime we change the configuration schema and,
+        //   consequently, keep the defaults up-to-date.
+        let SigningConfig {
+            mandatory: _mandatory,
+            pgp,
+        } = SigningConfig {
+            mandatory: false,
+            pgp: None,
+        };
+
+        default_config_static();
+
+        let json = json::Map::new();
+
+        macro_rules! assert_none {
+            ($key:ident) => {
+                assert_eq!(
+                    json.get(stringify!($key)),
+                    $key.ok_or(&json::Value::Null).err()
+                );
+            };
+        }
+
+        assert_none!(pgp);
+    }
 }

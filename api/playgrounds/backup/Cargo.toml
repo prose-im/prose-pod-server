@@ -8,6 +8,7 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 [dependencies]
 anyhow = { version = "1", default-features = false }
 bytes = { version = "1", default-features = false, features = ["std"] }
+figment = { version = "0.10", default-features = false, features = ["toml"] }
 sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-nettle"] }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false, features = ["std"] }
@@ -25,6 +26,7 @@ tokio = { version = "1", default-features = false, features = [
     "sync",
     "time",
 ] }
+toml = { version = "0.9", default-features = false, features = ["display", "serde"] }
 urlencoding = { version = "2", default-features = false }
 zstd = { version = "0.13", default-features = false }
 

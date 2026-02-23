@@ -7,85 +7,46 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
-use std::io::{self, Write};
+// MARK: SHA-256
 
-use anyhow::{Context, anyhow};
-use sha2::{Digest as _, Sha256};
+pub use self::sha256::Sha256DigestWriter;
+mod sha256 {
+    use std::io::{self, Write};
 
-use crate::{CreateBackupError, ObjectStore, ProseBackupService, writer_chain::WriterChainBuilder};
+    use anyhow::Context as _;
+    use sha2::{Digest as _, Sha256};
 
-pub(crate) enum DigestWriterBuilder {
-    Sha256,
-}
-
-impl<M, F> WriterChainBuilder<M, F> {
-    pub(crate) fn digest<'w, W, OuterWriter>(
-        self,
-        config: &DigestWriterBuilder,
-    ) -> WriterChainBuilder<
-        impl FnOnce(W) -> Result<OuterWriter, CreateBackupError>,
-        impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,
-    >
-    where
-        W: Write + Send + Sync + 'w,
-        M: FnOnce(IntegrityWriter<'w, W>) -> Result<OuterWriter, CreateBackupError>,
-        F: FnOnce(OuterWriter) -> Result<IntegrityWriter<'w, W>, CreateBackupError>,
-    {
-        let Self { make, finalize, .. } = self;
-
-        WriterChainBuilder {
-            make: move |writer| {
-                let writer = match config {
-                    DigestWriterBuilder::Sha256 => IntegrityWriter::Sha256 {
-                        hasher: Sha256::new(),
-                        writer,
-                    },
-                };
-
-                make(writer)
-            },
-
-            finalize: |writer: OuterWriter| {
-                let writer: IntegrityWriter<_> = finalize(writer)?;
-
-                let res = writer
-                    .finalize()
-                    .map_err(CreateBackupError::IntegrityCheckGenerationFailed);
-
-                res
-            },
-        }
+    pub struct Sha256DigestWriter<W> {
+        hasher: Sha256,
+        writer: W,
     }
-}
 
-// MARK: Integrity
-
-#[non_exhaustive]
-pub enum IntegrityWriter<W: Write> {
-    Sha256 { hasher: Sha256, writer: W },
-}
-
-impl<W: Write> IntegrityWriter<W> {
-    pub fn finalize(self) -> Result<(), anyhow::Error> {
-        match self {
-            Self::Sha256 { hasher, mut writer } => {
-                let hash = hasher.finalize();
-                writer.write_all(&hash).context("Could not write hash")
+    impl Sha256DigestWriter<Vec<u8>> {
+        pub fn new() -> Self {
+            Self {
+                hasher: Sha256::new(),
+                writer: Vec::new(),
             }
         }
     }
-}
 
-impl<W: Write> Write for IntegrityWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Sha256 { hasher, .. } => hasher.write(buf),
+    impl<W: Write> Sha256DigestWriter<W> {
+        pub fn finalize(mut self) -> Result<sha2::digest::Output<Sha256>, anyhow::Error> {
+            let hash = self.hasher.finalize();
+            self.writer
+                .write_all(&hash)
+                .context("Could not write hash")?;
+            Ok(hash)
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            Self::Sha256 { hasher, .. } => hasher.flush(),
+    impl<W: Write> Write for Sha256DigestWriter<W> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.hasher.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.hasher.flush()
         }
     }
 }

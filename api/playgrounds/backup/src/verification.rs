@@ -5,6 +5,49 @@
 
 use std::io::{self, Read, Write};
 
+////
+
+impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
+where
+    S1: ObjectStore,
+    S2: ObjectStore,
+{
+    pub async fn check_signature(
+        &self,
+        backup_file_name: &str,
+        signature_file_name: &str,
+    ) -> Result<(), anyhow::Error> {
+        use std::io::Read as _;
+
+        let mut backup_reader = self
+            .backup_store
+            .reader(backup_file_name)
+            .await
+            .context("Could not open backup reader")?;
+
+        let mut verifier = BackupVerifier::new(self.hashing_config.as_ref());
+        std::io::copy(&mut backup_reader, &mut verifier.writer).context("Could not read backup")?;
+
+        let mut integrity_check_reader = self
+            .check_store
+            .reader(signature_file_name)
+            .await
+            .context("Could not open integrity check reader")?;
+        let mut integrity_check: Vec<u8> = Vec::new();
+        integrity_check_reader
+            .read_to_end(&mut integrity_check)
+            .context("Could not read integrity check")?;
+
+        verifier.verify(&integrity_check)?;
+
+        tracing::debug!("Integrity check passed ({signature_file_name}).");
+
+        Ok(())
+    }
+}
+
+////
+
 use anyhow::{Context as _, anyhow};
 use openpgp::parse::{
     Parse,
@@ -61,11 +104,6 @@ pub fn pre_validate_integrity_checks(checks: &[IntegrityCheck]) -> Result<(), an
     }
 
     Ok(())
-}
-
-#[non_exhaustive]
-pub struct VerificationHelper<'a> {
-    gpg: Option<&'a self::pgp::PgpVerificationHelper>,
 }
 
 impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
@@ -144,55 +182,6 @@ where
                 "No integrity check could be processed for '{backup_name}'. \
                 Integrity check failed."
             ))
-        }
-    }
-}
-
-pub type BackupVerifier = ProseBackupVerifier;
-
-pub(crate) struct ProseBackupVerifier {
-    pub(crate) writer: IntegrityChecker,
-}
-
-impl BackupVerifier {
-    pub(crate) fn new(integrity_config: &IntegrityWriterBuilder) -> Self {
-        let writer = match integrity_config {
-            IntegrityWriterBuilder::Sha256 => todo!(),
-        };
-        Self { writer }
-    }
-
-    pub(crate) fn verify(self, integrity_check: &Vec<u8>) -> Result<(), anyhow::Error> {
-        self.writer.verify(integrity_check)
-    }
-}
-
-#[non_exhaustive]
-pub enum IntegrityChecker {
-    /// Integrity only.
-    Sha256 { hasher: Sha256 },
-}
-
-impl IntegrityChecker {
-    fn new(integrity_config: &IntegrityWriterBuilder) -> Self {
-        match integrity_config {
-            IntegrityWriterBuilder::Sha256 => Self::Sha256 {
-                hasher: Sha256::new(),
-            },
-        }
-    }
-}
-
-impl Write for IntegrityChecker {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Sha256 { hasher, .. } => hasher.write(buf),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            Self::Sha256 { hasher, .. } => hasher.flush(),
         }
     }
 }
@@ -324,7 +313,6 @@ mod sha {
 
 pub mod pgp {
     use std::{
-        fs::File,
         io::{self, Write},
         time::SystemTime,
     };
@@ -334,11 +322,12 @@ pub mod pgp {
         stream::{DetachedVerifier, DetachedVerifierBuilder, MessageLayer, MessageStructure},
     };
 
-    pub struct PgpSignatureCheck<'data, 'cert> {
-        verifier: DetachedVerifier<'data, PgpVerificationHelper<'cert>>,
-    }
+    #[repr(transparent)]
+    pub struct PgpSignatureVerifier<'data, 'cert>(
+        DetachedVerifier<'data, PgpVerificationHelper<'cert>>,
+    );
 
-    impl<'data, 'cert> PgpSignatureCheck<'data, 'cert> {
+    impl<'data, 'cert> PgpSignatureVerifier<'data, 'cert> {
         pub fn new(
             policy: &'data dyn openpgp::policy::Policy,
             helper: PgpVerificationHelper<'cert>,
@@ -354,47 +343,29 @@ pub mod pgp {
         }
     }
 
-    impl<'data, 'cert> PgpSignatureCheck<'data, 'cert> {
+    impl<'data, 'cert> PgpSignatureVerifier<'data, 'cert> {
         fn finalize(self) -> Result<(), anyhow::Error> {
-            self.verifier.build()?.finalize()
+            self.0.build()?.finalize()
         }
     }
 
-    impl<'data, 'cert> Write for PgpSignatureCheck<'data, 'cert> {
+    impl<'data, 'cert> Write for PgpSignatureVerifier<'data, 'cert> {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.signer.write(buf)
+            self.0.write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            self.signer.flush()
+            self.0.flush()
         }
     }
 
     impl<'data, 'cert, R: io::Read + Send + Sync> super::IntegrityCheck<'cert, R>
-        for PgpSignatureCheck<'data, 'cert>
+        for PgpSignatureVerifier<'data, 'cert>
     {
         fn verify_reader(mut self: Box<Self>, reader: &mut R) -> Result<(), anyhow::Error> {
-            self.verifier.verify_reader(reader)
+            self.0.verify_reader(reader)
         }
     }
-
-    #[non_exhaustive]
-    pub struct SignatureVerifier<'data, 'helper> {
-        pgp: DetachedVerifier<'data, PgpVerificationHelper<'helper>>,
-    }
-
-    // impl<'data, 'helper> SignatureVerifier<'data, 'helper> {
-    //     pub(crate) fn new(integrity_config: &SignatureWriterBuilder) -> Self {
-    //         let writer = match integrity_config {
-    //             SignatureWriterBuilder::Gpg(helper) => todo!(),
-    //         };
-    //         Self { writer }
-    //     }
-
-    //     pub(crate) fn verify(self, integrity_check: &Vec<u8>) -> Result<(), anyhow::Error> {
-    //         self.writer.verify(integrity_check)
-    //     }
-    // }
 
     #[derive(Debug)]
     pub struct PgpVerificationHelper<'cert> {

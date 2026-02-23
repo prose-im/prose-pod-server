@@ -14,7 +14,9 @@ use std::{
 
 use bytes::Bytes;
 use prose_backup::{
-    ArchivingConfig, BackupService, CompressionConfig, EncryptionConfig, GpgHelper,
+    ArchivingConfig, BackupService, CompressionConfig, CreateBackupOutput, DecryptionHelper,
+    EncryptionConfig, EncryptionHelper, SigningHelper,
+    config::{SigningConfig, SigningPgpConfig},
     encryption::EncryptionMode,
 };
 
@@ -35,16 +37,31 @@ async fn main() -> Result<(), anyhow::Error> {
     let compression_config = CompressionConfig {
         zstd_compression_level: 5,
     };
-    let gpg_config = Arc::new(GpgHelper::new(generate_test_cert()?));
     let encryption_config = EncryptionConfig {
         enabled: true,
         mandatory: true,
         mode: EncryptionMode::Gpg,
-        gpg: gpg_config,
+        gpg: None,
     };
     // let encryption_config = None;
+    let signing_config = Some(SigningConfig {
+        mandatory: false,
+        pgp: None,
+    });
+    // let signing_config = None;
     let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
     // let integrity_config = None;
+
+    let pgp_cert = generate_test_cert()?;
+    let pgp_policy = openpgp::policy::StandardPolicy::new();
+    let encryption_helper = Some(EncryptionHelper::Gpg {
+        cert: &pgp_cert,
+        policy: &pgp_policy,
+    });
+    let signing_helper = Some(SigningHelper::Gpg {
+        cert: &pgp_cert,
+        policy: &pgp_policy,
+    });
 
     let fs_prefix = Path::new(".out");
 
@@ -66,17 +83,27 @@ async fn main() -> Result<(), anyhow::Error> {
         compression_config,
         encryption_config,
         hashing_config,
+        signing_config,
         backup_store,
         check_store,
+        encryption_helper,
+        signing_helper,
     };
 
-    let (backup_file_name, integrity_check_file_name) = {
+    let CreateBackupOutput {
+        backup_id,
+        digest_ids,
+        signature_ids,
+    } = {
         let backup_name = "backup";
         service
             .create_backup(backup_name, prose_pod_api_data)
             .await?
     };
-    tracing::info!("Created backup '{backup_file_name}'.");
+    let integrity_check_file_name = digest_ids
+        .first()
+        .expect("At least one digest should have been created");
+    tracing::info!("Created backup '{backup_id}'.");
 
     print!("\n");
     let backups = service.list_backups().await?;
@@ -86,7 +113,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let fs_prefix_extract = fs_prefix.join("extract");
     std::fs::create_dir_all(&fs_prefix_extract)?;
     let mut restore_result = service
-        .restore_backup(&backup_file_name, fs_prefix_extract)
+        .restore_backup(&backup_id, fs_prefix_extract)
         .await?;
 
     print!("\n");
@@ -104,7 +131,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .read_to_end(&mut prose_pod_api_data)?;
 
     if std::env::var("NO_DELETE").is_err() {
-        fs::remove_file(fs_prefix_backups.join(backup_file_name))?;
+        fs::remove_file(fs_prefix_backups.join(backup_id))?;
         fs::remove_file(fs_prefix_integrity_checks.join(integrity_check_file_name))?;
     }
 

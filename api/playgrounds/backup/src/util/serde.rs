@@ -3,7 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer};
+use serde::{Deserialize as _, Deserializer};
 
 pub mod openpgp {
     use super::*;

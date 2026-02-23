@@ -156,7 +156,7 @@ fn add_metadata_file<W: std::io::Write>(
     metadata: &BackupInternalMetadata,
     builder: &mut tar::Builder<W>,
 ) -> Result<(), anyhow::Error> {
-    let metadata_bytes = serde_json::to_vec(metadata)?;
+    let metadata_bytes = json::to_vec(metadata)?;
 
     let mut header = tar::Header::new_gnu();
     header.set_size(metadata_bytes.len() as u64);
@@ -260,7 +260,7 @@ where
             ));
         }
 
-        serde_json::from_reader(entry)?
+        json::from_reader(entry)?
     };
 
     let blueprint = ArchivingBlueprint::new(metadata.version, location)?;

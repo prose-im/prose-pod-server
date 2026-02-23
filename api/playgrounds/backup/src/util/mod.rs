@@ -52,12 +52,22 @@ pub fn safe_replace(
 }
 
 pub fn unix_timestamp() -> u64 {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    std::time::SystemTime::now().unix_timestamp()
+}
 
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
+pub trait SystemTimeExt {
+    fn unix_timestamp(&self) -> u64;
+}
+
+impl SystemTimeExt for std::time::SystemTime {
+    #[inline]
+    fn unix_timestamp(&self) -> u64 {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        self.duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs()
+    }
 }
 
 pub fn to_hex(bytes: &[u8]) -> String {

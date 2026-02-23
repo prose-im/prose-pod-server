@@ -3,14 +3,10 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use openpgp::{
     cert::amalgamation::ValidAmalgamation,
-    crypto::SessionKey,
     packet::prelude::*,
-    parse::stream::*,
-    types::{ReasonForRevocation, RevocationStatus, SymmetricAlgorithm},
+    types::{ReasonForRevocation, RevocationStatus},
 };
 
 fn is_ever_compromised<P>(ka: &openpgp::cert::prelude::ValidErasedKeyAmalgamation<'_, P>) -> bool

@@ -4,6 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub mod either;
+pub mod opt_tee;
 pub mod tee;
 
 pub struct WriterChainBuilder<Make, Finalize> {
