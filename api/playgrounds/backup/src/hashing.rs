@@ -9,11 +9,11 @@
 
 use std::io::Write;
 
-pub(crate) enum DigestVariant<Sha256> {
+pub(crate) enum HashingVariant<Sha256> {
     Sha256(Sha256),
 }
 
-pub(crate) type DigestWriter<W> = DigestVariant<Sha256DigestWriter<W>>;
+pub(crate) type DigestWriter<W> = HashingVariant<Sha256DigestWriter<W>>;
 
 impl<W: Write> Write for DigestWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -29,7 +29,7 @@ impl<W: Write> Write for DigestWriter<W> {
     }
 }
 
-pub(crate) type Digest = DigestVariant<sha256::Output>;
+pub(crate) type Digest = HashingVariant<sha256::Output>;
 
 impl<W: Write> DigestWriter<W> {
     pub fn finalize(self) -> Result<Digest, anyhow::Error> {
