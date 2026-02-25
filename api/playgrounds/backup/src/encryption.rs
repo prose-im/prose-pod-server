@@ -143,8 +143,7 @@ mod gpg {
 
         let mut recipients = recipients.peekable();
         if recipients.peek().is_none() {
-            let fixme = "Handle this case";
-            panic!("No valid encryption key");
+            return Err(anyhow::Error::msg("No valid encryption key"));
         }
 
         let encryptor = Encryptor::for_recipients(message, recipients).build()?;
