@@ -175,6 +175,9 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
+        // NOTE: We create only one writer in the form of an enum because:
+        //   1. It does not make much sense to create multiple digests
+        //   2. We ensure there is always at least one
         let mut digest_writer = match self.hashing_config.algorithm {
             config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
         };
