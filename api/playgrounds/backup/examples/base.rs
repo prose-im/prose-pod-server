@@ -3,21 +3,17 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-extern crate sequoia_openpgp as openpgp;
-
 use std::{
+    collections::HashMap,
     fs,
     io::Read as _,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use bytes::Bytes;
 use prose_backup::{
-    ArchivingConfig, BackupService, CompressionConfig, CreateBackupOutput, DecryptionHelper,
-    EncryptionConfig, EncryptionHelper, SigningHelper,
-    config::{SigningConfig, SigningPgpConfig},
-    encryption::EncryptionMode,
+    ArchivingConfig, BackupService, CompressionConfig, CreateBackupOutput, EncryptionConfig,
+    EncryptionContext, SigningHelper, config::SigningConfig, openpgp,
 };
 
 #[tokio::main]
@@ -52,12 +48,28 @@ async fn main() -> Result<(), anyhow::Error> {
     let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
     // let integrity_config = None;
 
+    let certs: HashMap<PathBuf, openpgp::Cert> = [
+        ("cert1", generate_test_cert()?),
+        ("cert2", generate_test_cert()?),
+    ]
+    .iter()
+    .collect();
     let pgp_cert = generate_test_cert()?;
-    let pgp_policy = openpgp::policy::StandardPolicy::new();
-    let encryption_helper = Some(EncryptionHelper::Gpg {
-        cert: &pgp_cert,
-        policy: &pgp_policy,
-    });
+
+    let encryption_helper = if encryption_config.enabled {
+        match encryption_config.mode {
+            config::EncryptionMode::Gpg => {
+                let cert = certs.get("cert1").unwrap();
+                let pgp_policy = openpgp::policy::StandardPolicy::new();
+                Some(EncryptionContext::Gpg {
+                    cert: &pgp_cert,
+                    policy: &pgp_policy,
+                })
+            }
+        }
+    } else {
+        None
+    };
     let signing_helper = Some(SigningHelper::Gpg {
         cert: &pgp_cert,
         policy: &pgp_policy,
@@ -81,12 +93,11 @@ async fn main() -> Result<(), anyhow::Error> {
         fs_root: PathBuf::from("./data"),
         archiving_config,
         compression_config,
-        encryption_config,
         hashing_config,
         signing_config,
         backup_store,
         check_store,
-        encryption_helper,
+        encryption_context: encryption_helper,
         signing_helper,
     };
 

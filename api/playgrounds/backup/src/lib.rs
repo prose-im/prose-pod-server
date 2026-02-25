@@ -31,7 +31,7 @@ use bytes::Bytes;
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
     config::SigningConfig,
-    hashing::Sha256DigestWriter,
+    hashing::{DigestWriter, Sha256DigestWriter},
     signing::PgpSignatureWriter,
     stores::{ObjectStore, S3Store},
 };
@@ -39,7 +39,7 @@ use crate::{
 pub use self::{
     archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
     config::{ArchivingConfig, BackupConfig, CompressionConfig, EncryptionConfig, HashingConfig},
-    encryption::EncryptionHelper,
+    encryption::EncryptionContext,
     signing::SigningHelper,
 };
 
@@ -76,11 +76,10 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 
     pub archiving_config: ArchivingConfig,
     pub compression_config: CompressionConfig,
-    pub encryption_config: EncryptionConfig,
     pub hashing_config: HashingConfig,
     pub signing_config: Option<SigningConfig>,
 
-    pub encryption_helper: Option<EncryptionHelper<'service>>,
+    pub encryption_context: Option<EncryptionContext<'service>>,
     pub signing_helper: Option<SigningHelper<'service>>,
     #[cfg(false)]
     pub decryption_helper: DecryptionHelper,
@@ -166,12 +165,9 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         let backup_name = BackupName::from(description, &created_at);
 
-        let backup_file_name = if self.encryption_config.enabled {
-            match self.encryption_config.mode {
-                config::EncryptionMode::Gpg => backup_name.with_extension("tar.zst.gpg"),
-            }
-        } else {
-            backup_name.with_extension("tar.zst")
+        let backup_file_name = match self.encryption_context {
+            Some(EncryptionContext::Gpg { .. }) => backup_name.with_extension("tar.zst.gpg"),
+            None => backup_name.with_extension("tar.zst"),
         };
 
         let upload_backup = self
@@ -180,15 +176,16 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        let mut sha256_digest_writer = Sha256DigestWriter::new();
+        let mut digest_writer = match self.hashing_config.algorithm {
+            config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
+        };
 
         let mut signature: Vec<u8> = Vec::new();
 
-        let mut sig_opt = match self.signing_helper.as_ref() {
+        let mut signature_writer: Option<_> = match self.signing_helper.as_ref() {
             Some(SigningHelper::Gpg { cert, policy }) => {
                 let writer = PgpSignatureWriter::new(&mut signature, *cert, *policy, created_at)
-                    .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
-                let fixme = "Error case";
+                    .map_err(CreateBackupError::CannotSign)?;
                 Some(writer)
             }
             None => None,
@@ -197,19 +194,19 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let (writer, finalize_backup) = writer_chain::builder()
             .archive(prose_pod_api_data, &archiving_blueprint)
             .compress(&self.compression_config)
-            .encrypt_if_possible(self.encryption_helper.as_ref())
-            .tee(&mut sha256_digest_writer)
-            .opt_tee(sig_opt.as_mut())
+            .encrypt_if_possible(self.encryption_context.as_ref())
+            .tee(&mut digest_writer)
+            .opt_tee(signature_writer.as_mut())
             .build(upload_backup)?;
 
         () = finalize_backup(writer)?;
 
-        let integrity_check = sha256_digest_writer
+        let digest = digest_writer
             .finalize()
-            .map_err(CreateBackupError::CannotComputeIntegrityCheck)?;
+            .map_err(CreateBackupError::HashingFailed)?;
         todo!("Upload");
 
-        if let Some(sig_writer) = sig_opt {
+        if let Some(sig_writer) = signature_writer {
             () = sig_writer
                 .finalize()
                 .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
@@ -232,9 +229,13 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
                 .await
                 .map_err(CreateBackupError::CannotCreateSink)?;
 
-            let mut cursor = std::io::Cursor::new(integrity_check);
-            std::io::copy(&mut cursor, &mut uploader)
-                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+            match digest {
+                hashing::DigestVariant::Sha256(digest) => {
+                    let mut cursor = std::io::Cursor::new(digest);
+                    std::io::copy(&mut cursor, &mut uploader)
+                        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+                }
+            }
 
             file_name.to_string()
         };
@@ -270,8 +271,11 @@ pub enum CreateBackupError {
     #[error("Backup encryption failed: {0:?}")]
     EncryptionFailed(anyhow::Error),
 
-    #[error("Cannot compute backup integrity check: {0:?}")]
-    CannotComputeIntegrityCheck(anyhow::Error),
+    #[error("Backup hashing failed: {0:?}")]
+    HashingFailed(anyhow::Error),
+
+    #[error("Cannot sign backup: {0:?}")]
+    CannotSign(anyhow::Error),
 
     #[error("Failed computing backup integrity check: {0:?}")]
     IntegrityCheckGenerationFailed(anyhow::Error),
@@ -556,7 +560,20 @@ fn parse_backup_file_name<'a>(
 
 #[cfg(false)]
 mod restore {
-    impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+    use std::path::Path;
+
+    use anyhow::anyhow;
+
+    use crate::{
+        BackupNameComponents, ProseBackupService,
+        archiving::{ExtractionSuccess, extract_archive},
+        parse_backup_file_name,
+        stats::{StatsReader, print_stats},
+        stores::ObjectStore,
+        verification::{IntegrityCheck, pre_validate_integrity_checks},
+    };
+
+    impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
         #[must_use]
         pub async fn restore_backup(
             &self,

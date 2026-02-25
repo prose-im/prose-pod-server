@@ -149,7 +149,6 @@ pub struct HashingConfig {
     pub algorithm: HashingAlgorithm,
 }
 
-#[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub enum HashingAlgorithm {
@@ -159,7 +158,6 @@ pub enum HashingAlgorithm {
 
 // MARK: Signing
 
-#[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub struct SigningConfig {
@@ -195,7 +193,6 @@ pub struct EncryptionConfig {
     pub gpg: Option<EncryptionGpgConfig>,
 }
 
-#[non_exhaustive]
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub enum EncryptionMode {

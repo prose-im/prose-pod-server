@@ -44,13 +44,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [lib]
 name = "prose_backup"
 
-[[bin]]
-name = "backup"
-path = "src/main.rs"
-required-features = ["destination_fs"]
-
 [features]
 default = ["destination_s3"]
 test = ["destination_fs"]
 destination_fs = []
 destination_s3 = ["dep:aws-sdk-s3"]
+
+[[example]]
+name = "base"
+required-features = ["destination_fs"]

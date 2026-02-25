@@ -14,20 +14,20 @@ use crate::{
 
 #[non_exhaustive]
 #[derive(Debug)]
-pub enum EncryptionHelper<'a> {
+pub enum EncryptionContext<'a> {
     Gpg {
         cert: &'a openpgp::Cert,
         policy: &'a dyn openpgp::policy::Policy,
     },
 }
 
-impl<'a> EncryptionHelper<'a> {
+impl<'a> EncryptionContext<'a> {
     fn encrypt<W: Write + Send + Sync + 'a>(
         &self,
         writer: W,
     ) -> Result<EncryptionWriter<'a>, anyhow::Error> {
         match *self {
-            EncryptionHelper::Gpg { cert, policy } => {
+            Self::Gpg { cert, policy } => {
                 self::gpg::encrypt(writer, cert, policy).map(EncryptionWriter::Gpg)
             }
         }
@@ -63,7 +63,7 @@ impl<'a> EncryptionWriter<'a> {
 impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn encrypt_if_possible<'a, InnerWriter, OuterWriter>(
         self,
-        helper: Option<&'a EncryptionHelper>,
+        helper: Option<&'a EncryptionContext>,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,

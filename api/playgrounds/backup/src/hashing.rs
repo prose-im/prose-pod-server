@@ -7,9 +7,39 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
+use std::io::Write;
+
+pub(crate) enum DigestVariant<Sha256> {
+    Sha256(Sha256),
+}
+
+pub(crate) type DigestWriter<W> = DigestVariant<Sha256DigestWriter<W>>;
+
+impl<W: Write> Write for DigestWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Sha256(writer) => writer.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Sha256(writer) => writer.flush(),
+        }
+    }
+}
+
+impl<W: Write> DigestWriter<W> {
+    pub fn finalize(self) -> Result<DigestVariant<sha256::Output>, anyhow::Error> {
+        match self {
+            Self::Sha256(writer) => writer.finalize().map(DigestVariant::Sha256),
+        }
+    }
+}
+
 // MARK: SHA-256
 
-pub use self::sha256::Sha256DigestWriter;
+pub(crate) use self::sha256::Sha256DigestWriter;
 mod sha256 {
     use std::io::{self, Write};
 
@@ -30,8 +60,10 @@ mod sha256 {
         }
     }
 
+    pub type Output = sha2::digest::Output<Sha256>;
+
     impl<W: Write> Sha256DigestWriter<W> {
-        pub fn finalize(mut self) -> Result<sha2::digest::Output<Sha256>, anyhow::Error> {
+        pub fn finalize(mut self) -> Result<self::Output, anyhow::Error> {
             let hash = self.hasher.finalize();
             self.writer
                 .write_all(&hash)
