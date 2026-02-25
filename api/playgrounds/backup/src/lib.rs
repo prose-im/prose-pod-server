@@ -210,24 +210,14 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         () = finalize_backup(writer)?;
 
-        let digest = digest_writer
-            .finalize()
-            .map_err(CreateBackupError::HashingFailed)?;
+        let mut digest_ids: Vec<String> = Vec::new();
 
-        if let Some(sig_writer) = pgp_signature_writer {
-            () = sig_writer
+        // SHA-256 digest.
+        {
+            let digest = digest_writer
                 .finalize()
-                .map_err(CreateBackupError::SigningFailed)?;
+                .map_err(CreateBackupError::HashingFailed)?;
 
-            // NOTE: OpenPGP will likely forever be the only signing protocol
-            //   we support, but if we ever add one that also uses the `.sig`
-            //   extension we can just use `.<protocol>.sig` for it.
-            let file_name = backup_file_name.with_extension("sig");
-            todo!("Upload signature");
-        }
-
-        // Upload SHA-256 digest.
-        let sha_256_digest_id = {
             let file_name = backup_file_name.with_extension("sha256");
 
             let mut uploader = self
@@ -240,13 +230,30 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             std::io::copy(&mut cursor, &mut uploader)
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-            file_name.to_string()
-        };
+            digest_ids.push(file_name.to_string());
+        }
+
+        let mut signature_ids: Vec<String> = Vec::new();
+
+        // OpenPGP signature.
+        if let Some(sig_writer) = pgp_signature_writer {
+            () = sig_writer
+                .finalize()
+                .map_err(CreateBackupError::SigningFailed)?;
+
+            // NOTE: OpenPGP will likely forever be the only signing protocol
+            //   we support, but if we ever add one that also uses the `.sig`
+            //   extension we can just use `.<protocol>.sig` for it.
+            let file_name = backup_file_name.with_extension("sig");
+            todo!("Upload signature");
+
+            signature_ids.push(file_name.to_string());
+        }
 
         Ok(CreateBackupOutput {
             backup_id: backup_file_name.to_string(),
-            digest_ids: vec![sha_256_digest_id],
-            signature_ids: todo!(),
+            digest_ids,
+            signature_ids,
         })
     }
 }
