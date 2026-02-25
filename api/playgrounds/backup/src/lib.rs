@@ -213,13 +213,11 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let digest = digest_writer
             .finalize()
             .map_err(CreateBackupError::HashingFailed)?;
-        todo!("Upload");
 
         if let Some(sig_writer) = pgp_signature_writer {
             () = sig_writer
                 .finalize()
-                .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
-            let fixme = "Error case";
+                .map_err(CreateBackupError::SigningFailed)?;
 
             // NOTE: OpenPGP will likely forever be the only signing protocol
             //   we support, but if we ever add one that also uses the `.sig`
@@ -282,8 +280,8 @@ pub enum CreateBackupError {
     #[error("Cannot sign backup: {0:?}")]
     CannotSign(anyhow::Error),
 
-    #[error("Failed computing backup integrity check: {0:?}")]
-    IntegrityCheckGenerationFailed(anyhow::Error),
+    #[error("Backup signing failed: {0:?}")]
+    SigningFailed(anyhow::Error),
 
     #[error("Failed uploading backup integrity check: {0:?}")]
     IntegrityCheckUploadFailed(std::io::Error),
