@@ -229,13 +229,9 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
                 .await
                 .map_err(CreateBackupError::CannotCreateSink)?;
 
-            match digest {
-                hashing::DigestVariant::Sha256(digest) => {
-                    let mut cursor = std::io::Cursor::new(digest);
-                    std::io::copy(&mut cursor, &mut uploader)
-                        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-                }
-            }
+            let mut cursor = std::io::Cursor::new(digest);
+            std::io::copy(&mut cursor, &mut uploader)
+                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
             file_name.to_string()
         };

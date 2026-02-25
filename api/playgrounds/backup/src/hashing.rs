@@ -29,10 +29,20 @@ impl<W: Write> Write for DigestWriter<W> {
     }
 }
 
+pub(crate) type Digest = DigestVariant<sha256::Output>;
+
 impl<W: Write> DigestWriter<W> {
-    pub fn finalize(self) -> Result<DigestVariant<sha256::Output>, anyhow::Error> {
+    pub fn finalize(self) -> Result<Digest, anyhow::Error> {
         match self {
-            Self::Sha256(writer) => writer.finalize().map(DigestVariant::Sha256),
+            Self::Sha256(writer) => writer.finalize().map(Digest::Sha256),
+        }
+    }
+}
+
+impl AsRef<[u8]> for Digest {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Sha256(digest) => digest.as_ref(),
         }
     }
 }
