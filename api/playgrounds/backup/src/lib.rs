@@ -194,7 +194,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let (writer, finalize_backup) = writer_chain::builder()
             .archive(prose_pod_api_data, &archiving_blueprint)
             .compress(&self.compression_config)
-            .encrypt_if_possible(self.encryption_context.as_ref())
+            .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
             .tee(&mut digest_writer)
             .opt_tee(signature_writer.as_mut())
             .build(upload_backup)?;
