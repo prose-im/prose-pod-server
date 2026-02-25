@@ -236,7 +236,12 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let mut signature_ids: Vec<String> = Vec::new();
 
         // OpenPGP signature.
-        if let Some(sig_writer) = pgp_signature_writer {
+        if pgp_signature_writer.is_some() {
+            // NOTE(RemiBardon): Don’t ask me why, but the borrow checker
+            //   doesn’t accept opening the optional with a `match` statement.
+            //   It makes no sense to me why, but I guess we’ll unwrap then…
+            let sig_writer = pgp_signature_writer.unwrap();
+
             () = sig_writer
                 .finalize()
                 .map_err(CreateBackupError::SigningFailed)?;
@@ -245,7 +250,16 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             //   we support, but if we ever add one that also uses the `.sig`
             //   extension we can just use `.<protocol>.sig` for it.
             let file_name = backup_file_name.with_extension("sig");
-            todo!("Upload signature");
+
+            let mut uploader = self
+                .check_store
+                .writer(&file_name)
+                .await
+                .map_err(CreateBackupError::CannotCreateSink)?;
+
+            let mut cursor = std::io::Cursor::new(pgp_signature);
+            std::io::copy(&mut cursor, &mut uploader)
+                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
             signature_ids.push(file_name.to_string());
         }
