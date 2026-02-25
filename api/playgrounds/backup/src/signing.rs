@@ -7,16 +7,7 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum SigningHelper<'a> {
-    Gpg {
-        cert: &'a openpgp::Cert,
-        policy: &'a dyn openpgp::policy::Policy,
-    },
-}
-
-pub use self::pgp::PgpSignatureWriter;
+pub use self::pgp::PgpSigningContext;
 mod pgp {
     use std::{
         io::{self, Write},
@@ -25,25 +16,29 @@ mod pgp {
 
     use anyhow::Context as _;
 
+    pub struct PgpSigningContext<'a> {
+        pub cert: &'a openpgp::Cert,
+        pub policy: &'a dyn openpgp::policy::Policy,
+    }
+
     pub struct PgpSignatureWriter<'a> {
         signer: openpgp::serialize::stream::Signer<'a>,
     }
 
-    impl<'cert> PgpSignatureWriter<'cert> {
-        pub fn new<'policy, W>(
+    impl<'a> PgpSigningContext<'a> {
+        pub fn new_writer<W>(
+            &self,
             writer: W,
-            cert: &'cert openpgp::Cert,
-            policy: &'policy dyn openpgp::policy::Policy,
             time: SystemTime,
-        ) -> Result<Self, anyhow::Error>
+        ) -> Result<PgpSignatureWriter<'a>, anyhow::Error>
         where
-            W: Write + Send + Sync + 'cert,
+            W: Write + Send + Sync + 'a,
         {
             use openpgp::serialize::stream::{Message, Signer};
 
-            let keypair = cert
+            let keypair = (self.cert)
                 .keys()
-                .with_policy(policy, Some(time))
+                .with_policy(self.policy, Some(time))
                 .secret()
                 .for_signing()
                 .next()
@@ -55,7 +50,7 @@ mod pgp {
             let message = Message::new(writer);
             let signer = Signer::new(message, keypair)?.detached();
 
-            Ok(Self { signer })
+            Ok(PgpSignatureWriter { signer })
         }
     }
 

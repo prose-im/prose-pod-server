@@ -32,7 +32,6 @@ use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
     config::SigningConfig,
     hashing::{DigestWriter, Sha256DigestWriter},
-    signing::PgpSignatureWriter,
     stores::{ObjectStore, S3Store},
 };
 
@@ -40,7 +39,7 @@ pub use self::{
     archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
     config::{ArchivingConfig, BackupConfig, CompressionConfig, EncryptionConfig, HashingConfig},
     encryption::EncryptionContext,
-    signing::SigningHelper,
+    signing::PgpSigningContext,
 };
 
 // MARK: Service
@@ -80,7 +79,7 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub signing_config: Option<SigningConfig>,
 
     pub encryption_context: Option<EncryptionContext<'service>>,
-    pub signing_helper: Option<SigningHelper<'service>>,
+    pub pgp_signing_context: Option<PgpSigningContext<'service>>,
     #[cfg(false)]
     pub decryption_helper: DecryptionHelper,
     #[cfg(false)]
@@ -180,11 +179,11 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
         };
 
-        let mut signature: Vec<u8> = Vec::new();
-
-        let mut signature_writer: Option<_> = match self.signing_helper.as_ref() {
-            Some(SigningHelper::Gpg { cert, policy }) => {
-                let writer = PgpSignatureWriter::new(&mut signature, *cert, *policy, created_at)
+        let mut pgp_signature: Vec<u8> = Vec::new();
+        let mut pgp_signature_writer = match self.pgp_signing_context.as_ref() {
+            Some(context) => {
+                let writer = context
+                    .new_writer(&mut pgp_signature, created_at)
                     .map_err(CreateBackupError::CannotSign)?;
                 Some(writer)
             }
@@ -196,7 +195,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
             .tee(&mut digest_writer)
-            .opt_tee(signature_writer.as_mut())
+            .opt_tee(pgp_signature_writer.as_mut())
             .build(upload_backup)?;
 
         () = finalize_backup(writer)?;
@@ -206,7 +205,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             .map_err(CreateBackupError::HashingFailed)?;
         todo!("Upload");
 
-        if let Some(sig_writer) = signature_writer {
+        if let Some(sig_writer) = pgp_signature_writer {
             () = sig_writer
                 .finalize()
                 .map_err(CreateBackupError::IntegrityCheckGenerationFailed)?;
