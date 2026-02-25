@@ -215,13 +215,13 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             // NOTE: OpenPGP will likely forever be the only signing protocol
             //   we support, but if we ever add one that also uses the `.sig`
             //   extension we can just use `.<protocol>.sig` for it.
-            let file_name = backup_name.with_extension("sig");
+            let file_name = backup_file_name.with_extension("sig");
             todo!("Upload signature");
         }
 
         // Upload SHA-256 digest.
         let sha_256_digest_id = {
-            let file_name = backup_name.with_extension("sha256");
+            let file_name = backup_file_name.with_extension("sha256");
 
             let mut uploader = self
                 .check_store
@@ -499,6 +499,20 @@ impl BackupFileName {
     /// ```
     fn extension(&self) -> &str {
         &self.value[(self.suffix_start_idx + 1)..]
+    }
+
+    /// ```rs
+    /// let file_name = BackupName::from("test").with_extension("foo.bar");
+    /// let other_file_name = file_name.with_extension("baz");
+    /// assert_eq!(file_name.extension(), "foo.bar.baz");
+    /// ```
+    fn with_extension(&self, extension: &'static str) -> Self {
+        debug_assert!(!extension.starts_with('.'));
+
+        Self {
+            value: format!("{self}.{extension}", self = self.value),
+            suffix_start_idx: self.suffix_start_idx,
+        }
     }
 }
 
