@@ -179,6 +179,13 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
         };
 
+        // NOTE: While it would be tempting to try to factor this so we can
+        //   handle _n_ writers and not forget to call `finalize` on it,
+        //   Rust’s borrow checker makes it very complicated. It would require
+        //   quite a lot of new types, making the code more complicated to read
+        //   but also compile as it would involve a lot of generics. Let’s make
+        //   it easier for both humans and `rustc` to figure out what’s going
+        //   on, by keeping it explicit.
         let mut pgp_signature: Vec<u8> = Vec::new();
         let mut pgp_signature_writer = match self.pgp_signing_context.as_ref() {
             Some(context) => {
