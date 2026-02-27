@@ -10,15 +10,15 @@ extern crate serde_json as json;
 mod archiving;
 mod compression;
 pub mod config;
-mod decryption;
-mod encryption;
+pub mod decryption;
+pub mod encryption;
 mod gpg;
 mod hashing;
-mod signing;
+pub mod signing;
 mod stats;
 pub mod stores;
 mod util;
-mod verification;
+pub mod verification;
 mod writer_chain;
 
 use std::borrow::Cow;
@@ -28,19 +28,11 @@ use bytes::Bytes;
 
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
-    config::SigningConfig,
-    decryption::DecryptionHelper,
     hashing::{DigestWriter, Sha256DigestWriter},
     stores::{ObjectStore, S3Store},
-    verification::pgp::PgpVerificationContext,
 };
 
-pub use self::{
-    archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION,
-    config::{ArchivingConfig, BackupConfig, CompressionConfig, EncryptionConfig, HashingConfig},
-    encryption::EncryptionContext,
-    signing::PgpSigningContext,
-};
+pub use self::archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION;
 
 // MARK: Service
 
@@ -73,15 +65,16 @@ pub type BackupService<'service, BackupStore = S3Store, CheckStore = S3Store> =
 pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub fs_root: std::path::PathBuf,
 
-    pub archiving_config: ArchivingConfig,
-    pub compression_config: CompressionConfig,
-    pub hashing_config: HashingConfig,
-    pub signing_config: Option<SigningConfig>,
+    pub archiving_config: config::ArchivingConfig,
+    pub compression_config: config::CompressionConfig,
+    pub hashing_config: config::HashingConfig,
+    pub signing_config: Option<config::SigningConfig>,
 
-    pub encryption_context: Option<EncryptionContext<'service>>,
-    pub pgp_signing_context: Option<PgpSigningContext<'service>>,
-    pub decryption_helper: DecryptionHelper,
-    pub pgp_verification_context: Option<PgpVerificationContext<'service, 'service>>,
+    pub encryption_context: Option<encryption::EncryptionContext<'service>>,
+    pub pgp_signing_context: Option<signing::PgpSigningContext<'service>>,
+    pub decryption_helper: decryption::DecryptionHelper,
+    pub pgp_verification_context:
+        Option<verification::pgp::PgpVerificationContext<'service, 'service>>,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
@@ -163,7 +156,9 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let backup_name = BackupName::from(description, &created_at);
 
         let backup_file_name = match self.encryption_context {
-            Some(EncryptionContext::Gpg { .. }) => backup_name.with_extension("tar.zst.gpg"),
+            Some(encryption::EncryptionContext::Gpg { .. }) => {
+                backup_name.with_extension("tar.zst.gpg")
+            }
             None => backup_name.with_extension("tar.zst"),
         };
 
@@ -648,6 +643,8 @@ mod restore {
             let crate::BackupNameComponents { created_at, .. } =
                 crate::parse_backup_file_name(&backup_name)?;
 
+            let fixme = "Check encryption.mandatory";
+
             let (tmp, backup_path) = self
                 .download_backup_and_check_integrity(&backup_name, created_at.clone())
                 .await?;
@@ -706,6 +703,8 @@ mod restore {
                 &decompression_stats,
                 restore_result.restored_bytes_count,
             );
+
+            drop(tmp);
 
             Ok(restore_result)
         }

@@ -3,10 +3,6 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::io::Read;
-
-use anyhow::{Context as _, anyhow};
-
 use crate::{ProseBackupService, stores::ObjectStore};
 
 impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
@@ -19,6 +15,9 @@ where
         backup_name: &crate::BackupFileName,
         created_at: impl Into<std::time::SystemTime>,
     ) -> Result<(tempfile::TempDir, std::path::PathBuf), anyhow::Error> {
+        use anyhow::{Context as _, anyhow};
+        use std::io::Read as _;
+
         // Open local file paths.
         // If permissions are not sufficient, avoids unnecessary network
         // calls (potentially billed).
@@ -120,55 +119,9 @@ where
     }
 }
 
-// MARK: Fork reader
-
-mod sha {
-    use std::io::Read;
-
-    use anyhow::anyhow;
-    use sha2::{Digest as _, Sha256};
-
-    use crate::util::to_hex;
-
-    pub struct Sha256Check {
-        hasher: Sha256,
-        expected: [u8; 32],
-    }
-
-    impl Sha256Check {
-        #[inline]
-        pub fn new(expected: [u8; 32]) -> Self {
-            debug_assert_eq!(expected.len(), Sha256::output_size());
-
-            Self {
-                hasher: Sha256::new(),
-                expected,
-            }
-        }
-
-        pub fn verify_reader<R: Read>(
-            mut self: Box<Self>,
-            reader: &mut R,
-        ) -> Result<(), anyhow::Error> {
-            std::io::copy(reader, &mut self.hasher);
-            let result = self.hasher.finalize();
-            if *result == self.expected {
-                Ok(())
-            } else {
-                Err(anyhow!(
-                    "Invalid hash. Got '0x{result}', expected '0x{expected}'.",
-                    result = to_hex(result.as_ref()),
-                    expected = to_hex(&self.expected)
-                ))
-            }
-        }
-    }
-}
-
 pub mod pgp {
     use std::{io, time::SystemTime};
 
-    use anyhow::anyhow;
     use openpgp::parse::{Parse as _, stream::*};
 
     #[repr(transparent)]

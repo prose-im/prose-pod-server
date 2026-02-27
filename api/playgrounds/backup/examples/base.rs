@@ -8,12 +8,18 @@ use std::{
     fs,
     io::Read as _,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use bytes::Bytes;
 use prose_backup::{
-    ArchivingConfig, BackupService, CompressionConfig, CreateBackupOutput, EncryptionConfig,
-    EncryptionContext, SigningHelper, config::SigningConfig, openpgp,
+    BackupService, CreateBackupOutput,
+    config::{EncryptionMode, HashingAlgorithm, *},
+    decryption::{DecryptionHelper, GpgDecryptionHelper},
+    encryption::EncryptionContext,
+    openpgp,
+    signing::PgpSigningContext,
+    verification::pgp::{PgpVerificationContext, PgpVerificationHelper},
 };
 
 #[tokio::main]
@@ -37,43 +43,91 @@ async fn main() -> Result<(), anyhow::Error> {
         enabled: true,
         mandatory: true,
         mode: EncryptionMode::Gpg,
-        gpg: None,
+        gpg: Some(EncryptionGpgConfig {
+            key: Path::new("cert1").to_path_buf(),
+            additional_encryption_keys: vec![],
+            additional_decryption_keys: vec![],
+        }),
     };
     // let encryption_config = None;
+    let hashing_config = HashingConfig {
+        algorithm: HashingAlgorithm::Sha256,
+    };
     let signing_config = Some(SigningConfig {
         mandatory: false,
-        pgp: None,
+        pgp: Some(SigningPgpConfig {
+            key: Path::new("cert2").to_path_buf(),
+            additional_encryption_keys: vec![],
+            additional_decryption_keys: vec![],
+        }),
     });
     // let signing_config = None;
-    let integrity_config = Some(EncryptionConfig::new(generate_test_cert()?));
-    // let integrity_config = None;
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
-        ("cert1", generate_test_cert()?),
-        ("cert2", generate_test_cert()?),
+        (Path::new("cert1").to_path_buf(), generate_test_cert()?),
+        (Path::new("cert2").to_path_buf(), generate_test_cert()?),
     ]
-    .iter()
+    .into_iter()
     .collect();
-    let pgp_cert = generate_test_cert()?;
 
-    let encryption_helper = if encryption_config.enabled {
-        match encryption_config.mode {
-            config::EncryptionMode::Gpg => {
-                let cert = certs.get("cert1").unwrap();
-                let pgp_policy = openpgp::policy::StandardPolicy::new();
+    let pgp_policy = openpgp::policy::StandardPolicy::new();
+
+    let encryption_context = if encryption_config.enabled {
+        match encryption_config.gpg.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = certs.get(&pgp.key).unwrap();
                 Some(EncryptionContext::Gpg {
                     cert: &pgp_cert,
                     policy: &pgp_policy,
                 })
             }
+            None => None,
         }
     } else {
         None
     };
-    let signing_helper = Some(SigningHelper::Gpg {
-        cert: &pgp_cert,
-        policy: &pgp_policy,
-    });
+    let pgp_signing_context = match signing_config.as_ref() {
+        Some(config) => match config.pgp.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = certs.get(&pgp.key).unwrap();
+                Some(PgpSigningContext {
+                    cert: &pgp_cert,
+                    policy: &pgp_policy,
+                })
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let pgp_verification_context = match signing_config.as_ref() {
+        Some(config) => match config.pgp.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = certs.get(&pgp.key).unwrap();
+                Some(PgpVerificationContext {
+                    helper: PgpVerificationHelper { cert: &pgp_cert },
+                    policy: &pgp_policy,
+                })
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let decryption_helper = if encryption_config.enabled {
+        match encryption_config.gpg.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = certs.get(&pgp.key).unwrap();
+                let mut helper = DecryptionHelper::default();
+                helper.gpg = Some(GpgDecryptionHelper {
+                    cert: pgp_cert.to_owned(),
+                    policy: Arc::new(pgp_policy.to_owned()),
+                });
+                helper
+            }
+            None => DecryptionHelper::default(),
+        }
+    } else {
+        DecryptionHelper::default()
+    };
 
     let fs_prefix = Path::new(".out");
 
@@ -83,9 +137,9 @@ async fn main() -> Result<(), anyhow::Error> {
         .overwrite(true)
         .directory(&fs_prefix_backups);
 
-    let fs_prefix_integrity_checks = fs_prefix.join("integrity-checks");
+    let fs_prefix_integrity_checks = fs_prefix.join("checks");
     fs::create_dir_all(&fs_prefix_integrity_checks)?;
-    let integrity_check_store = prose_backup::stores::Fs::default()
+    let check_store = prose_backup::stores::Fs::default()
         .overwrite(true)
         .directory(&fs_prefix_integrity_checks);
 
@@ -95,10 +149,12 @@ async fn main() -> Result<(), anyhow::Error> {
         compression_config,
         hashing_config,
         signing_config,
+        pgp_signing_context,
+        encryption_context,
         backup_store,
         check_store,
-        encryption_context: encryption_helper,
-        signing_helper,
+        pgp_verification_context,
+        decryption_helper,
     };
 
     let CreateBackupOutput {
