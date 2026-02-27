@@ -21,7 +21,10 @@ pub trait ObjectStore {
 
     async fn writer(&self, key: &str) -> Result<Self::Writer, anyhow::Error>;
 
-    async fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error>;
+    /// Returns `None` if key does not exist.
+    async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error>;
+
+    async fn exists(&self, key: &str) -> Result<bool, anyhow::Error>;
 
     async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
 

@@ -3,199 +3,118 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::io::{self, Read, Write};
-
-////
-
-impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
-where
-    S1: ObjectStore,
-    S2: ObjectStore,
-{
-    pub async fn check_signature(
-        &self,
-        backup_file_name: &str,
-        signature_file_name: &str,
-    ) -> Result<(), anyhow::Error> {
-        use std::io::Read as _;
-
-        let mut backup_reader = self
-            .backup_store
-            .reader(backup_file_name)
-            .await
-            .context("Could not open backup reader")?;
-
-        let mut verifier = BackupVerifier::new(self.hashing_config.as_ref());
-        std::io::copy(&mut backup_reader, &mut verifier.writer).context("Could not read backup")?;
-
-        let mut integrity_check_reader = self
-            .check_store
-            .reader(signature_file_name)
-            .await
-            .context("Could not open integrity check reader")?;
-        let mut integrity_check: Vec<u8> = Vec::new();
-        integrity_check_reader
-            .read_to_end(&mut integrity_check)
-            .context("Could not read integrity check")?;
-
-        verifier.verify(&integrity_check)?;
-
-        tracing::debug!("Integrity check passed ({signature_file_name}).");
-
-        Ok(())
-    }
-}
-
-////
+use std::io::Read;
 
 use anyhow::{Context as _, anyhow};
-use openpgp::parse::{
-    Parse,
-    stream::{DetachedVerifier, DetachedVerifierBuilder},
-};
-use sha2::{Digest as _, Sha256};
 
 use crate::{ProseBackupService, stores::ObjectStore};
 
-pub(crate) struct IntegrityCheckDescriptor<'a> {
-    pub suffix: &'a str,
-
-    pub value: Vec<u8>,
-}
-
-pub(crate) struct IntegrityCheckBuilder;
-
-impl IntegrityCheckBuilder {
-    pub fn new(
-        // Suffix after the backup file name (e.g. `.sig`, `.sha256`…).
-        suffix: &str,
-    ) -> Result<impl Fn(Vec<u8>) -> IntegrityCheck, anyhow::Error> {
-        match suffix {
-            ".sig" => Ok(IntegrityCheck::PgpSignature),
-            ".sha256" => Ok(IntegrityCheck::Sha256),
-            suffix => Err(anyhow!("Unrecognized integrity check suffix: `{suffix}`.")),
-        }
-    }
-}
-
-pub(crate) enum IntegrityCheck {
-    Sha256(Vec<u8>),
-    PgpSignature(Vec<u8>),
-}
-
-impl IntegrityCheck {
-    fn pre_validate(&self) -> Result<(), anyhow::Error> {
-        match self {
-            Self::PgpSignature(value) => todo!(),
-            Self::Sha256(hash) => {
-                let hash_len = hash.len();
-                if hash_len != 32 {
-                    return Err(anyhow!("SHA-256 hash has incorrect length: {hash_len}"));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-pub fn pre_validate_integrity_checks(checks: &[IntegrityCheck]) -> Result<(), anyhow::Error> {
-    for check in checks {
-        check.pre_validate()?;
-    }
-
-    Ok(())
-}
-
 impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
 where
     S1: ObjectStore,
     S2: ObjectStore,
 {
-    pub async fn check_backup_integrity<R: Read>(
+    pub async fn download_backup_and_check_integrity(
         &self,
-        backup_name: &str,
-        backup_reader_builder: impl Fn() -> R,
-    ) -> Result<(), anyhow::Error> {
-        use std::io::Read as _;
+        backup_name: &crate::BackupFileName,
+        created_at: impl Into<std::time::SystemTime>,
+    ) -> Result<(tempfile::TempDir, std::path::PathBuf), anyhow::Error> {
+        // Open local file paths.
+        // If permissions are not sufficient, avoids unnecessary network
+        // calls (potentially billed).
+        let tmp = tempfile::TempDir::new()
+            .context("Failed creating a temporary directory to download the backup in")?;
+        let backup_path = tmp.path().join(&backup_name);
+        let mut backup_file = std::fs::File::create_new(&backup_path)
+            .context("Failed opening a file path to download the backup to")?;
 
-        let integrity_checks = (self.check_store)
-            .find(backup_name)
+        // Make sure the backup exists.
+        // Integrity checks cannot be deleted; checking this first avoids
+        // unnecessary network calls (potentially billed) and computation.
+        let Some(mut backup_reader) = (self.backup_store)
+            .reader(&backup_name)
             .await
-            .context("Failed listing integrity checks")?;
+            .context("Failed opening backup reader")?
+        else {
+            return Err(anyhow!("Backup not found"));
+        };
 
-        if integrity_checks.is_empty() {
+        // TODO: Read backup to temporary file. It will have to be downloaded
+        //   at some point anyway, and doing it this early allows us not to
+        //   fetch it twice. It also allows us to easily performing integrity
+        //   checks in parallel by opening multiple file descriptors (instead
+        //   of writing a lot of overly complicated reading logic to reuse the
+        //   same in-memory reader).
+        // TODO: Run integrity checks.
+        // TODO: Restore backup. Only extract backup AFTER running
+        //   integrity checks to avoid potentially executing a malicious
+        //   archive if it’s been tampered with.
+
+        let todo = "Fix comment";
+        // Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
+        // read of the whole backup file if something is wrong (i.e. fetch
+        // fails, corrupted signature, no supported check…). Integrity
+        // checks are quite small so loading all in memory is better than
+        // saving to temporary files (less I/O).
+
+        // Look for an OpenPGP signature.
+        if let Some(context) = self.pgp_verification_context.as_ref() {
+            let check_name = backup_name.with_extension("sig");
+
+            let reader = self.check_store.reader(&check_name).await.context(format!(
+                "Failed opening integrity check reader for `{check_name}`"
+            ))?;
+
+            if let Some(mut reader) = reader {
+                // Read signature.
+                let mut bytes: Vec<u8> = Vec::new();
+                reader.read_to_end(&mut bytes);
+
+                // Create the verifier, applying the policy at the
+                // creation date of the backup.
+                // NOTE: Validates the signature, which avoids reading the
+                //   backup entirely if the signature itself is invalid.
+                let mut verifier =
+                    pgp::PgpSignatureVerifier::new(context.to_owned(), &bytes, created_at.into())
+                        .context(format!("Invalid OpenPGP signature: `{check_name}`"))?;
+
+                // Read the backup to a temporary file.
+                std::io::copy(&mut backup_reader, &mut backup_file)?;
+
+                // Verify the signature.
+                verifier.verify_reader(&mut backup_file).context(format!(
+                    "Invalid OpenPGP signature (verify): `{check_name}`"
+                ))?;
+
+                tracing::debug!("OpenPGP signature verified.");
+
+                // Don’t process any other integrity check.
+                return Ok((tmp, backup_path));
+            } else {
+                tracing::info!(
+                    "Found OpenPGP signature file `{check_name}` but cannot read it because of missing configuration. Skipping."
+                )
+            }
+        }
+
+        // Ensure backup is signed if configuration enforces it.
+        if self.signing_config.as_ref().is_some_and(|c| c.mandatory) {
             return Err(anyhow!(
-                "No integrity check stored for '{backup_name}'. \
-                Cannot check integrity."
+                "Backup not signed (but signing is mandatory per configuration)."
             ));
         }
 
-        let mut backup_reader = self
-            .backup_store
-            .reader(backup_name)
-            .await
-            .context("Could not open backup reader")?;
+        {
+            let check_name = backup_name.with_extension("sha256");
 
-        let mut integrity_checked = false;
+            let reader = self.check_store.reader(&check_name).await.context(format!(
+                "Failed opening integrity check reader for `{check_name}`"
+            ))?;
 
-        for integrity_check in integrity_checks.iter() {
-            match integrity_check
-                .strip_prefix(backup_name)
-                .unwrap_or(integrity_check.as_str())
-            {
-                ".sig" => {
-                    let Some(helper) = self.verification_helper.gpg else {
-                        tracing::debug!(
-                            "Cannot check '{integrity_check}': OpenPGP keys not configured."
-                        );
-                        continue;
-                    };
-
-                    let mut verifier = DetachedVerifierBuilder::from_reader(backup_reader)?;
-                    std::io::copy(&mut backup_reader, &mut verifier.writer)
-                        .context("Could not read backup")?;
-
-                    let mut integrity_check_reader = self
-                        .check_store
-                        .reader(integrity_check)
-                        .await
-                        .context("Could not open integrity check reader")?;
-                    let mut integrity_check: Vec<u8> = Vec::new();
-                    integrity_check_reader
-                        .read_to_end(&mut integrity_check)
-                        .context("Could not read integrity check")?;
-
-                    verifier.verify(&integrity_check)?;
-                }
-                ".sha256" => todo!(),
-            }
-
-            tracing::debug!("Integrity check passed ({integrity_check}).");
-
-            integrity_checked = true;
-        }
-
-        if integrity_checked {
-            Ok(backup_reader)
-        } else {
-            Err(anyhow!(
-                "No integrity check could be processed for '{backup_name}'. \
-                Integrity check failed."
-            ))
-        }
-    }
-}
-
-impl IntegrityChecker {
-    fn verify(self, integrity_check: &[u8]) -> Result<(), anyhow::Error> {
-        match self {
-            Self::Sha256 { hasher } => {
-                let hash = hasher.finalize();
-                if integrity_check == hash.to_vec().as_slice() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("Invalid hash."))
-                }
+            if let Some(mut reader) = reader {
+                todo!("Check hash.");
+            } else {
+                return Err(anyhow!("Could not check the integrity of the backup."));
             }
         }
     }
@@ -203,67 +122,8 @@ impl IntegrityChecker {
 
 // MARK: Fork reader
 
-pub trait IntegrityCheck<'a, R: Read>: Write + Send {
-    fn verify_reader(self: Box<Self>, reader: &mut R) -> Result<(), anyhow::Error>;
-}
-
-pub struct ForkReader<'a, R> {
-    reader: R,
-    checks: Vec<Box<dyn IntegrityCheck<'a, R> + 'a>>,
-}
-
-impl<'a, R: Read> ForkReader<'a, R> {
-    /// Create a new ForkReader with the given reader
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            checks: Vec::new(),
-        }
-    }
-
-    /// Add an integrity check
-    pub fn add_check(&mut self, check: Box<dyn IntegrityCheck<'a> + 'a>) {
-        self.checks.push(check);
-    }
-
-    /// Consume the reader and return results of all checks
-    pub fn verify(mut self) -> io::Result<Vec<bool>> {
-        // Read through the entire file
-        let mut buffer = vec![0u8; 8192];
-        loop {
-            match self.reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
-                    // Update all checks with this chunk
-                    for check in &mut self.checks {
-                        check.update(&buffer[..n]);
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-
-        // Finalize all checks and collect results
-        Ok(self.checks.into_iter().map(|c| c.finalize()).collect())
-    }
-}
-
-impl<'a, R: Read> Read for ForkReader<'a, R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.reader.read(buf)?;
-
-        // Update all checks with the data that was read
-        for check in &mut self.checks {
-            check.update(&buf[..n]);
-        }
-
-        Ok(n)
-    }
-}
-
 mod sha {
-    use std::io::{self, Read, Write};
+    use std::io::Read;
 
     use anyhow::anyhow;
     use sha2::{Digest as _, Sha256};
@@ -276,26 +136,20 @@ mod sha {
     }
 
     impl Sha256Check {
+        #[inline]
         pub fn new(expected: [u8; 32]) -> Self {
+            debug_assert_eq!(expected.len(), Sha256::output_size());
+
             Self {
                 hasher: Sha256::new(),
                 expected,
             }
         }
-    }
 
-    impl Write for Sha256Check {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.hasher.write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.hasher.flush()
-        }
-    }
-
-    impl<'a, R: Read> super::IntegrityCheck<'a, R> for Sha256Check {
-        fn verify_reader(mut self: Box<Self>, reader: &mut R) -> Result<(), anyhow::Error> {
+        pub fn verify_reader<R: Read>(
+            mut self: Box<Self>,
+            reader: &mut R,
+        ) -> Result<(), anyhow::Error> {
             std::io::copy(reader, &mut self.hasher);
             let result = self.hasher.finalize();
             if *result == self.expected {
@@ -312,67 +166,51 @@ mod sha {
 }
 
 pub mod pgp {
-    use std::{
-        io::{self, Write},
-        time::SystemTime,
-    };
+    use std::{io, time::SystemTime};
 
-    use openpgp::parse::{
-        Parse,
-        stream::{DetachedVerifier, DetachedVerifierBuilder, MessageLayer, MessageStructure},
-    };
+    use anyhow::anyhow;
+    use openpgp::parse::{Parse as _, stream::*};
 
     #[repr(transparent)]
-    pub struct PgpSignatureVerifier<'data, 'cert>(
-        DetachedVerifier<'data, PgpVerificationHelper<'cert>>,
+    pub struct PgpSignatureVerifier<'sig, 'cert>(
+        DetachedVerifier<'sig, PgpVerificationHelper<'cert>>,
     );
 
-    impl<'data, 'cert> PgpSignatureVerifier<'data, 'cert> {
-        pub fn new(
-            policy: &'data dyn openpgp::policy::Policy,
-            helper: PgpVerificationHelper<'cert>,
-            expected: &'data [u8],
+    impl<'sig, 'cert> PgpSignatureVerifier<'sig, 'cert> {
+        pub fn new<'policy: 'sig>(
+            context: &'_ PgpVerificationContext<'cert, 'policy>,
+            expected: &'sig [u8],
             time: SystemTime,
         ) -> Result<Self, anyhow::Error> {
             let verifier = DetachedVerifierBuilder::from_bytes(expected)?.with_policy(
-                policy,
+                context.policy,
                 Some(time),
-                helper,
+                context.helper.clone(),
             )?;
-            Ok(Self { verifier })
-        }
-    }
 
-    impl<'data, 'cert> PgpSignatureVerifier<'data, 'cert> {
-        fn finalize(self) -> Result<(), anyhow::Error> {
-            self.0.build()?.finalize()
-        }
-    }
-
-    impl<'data, 'cert> Write for PgpSignatureVerifier<'data, 'cert> {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.write(buf)
+            Ok(Self(verifier))
         }
 
-        fn flush(&mut self) -> io::Result<()> {
-            self.0.flush()
-        }
-    }
-
-    impl<'data, 'cert, R: io::Read + Send + Sync> super::IntegrityCheck<'cert, R>
-        for PgpSignatureVerifier<'data, 'cert>
-    {
-        fn verify_reader(mut self: Box<Self>, reader: &mut R) -> Result<(), anyhow::Error> {
+        pub fn verify_reader<R: io::Read + Send + Sync>(
+            &mut self,
+            reader: &mut R,
+        ) -> Result<(), anyhow::Error> {
             self.0.verify_reader(reader)
         }
     }
 
     #[derive(Debug)]
-    pub struct PgpVerificationHelper<'cert> {
-        cert: &'cert openpgp::Cert,
+    pub struct PgpVerificationContext<'cert, 'policy> {
+        pub helper: PgpVerificationHelper<'cert>,
+        pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
-    impl<'cert> openpgp::parse::stream::VerificationHelper for PgpVerificationHelper<'cert> {
+    #[derive(Debug, Clone)]
+    pub struct PgpVerificationHelper<'cert> {
+        pub cert: &'cert openpgp::Cert,
+    }
+
+    impl<'cert> VerificationHelper for PgpVerificationHelper<'cert> {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],

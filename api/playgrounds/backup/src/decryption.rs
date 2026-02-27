@@ -6,14 +6,16 @@
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct DecryptionHelper {
-    gpg: Option<GpgDecryptionHelper>,
+    pub gpg: Option<GpgDecryptionHelper>,
 }
 
 pub use self::gpg::GpgDecryptionHelper;
 mod gpg {
     use std::sync::Arc;
 
-    use openpgp::{crypto::SessionKey, packet::prelude::*, types::SymmetricAlgorithm};
+    use openpgp::{
+        crypto::SessionKey, packet::prelude::*, parse::stream::*, types::SymmetricAlgorithm,
+    };
 
     #[derive(Debug)]
     pub struct GpgDecryptionHelper {
@@ -68,28 +70,30 @@ mod gpg {
         }
     }
 
-    // impl openpgp::parse::stream::VerificationHelper for &GpgDecryptionHelper {
-    //     fn get_certs(
-    //         &mut self,
-    //         _ids: &[openpgp::KeyHandle],
-    //     ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-    //         Ok(vec![self.cert.clone()])
-    //     }
+    impl VerificationHelper for &GpgDecryptionHelper {
+        fn get_certs(
+            &mut self,
+            _ids: &[openpgp::KeyHandle],
+        ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
+            let fixme = "Return multiple certs";
 
-    //     fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
-    //         for (i, layer) in structure.into_iter().enumerate() {
-    //             match layer {
-    //                 MessageLayer::Encryption { .. } if i == 0 => {
-    //                     // FIXME: Do something?
-    //                 }
+            Ok(vec![self.cert.clone()])
+        }
 
-    //                 layer => {
-    //                     return Err(anyhow::anyhow!("Unexpected message structure ({layer:?})",));
-    //                 }
-    //             }
-    //         }
+        fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
+            for (i, layer) in structure.into_iter().enumerate() {
+                match layer {
+                    MessageLayer::Encryption { .. } if i == 0 => {
+                        // FIXME: Do something?
+                    }
 
-    //         Ok(())
-    //     }
-    // }
+                    layer => {
+                        return Err(anyhow::anyhow!("Unexpected message structure ({layer:?})",));
+                    }
+                }
+            }
+
+            Ok(())
+        }
+    }
 }

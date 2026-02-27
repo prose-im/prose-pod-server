@@ -71,7 +71,7 @@ impl ObjectStore for FsStore {
             .context("Failed opening file (write)")
     }
 
-    async fn reader(&self, file_name: &str) -> Result<Self::Reader, anyhow::Error> {
+    async fn reader(&self, file_name: &str) -> Result<Option<Self::Reader>, anyhow::Error> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
@@ -81,10 +81,15 @@ impl ObjectStore for FsStore {
 
         // tracing::debug!("Opening {} (read)…", path.display());
 
-        File::options()
-            .read(true)
-            .open(path)
-            .context("Failed opening file (read)")
+        match File::options().read(true).open(path) {
+            Ok(reader) => Ok(Some(reader)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(anyhow::Error::from(err).context("Failed opening file (read)")),
+        }
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool, anyhow::Error> {
+        Ok(self.directory.join(key).exists())
     }
 
     async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {

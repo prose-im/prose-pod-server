@@ -5,7 +5,7 @@
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use s3::types::CompletedPart;
+use s3::{error::SdkError, types::CompletedPart};
 use std::io::{self, Read, Write};
 use time::UtcDateTime;
 
@@ -36,8 +36,27 @@ impl ObjectStore for S3Store {
         })
     }
 
-    async fn reader(&self, key: &str) -> Result<Self::Reader, anyhow::Error> {
-        Ok(S3Reader::new(self.client.clone(), &self.bucket, key))
+    async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error> {
+        match self.exists(key).await {
+            Ok(true) => Ok(Some(S3Reader::new(self.client.clone(), &self.bucket, key))),
+            Ok(false) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn exists(&self, key: &str) -> Result<bool, anyhow::Error> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(SdkError::ServiceError(e)) if e.err().is_not_found() => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {

@@ -10,7 +10,6 @@ extern crate serde_json as json;
 mod archiving;
 mod compression;
 pub mod config;
-#[cfg(false)]
 mod decryption;
 mod encryption;
 mod gpg;
@@ -19,7 +18,6 @@ mod signing;
 mod stats;
 pub mod stores;
 mod util;
-#[cfg(false)]
 mod verification;
 mod writer_chain;
 
@@ -31,8 +29,10 @@ use bytes::Bytes;
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
     config::SigningConfig,
+    decryption::DecryptionHelper,
     hashing::{DigestWriter, Sha256DigestWriter},
     stores::{ObjectStore, S3Store},
+    verification::pgp::PgpVerificationContext,
 };
 
 pub use self::{
@@ -80,10 +80,8 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 
     pub encryption_context: Option<EncryptionContext<'service>>,
     pub pgp_signing_context: Option<PgpSigningContext<'service>>,
-    #[cfg(false)]
     pub decryption_helper: DecryptionHelper,
-    #[cfg(false)]
-    pub verification_helper: VerificationHelper<'service>,
+    pub pgp_verification_context: Option<PgpVerificationContext<'service, 'service>>,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
@@ -93,7 +91,7 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 
 #[derive(Debug)]
 pub struct CreateBackupOutput {
-    pub backup_id: String,
+    pub backup_id: BackupFileName,
     pub digest_ids: Vec<String>,
     pub signature_ids: Vec<String>,
 }
@@ -265,7 +263,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         }
 
         Ok(CreateBackupOutput {
-            backup_id: backup_file_name.to_string(),
+            backup_id: backup_file_name,
             digest_ids,
             signature_ids,
         })
@@ -384,7 +382,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let checks = self.check_store.list_all_after(oldest_backup).await?;
 
         let todo = "Make this dynamic via configuration.";
-        let signing_is_mandatory = false;
+        let signing_is_mandatory = self.signing_config.as_ref().is_some_and(|c| c.mandatory);
         let encryption_is_mandatory = false;
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
@@ -492,15 +490,15 @@ impl BackupName {
     }
 }
 
-impl std::fmt::Display for BackupName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
 impl std::fmt::Debug for BackupName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for BackupName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -510,6 +508,27 @@ pub struct BackupFileName {
 
     /// Index of the dot before the file extention.
     suffix_start_idx: usize,
+}
+
+impl std::fmt::Debug for BackupFileName {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.value, f)
+    }
+}
+
+impl std::fmt::Display for BackupFileName {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.value, f)
+    }
+}
+
+impl AsRef<std::path::Path> for BackupFileName {
+    #[inline]
+    fn as_ref(&self) -> &std::path::Path {
+        self.value.as_ref()
+    }
 }
 
 impl BackupFileName {
@@ -549,6 +568,12 @@ impl std::ops::Deref for BackupFileName {
 
     fn deref(&self) -> &Self::Target {
         self.value.as_str()
+    }
+}
+
+impl AsRef<String> for BackupFileName {
+    fn as_ref(&self) -> &String {
+        &self.value
     }
 }
 
@@ -596,145 +621,93 @@ fn parse_backup_file_name<'a>(
 
 // MARK: Restore
 
-#[cfg(false)]
 mod restore {
     use std::path::Path;
 
-    use anyhow::anyhow;
+    use anyhow::{Context as _, anyhow};
+    use openpgp::parse::Parse as _;
+    use openpgp::parse::stream::DecryptorBuilder;
 
     use crate::{
-        BackupNameComponents, ProseBackupService,
+        BackupFileName, ProseBackupService,
         archiving::{ExtractionSuccess, extract_archive},
-        parse_backup_file_name,
-        stats::{StatsReader, print_stats},
+        stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
-        verification::{IntegrityCheck, pre_validate_integrity_checks},
+        writer_chain::either::Either,
     };
 
     impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
         #[must_use]
         pub async fn restore_backup(
             &self,
-            backup_name: &str,
+            backup_name: &BackupFileName,
             location: impl AsRef<Path>,
         ) -> Result<ExtractionSuccess, anyhow::Error> {
-            use crate::stats::ReadStats;
-            use crate::writer_chain::either::Either;
-            use openpgp::parse::Parse as _;
-            use openpgp::parse::stream::DecryptorBuilder;
+            // Parse backup name first.
+            // Avoids unnecessary I/O if malformed.
+            let crate::BackupNameComponents { created_at, .. } =
+                crate::parse_backup_file_name(&backup_name)?;
 
-            let BackupNameComponents {
-                created_at,
-                description,
-                extensions,
-            } = parse_backup_file_name(backup_name)?;
+            let (tmp, backup_path) = self
+                .download_backup_and_check_integrity(&backup_name, created_at.clone())
+                .await?;
 
-            // TODO: List integrity checks.
-            // TODO: Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
-            //   read of the whole backup file if something is wrong (i.e. fetch
-            //   fails, corrupted signature, no supported check…). Integrity checks
-            //   are quite small so loading all in memory is better than saving to
-            //   temporary files (less I/O).
-            // TODO: Check signature for corruption (just in case).
-            // TODO: Read backup to temporary file. It will have to be downloaded
-            //   at some point anyway, and doing it this early allows us not to
-            //   fetch it twice. It also allows us to easily performing integrity
-            //   checks in parallel by opening multiple file descriptors (instead
-            //   of writing a lot of overly complicated reading logic to reuse the
-            //   same in-memory reader).
-            // TODO: Run integrity checks.
-            // TODO: Restore backup.
+            // WARN: Not streaming to decompression just now to
+            //   avoid decompressing a malicious archive.
 
-            let integrity_check_names = (self.check_store)
-                .find(backup_name)
-                .await
-                .context("Failed listing integrity checks")?;
-
-            let mut integrity_checks = Vec::with_capacity(integrity_check_names.len());
-            for key in integrity_check_names {
-                let mut reader = (self.check_store)
-                    .reader(&key)
-                    .await
-                    .context(format!("Could not open integrity check reader for '{key}'"))?;
-                let mut buf: Vec<u8> = Vec::new();
-                reader.read_to_end(&mut buf);
-
-                integrity_checks.push(IntegrityCheck {
-                    name: key,
-                    value: buf,
-                });
-            }
-
-            pre_validate_integrity_checks(&integrity_checks)?;
-
-            // Check signature first.
-            let signature_name = integrity_checks
-                .iter()
-                .find(|name| name.as_str() == format!("{backup_name}.sig").as_str());
-
-            if let Some(signature_name) = signature_name {
-                self.check_backup_integrity(&backup_name, &signature_name)
-                    .await
-                    .context("Integrity check failed")?;
-
-                let backup_reader = (self.backup_store)
-                    .reader(backup_name)
-                    .await
-                    .context("Cannot create reader")?;
-
-                let mut raw_read_stats = ReadStats::new();
-                let backup_reader = StatsReader::new(backup_reader, &mut raw_read_stats);
-
-                // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
-                //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
-                let mut decryption_stats = ReadStats::new();
-                let compressed_archive_reader = if backup_name.ends_with(".gpg") {
-                    if let Some(config) = self.encryption_config.gpg.as_ref() {
-                        let decryptor = DecryptorBuilder::from_reader(backup_reader)
-                            .context("Failed creating decryptor builder")?
-                            .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
-                            .context("Failed creating decryptor")?;
-
-                        let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
-
-                        Either::A(decryptor)
-                    } else {
-                        return Err(anyhow!(
-                            "Encryption not configured. Cannot find private keys.",
-                        ));
+            let backup_file = std::fs::File::open(backup_path)
+                .context("Could not find downloaded backup")
+                .inspect_err(|err| {
+                    if cfg!(debug_assertions) {
+                        panic!("{err:?}")
                     }
+                })?;
+
+            let mut raw_read_stats = ReadStats::new();
+            let backup_reader = StatsReader::new(backup_file, &mut raw_read_stats);
+
+            // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
+            //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
+            let mut decryption_stats = ReadStats::new();
+            let compressed_archive_reader = if backup_name.ends_with(".gpg") {
+                if let Some(config) = self.decryption_helper.gpg.as_ref() {
+                    let decryptor = DecryptorBuilder::from_reader(backup_reader)
+                        .context("Failed creating decryptor builder")?
+                        .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
+                        .context("Failed creating decryptor")?;
+
+                    let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
+
+                    Either::A(decryptor)
                 } else {
-                    tracing::debug!("NOT DECRYPTING");
+                    return Err(anyhow!(
+                        "Encryption not configured. Cannot find private keys.",
+                    ));
+                }
+            } else {
+                tracing::debug!("NOT DECRYPTING");
 
-                    Either::B(backup_reader)
-                };
+                Either::B(backup_reader)
+            };
 
-                let archive_bytes =
-                    zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
+            let archive_bytes =
+                zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
 
-                let mut decompression_stats = ReadStats::new();
-                let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
+            let mut decompression_stats = ReadStats::new();
+            let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-                let restore_result =
-                    extract_archive(archive_bytes, location).context("Backup extraction failed")?;
+            let restore_result =
+                extract_archive(archive_bytes, location).context("Backup extraction failed")?;
 
-                print!("\n");
-                print_stats(
-                    &raw_read_stats,
-                    &decryption_stats,
-                    &decompression_stats,
-                    restore_result.restored_bytes_count,
-                );
+            print!("\n");
+            print_stats(
+                &raw_read_stats,
+                &decryption_stats,
+                &decompression_stats,
+                restore_result.restored_bytes_count,
+            );
 
-                return Ok(restore_result);
-            }
-
-            // FIXME: Do not look for hash if signature is mandatory.
-
-            // Check hash if no signature exist.
-            let todo = "Hash check";
-
-            Ok(todo!())
+            Ok(restore_result)
         }
     }
 }
