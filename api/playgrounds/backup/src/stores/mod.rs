@@ -24,6 +24,23 @@ pub trait ObjectStore {
     /// Returns `None` if key does not exist.
     async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error>;
 
+    /// Returns `None` if key does not exist or object too large.
+    async fn reader_if_not_too_large(
+        &self,
+        key: &str,
+        max_size: u64,
+    ) -> Result<Option<Self::Reader>, anyhow::Error> {
+        let ObjectMetadata { size, .. } = self.metadata(key).await?;
+
+        if size <= max_size {
+            self.reader(key).await
+        } else {
+            Err(anyhow::Error::msg(format!(
+                "Object `{key}` too large ({size} > {max_size})."
+            )))
+        }
+    }
+
     async fn exists(&self, key: &str) -> Result<bool, anyhow::Error>;
 
     async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;

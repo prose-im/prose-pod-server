@@ -143,7 +143,9 @@ impl ObjectStore for FsStore {
     }
 
     async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error> {
-        let meta = fs::metadata(file_name).context("Failed getting file metadata")?;
+        let file_path = self.directory.join(file_name);
+
+        let meta = fs::metadata(&file_path).context("Failed getting file metadata")?;
         let created_at = meta.created().expect(
             "File creation date should be accessible on filesystems \
             where Prose is deployed",

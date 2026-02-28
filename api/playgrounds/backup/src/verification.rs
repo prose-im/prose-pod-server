@@ -5,6 +5,15 @@
 
 use crate::{ProseBackupService, stores::ObjectStore};
 
+/// Do not download OpenPGP signatures if larger than 2KiB.
+/// FYI it should be 191 bytes so we’re being pretty safe here.
+///
+/// Because integrity checks are stored in S3 buckets, where data transfer
+/// might be charged, it’s important to avoid downloading excessively large
+/// files a malicious actor might have stored. We also prevent Denial of Service
+/// if we stay stuck at downloading a very very large file.
+const MAX_PGP_SIGNATURE_LENGTH: u64 = 2 * 1024;
+
 impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
 where
     S1: ObjectStore,
@@ -64,16 +73,17 @@ where
             return Err(anyhow!("Backup not found"));
         };
 
-        let fixme = "Fetch max number of bytes from S3, to avoid DoS";
-        // const MAX_SIGNATURE_SIZE: usize = 2 * 1024; // 2KiB
-
         // Look for an OpenPGP signature.
         if let Some(context) = self.pgp_verification_context.as_ref() {
             let check_name = backup_name.with_extension("sig");
 
-            let reader = self.check_store.reader(&check_name).await.context(format!(
-                "Failed opening integrity check reader for `{check_name}`"
-            ))?;
+            let reader = self
+                .check_store
+                .reader_if_not_too_large(&check_name, MAX_PGP_SIGNATURE_LENGTH)
+                .await
+                .context(format!(
+                    "Failed opening integrity check reader for `{check_name}`"
+                ))?;
 
             if let Some(mut reader) = reader {
                 // Read signature.
@@ -117,16 +127,20 @@ where
         }
 
         {
+            use crate::writer_chain::tee::TeeWriter;
+            use sha2::{Digest as _, Sha256};
+
             let check_name = backup_name.with_extension("sha256");
 
-            let reader = self.check_store.reader(&check_name).await.context(format!(
-                "Failed opening integrity check reader for `{check_name}`"
-            ))?;
+            let reader = self
+                .check_store
+                .reader_if_not_too_large(&check_name, Sha256::output_size() as u64)
+                .await
+                .context(format!(
+                    "Failed opening integrity check reader for `{check_name}`"
+                ))?;
 
             if let Some(mut reader) = reader {
-                use crate::writer_chain::tee::TeeWriter;
-                use sha2::{Digest as _, Sha256};
-
                 // Read signature.
                 let mut expected_hash: Vec<u8> = Vec::new();
                 reader

@@ -13,10 +13,10 @@ use crate::util::saturating_i64_to_u64;
 
 use super::{ObjectMetadata, ObjectStore};
 
-/// 8MB.
+/// 8MiB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
 
-/// 8MB.
+/// 8MiB.
 const READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 
 pub struct S3Store {
