@@ -21,8 +21,8 @@ use prose_backup::{
     verification::pgp::{PgpVerificationContext, PgpVerificationHelper},
 };
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+#[tokio::test]
+async fn test() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
         .compact()
         .without_time()
