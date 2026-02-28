@@ -49,9 +49,6 @@ use figment::Figment;
 /// # Default is `false` (opt-in). Also configure `encryption.mode`
 /// # and `encryption.<mode>` when enabling encryption.
 /// enabled = true
-/// # `true` makes it impossible to restore a non-encrypted backup.
-/// # Default is `false` (opt-in).
-/// mandatory = true
 /// # How to encrypt backups. Default is `"gpg"`.
 /// # Mostly there to allow non-breaking changes in the future.
 /// mode = "gpg"
@@ -82,7 +79,7 @@ pub struct BackupConfig {
 
 // MARK: Parsing
 
-fn default_config_static() -> Figment {
+pub fn default_config_static() -> Figment {
     use figment::providers::*;
     use toml::toml;
 
@@ -102,7 +99,6 @@ fn default_config_static() -> Figment {
 
         [encryption]
         enabled = false
-        mandatory = false
         mode = "gpg"
     }
     .to_string();
@@ -110,7 +106,7 @@ fn default_config_static() -> Figment {
     Figment::from(Toml::string(&static_defaults))
 }
 
-fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
+pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
     use figment::providers::*;
 
     let signing_enabled = figment.extract_inner::<bool>("signing.enabled")?;
@@ -185,8 +181,6 @@ pub struct SigningPgpConfig {
 #[derive(serde::Deserialize)]
 pub struct EncryptionConfig {
     pub enabled: bool,
-
-    pub mandatory: bool,
 
     pub mode: EncryptionMode,
 

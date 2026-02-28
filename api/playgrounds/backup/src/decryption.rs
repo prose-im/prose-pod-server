@@ -35,7 +35,7 @@ mod gpg {
     }
 
     impl openpgp::parse::stream::DecryptionHelper for &GpgDecryptionHelper {
-        /// NOTE: Inspired by [`DecryptionHelper`] docs.
+        // NOTE: Inspired by [`DecryptionHelper`] docs.
         fn decrypt(
             &mut self,
             pkesks: &[PKESK],
@@ -44,6 +44,10 @@ mod gpg {
             decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
         ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
             let cert = self.cert.clone();
+
+            let todo = "Get inspiration from https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770";
+            let fixme = "Pass time!";
+            let fixme = "Support key password";
 
             // Second, we try those keys that we can use without
             // prompting for a password.

@@ -643,14 +643,16 @@ mod restore {
             let crate::BackupNameComponents { created_at, .. } =
                 crate::parse_backup_file_name(&backup_name)?;
 
-            let fixme = "Check encryption.mandatory";
-
             let (tmp, backup_path) = self
                 .download_backup_and_check_integrity(&backup_name, created_at.clone())
                 .await?;
 
+            let fixme = "Comment";
             // WARN: Not streaming to decompression just now to
             //   avoid decompressing a malicious archive.
+            // WARN: Only extract backup AFTER running
+            //   integrity checks to avoid potentially executing a malicious
+            //   archive if it’s been tampered with.
 
             let backup_file = std::fs::File::open(backup_path)
                 .context("Could not find downloaded backup")

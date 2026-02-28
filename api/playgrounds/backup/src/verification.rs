@@ -10,6 +10,32 @@ where
     S1: ObjectStore,
     S2: ObjectStore,
 {
+    /// Reads backup into a temporary file, then runs integrity checks on it.
+    ///
+    /// If the backup is intact and complies with the configured security
+    /// policy, this method returns a path to the local file. Otherwise,
+    /// the backup is deleted.
+    ///
+    /// Note that while we try to do everything in a streaming manner, when
+    /// restoring a backup it would actually be dangerous to extract the backup
+    /// at the same time as validating its signature/digest. Indeed, archives
+    /// can be crafted to exploit a bug in the decompression library for
+    /// example. For this reason we MUST validate the authenticity of the
+    /// backup first, and only then proceed to processing it.
+    ///
+    /// Downloading to a file prevents downloading the backup twice, which
+    /// might be charged depending on where it is stored. By being frugal
+    /// we also benefit from a very fast second read, as the data is already
+    /// on disk. We could also run mutliple integrity checks in parallel by
+    /// opening multiple file descriptors (instead of writing a lot of overly
+    /// complicated reading logic to reuse the same in-memory reader).
+    ///
+    /// Integrity checks are read before the backup is downloaded, to avoid
+    /// an unnecessary read of the whole backup file if something is wrong
+    /// (e.g. network error, corrupted signature, no authenticity proof…).
+    /// They are saved in memory because they are relatively small (few
+    /// hundred bytes). No need to save it to temporary files, it would only
+    /// add I/O overhead.
     pub async fn download_backup_and_check_integrity(
         &self,
         backup_name: &crate::BackupFileName,
@@ -38,23 +64,8 @@ where
             return Err(anyhow!("Backup not found"));
         };
 
-        // TODO: Read backup to temporary file. It will have to be downloaded
-        //   at some point anyway, and doing it this early allows us not to
-        //   fetch it twice. It also allows us to easily performing integrity
-        //   checks in parallel by opening multiple file descriptors (instead
-        //   of writing a lot of overly complicated reading logic to reuse the
-        //   same in-memory reader).
-        // TODO: Run integrity checks.
-        // TODO: Restore backup. Only extract backup AFTER running
-        //   integrity checks to avoid potentially executing a malicious
-        //   archive if it’s been tampered with.
-
-        let todo = "Fix comment";
-        // Read integrity checks in `Vec<u8>`s first. Avoids unnecessary
-        // read of the whole backup file if something is wrong (i.e. fetch
-        // fails, corrupted signature, no supported check…). Integrity
-        // checks are quite small so loading all in memory is better than
-        // saving to temporary files (less I/O).
+        let fixme = "Fetch max number of bytes from S3, to avoid DoS";
+        // const MAX_SIGNATURE_SIZE: usize = 2 * 1024; // 2KiB
 
         // Look for an OpenPGP signature.
         if let Some(context) = self.pgp_verification_context.as_ref() {
@@ -122,6 +133,7 @@ where
 pub mod pgp {
     use std::{io, time::SystemTime};
 
+    use anyhow::anyhow;
     use openpgp::parse::{Parse as _, stream::*};
 
     #[repr(transparent)]
@@ -176,14 +188,14 @@ pub mod pgp {
         fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
             for (i, layer) in structure.into_iter().enumerate() {
                 match layer {
-                    MessageLayer::SignatureGroup { ref results } if i == 0 => {
+                    MessageLayer::SignatureGroup { results } if i == 0 => {
                         if !results.iter().any(Result::is_ok) {
-                            return Err(anyhow::anyhow!("No valid signature"));
+                            return Err(anyhow!("No valid signature."));
                         }
                     }
 
                     layer => {
-                        return Err(anyhow::anyhow!("Unexpected message structure ({layer:?})",));
+                        return Err(anyhow!("Unexpected message structure ({layer:?})."));
                     }
                 }
             }

@@ -41,7 +41,6 @@ async fn main() -> Result<(), anyhow::Error> {
     };
     let encryption_config = EncryptionConfig {
         enabled: true,
-        mandatory: true,
         mode: EncryptionMode::Gpg,
         gpg: Some(EncryptionGpgConfig {
             key: Path::new("cert1").to_path_buf(),

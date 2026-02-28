@@ -38,13 +38,19 @@ mod pgp {
 
             let keypair = (self.cert)
                 .keys()
+                // Validate keys and subkeys (check expiration, crypto algorithm…).
                 .with_policy(self.policy, Some(time))
-                .secret()
+                // Filter out unwanted keys.
+                .supported()
+                .alive()
+                .revoked(false)
+                // Get only signing keys.
                 .for_signing()
+                .secret()
                 .next()
                 .context("No signing key")?
                 .key()
-                .clone()
+                .to_owned()
                 .into_keypair()?;
 
             let message = Message::new(writer);

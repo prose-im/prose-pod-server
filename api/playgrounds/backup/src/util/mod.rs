@@ -51,10 +51,6 @@ pub fn safe_replace(
     }
 }
 
-pub fn unix_timestamp() -> u64 {
-    std::time::SystemTime::now().unix_timestamp()
-}
-
 pub trait SystemTimeExt {
     fn unix_timestamp(&self) -> u64;
 }
@@ -68,16 +64,6 @@ impl SystemTimeExt for std::time::SystemTime {
             .unwrap_or(Duration::ZERO)
             .as_secs()
     }
-}
-
-pub fn to_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        write!(&mut s, "{:02x}", b).unwrap();
-    }
-    s
 }
 
 #[cfg(test)]
