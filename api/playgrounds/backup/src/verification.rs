@@ -78,7 +78,9 @@ where
             if let Some(mut reader) = reader {
                 // Read signature.
                 let mut bytes: Vec<u8> = Vec::new();
-                reader.read_to_end(&mut bytes);
+                reader
+                    .read_to_end(&mut bytes)
+                    .context("Failed reading OpenPGP signature")?;
 
                 // Create the verifier, applying the policy at the
                 // creation date of the backup.
