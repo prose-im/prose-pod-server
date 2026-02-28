@@ -49,19 +49,19 @@ use figment::Figment;
 /// # Default is `false` (opt-in). Also configure `encryption.mode`
 /// # and `encryption.<mode>` when enabling encryption.
 /// enabled = true
-/// # How to encrypt backups. Default is `"gpg"`.
+/// # How to encrypt backups. Default is `"pgp"`.
 /// # Mostly there to allow non-breaking changes in the future.
-/// mode = "gpg"
+/// mode = "pgp"
 /// # Path to the key/certificate to use when encrypting new backups. This cert
 /// # MUST contain private key material suitable for storage encryption.
-/// gpg.key = "/keys/prose-backup.asc"
+/// pgp.key = "/keys/prose-backup.asc"
 /// # Optional. Use if you want to decrypt using private keys not present
 /// # on the server (e.g. in a separate environment for forensic analysis).
 /// # Those SHOULD NOT contain private key material.
-/// gpg.additional_encryption_keys = ["/keys/other-system.pub.asc"]
+/// pgp.additional_encryption_keys = ["/keys/other-system.pub.asc"]
 /// # Optional. Use if you changed the primary keys instead of
 /// # rotating subkeys. Those MUST contain private key material.
-/// gpg.additional_decryption_keys = ["/keys/prose-backup-old.asc"]
+/// pgp.additional_decryption_keys = ["/keys/prose-backup-old.asc"]
 /// ```
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
@@ -99,7 +99,7 @@ pub fn default_config_static() -> Figment {
 
         [encryption]
         enabled = false
-        mode = "gpg"
+        mode = "pgp"
     }
     .to_string();
 
@@ -184,19 +184,20 @@ pub struct EncryptionConfig {
 
     pub mode: EncryptionMode,
 
-    pub gpg: Option<EncryptionGpgConfig>,
+    #[serde(default, alias = "gpg")]
+    pub pgp: Option<EncryptionPgpConfig>,
 }
 
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub enum EncryptionMode {
-    #[serde(rename = "gpg", alias = "pgp")]
-    Gpg,
+    #[serde(rename = "pgp", alias = "gpg")]
+    Pgp,
 }
 
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
-pub struct EncryptionGpgConfig {
+pub struct EncryptionPgpConfig {
     pub key: std::path::PathBuf,
 
     #[serde(default)]

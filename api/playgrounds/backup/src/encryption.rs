@@ -15,7 +15,7 @@ use crate::{
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum EncryptionContext<'a> {
-    Gpg {
+    Pgp {
         cert: &'a openpgp::Cert,
         policy: &'a dyn openpgp::policy::Policy,
     },
@@ -28,27 +28,27 @@ impl<'a> EncryptionContext<'a> {
         created_at: SystemTime,
     ) -> Result<EncryptionWriter<'a>, anyhow::Error> {
         match *self {
-            Self::Gpg { cert, policy } => {
-                self::gpg::encrypt(writer, cert, policy, created_at).map(EncryptionWriter::Gpg)
+            Self::Pgp { cert, policy } => {
+                self::pgp::encrypt(writer, cert, policy, created_at).map(EncryptionWriter::Pgp)
             }
         }
     }
 }
 
 pub enum EncryptionWriter<'a> {
-    Gpg(Message<'a>),
+    Pgp(Message<'a>),
 }
 
 impl<'a> Write for EncryptionWriter<'a> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            EncryptionWriter::Gpg(writer) => writer.write(buf),
+            EncryptionWriter::Pgp(writer) => writer.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            EncryptionWriter::Gpg(writer) => writer.flush(),
+            EncryptionWriter::Pgp(writer) => writer.flush(),
         }
     }
 }
@@ -56,7 +56,7 @@ impl<'a> Write for EncryptionWriter<'a> {
 impl<'a> EncryptionWriter<'a> {
     fn finalize(self) -> Result<(), anyhow::Error> {
         match self {
-            EncryptionWriter::Gpg(message) => message.finalize(),
+            EncryptionWriter::Pgp(message) => message.finalize(),
         }
     }
 }
@@ -112,7 +112,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     }
 }
 
-mod gpg {
+mod pgp {
     use std::io::Write;
 
     use openpgp::policy::Policy;

@@ -6,23 +6,23 @@
 #[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct DecryptionHelper<'a> {
-    pub gpg: Option<GpgDecryptionHelper<'a, 'a>>,
+    pub pgp: Option<PgpDecryptionHelper<'a, 'a>>,
 }
 
-pub use self::gpg::GpgDecryptionHelper;
-mod gpg {
+pub use self::pgp::PgpDecryptionHelper;
+mod pgp {
     use openpgp::{
         crypto::SessionKey, packet::prelude::*, parse::stream::*, types::SymmetricAlgorithm,
     };
 
     #[derive(Debug)]
-    pub struct GpgDecryptionHelper<'cert, 'policy> {
+    pub struct PgpDecryptionHelper<'cert, 'policy> {
         pub cert: &'cert openpgp::Cert,
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
     impl<'cert, 'policy> openpgp::parse::stream::DecryptionHelper
-        for &GpgDecryptionHelper<'cert, 'policy>
+        for &PgpDecryptionHelper<'cert, 'policy>
     {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         fn decrypt(
@@ -63,7 +63,7 @@ mod gpg {
         }
     }
 
-    impl<'cert, 'policy> VerificationHelper for &GpgDecryptionHelper<'cert, 'policy> {
+    impl<'cert, 'policy> VerificationHelper for &PgpDecryptionHelper<'cert, 'policy> {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],

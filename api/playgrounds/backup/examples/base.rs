@@ -14,7 +14,7 @@ use bytes::Bytes;
 use prose_backup::{
     BackupService, CreateBackupOutput,
     config::{EncryptionMode, HashingAlgorithm, *},
-    decryption::{DecryptionHelper, GpgDecryptionHelper},
+    decryption::{DecryptionHelper, PgpDecryptionHelper},
     encryption::EncryptionContext,
     openpgp,
     signing::PgpSigningContext,
@@ -40,8 +40,8 @@ async fn main() -> Result<(), anyhow::Error> {
     };
     let encryption_config = EncryptionConfig {
         enabled: true,
-        mode: EncryptionMode::Gpg,
-        gpg: Some(EncryptionGpgConfig {
+        mode: EncryptionMode::Pgp,
+        pgp: Some(EncryptionPgpConfig {
             key: Path::new("cert1").to_path_buf(),
             additional_encryption_keys: vec![],
             additional_decryption_keys: vec![],
@@ -71,10 +71,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
     let encryption_context = if encryption_config.enabled {
-        match encryption_config.gpg.as_ref() {
+        match encryption_config.pgp.as_ref() {
             Some(pgp) => {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
-                Some(EncryptionContext::Gpg {
+                Some(EncryptionContext::Pgp {
                     cert: &pgp_cert,
                     policy: &pgp_policy,
                 })
@@ -111,11 +111,11 @@ async fn main() -> Result<(), anyhow::Error> {
         None => None,
     };
     let decryption_helper = if encryption_config.enabled {
-        match encryption_config.gpg.as_ref() {
+        match encryption_config.pgp.as_ref() {
             Some(pgp) => {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
                 let mut helper = DecryptionHelper::default();
-                helper.gpg = Some(GpgDecryptionHelper {
+                helper.pgp = Some(PgpDecryptionHelper {
                     cert: &pgp_cert,
                     policy: &pgp_policy,
                 });

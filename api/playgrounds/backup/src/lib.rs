@@ -12,8 +12,8 @@ mod compression;
 pub mod config;
 pub mod decryption;
 pub mod encryption;
-mod gpg;
 mod hashing;
+mod pgp;
 pub mod signing;
 mod stats;
 pub mod stores;
@@ -107,22 +107,22 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
     ///                    │ Compress │
     ///                    │  (zstd)  │
     ///                    └────┬─────┘
-    ///                         │ GPG encryption enabled?
+    ///                         │ PGP encryption enabled?
     ///                         ◇──────┐
     ///                     Yes │      │ No
     ///                    ┌────┴────┐ │
     ///                    │ Encrypt | │
-    ///                    |  (GPG)  │ │
+    ///                    |  (PGP)  │ │
     ///                    └────┬────┘ │
     ///                         ◇──────┘
     ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━┯━╸
-    ///    ┌───┴────┐     ┌─────┴─────┐             │ GPG signing
+    ///    ┌───┴────┐     ┌─────┴─────┐             │ PGP signing
     ///    | Upload |     │   Hash    |             │ enabled?
     ///    | backup |     | (SHA 256) │             ◇───────┐
     ///    |  (S3)  |     └─────┬─────┘         Yes │       │ No
     ///    └───┬────┘  ┌────────┴─────────┐     ┌───┴───┐   ◯
     ///        ◯       | Upload integrity |     │ Sign  |
-    ///                |    check (S3)    |     | (GPG) │
+    ///                |    check (S3)    |     | (PGP) │
     ///                └────────┬─────────┘     └───┬───┘
     ///                         ◯             ┌─────┴─────┐
     ///                                       |  Upload   |
@@ -142,7 +142,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         // let cert = openpgp::Cert::from_file(&config.key)
         //     .context("Cannot read OpenPGP cert")
         //     .map_err(CreateBackupError::CannotEncrypt)?;
-        // let helper = GpgHelper::new(cert);
+        // let helper = PgpHelper::new(cert);
         // ///
 
         let archiving_blueprint =
@@ -156,8 +156,8 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let backup_name = BackupName::from(description, &created_at);
 
         let backup_file_name = match self.encryption_context {
-            Some(encryption::EncryptionContext::Gpg { .. }) => {
-                backup_name.with_extension("tar.zst.gpg")
+            Some(encryption::EncryptionContext::Pgp { .. }) => {
+                backup_name.with_extension("tar.zst.pgp")
             }
             None => backup_name.with_extension("tar.zst"),
         };
@@ -382,7 +382,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         for backup_file_name in backups.into_iter() {
             let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
-            let is_encrypted = backup_file_name.ends_with(".gpg");
+            let is_encrypted = backup_file_name.ends_with(".pgp");
 
             let can_be_restored = true && (!signing_is_mandatory || is_signed);
 
@@ -664,8 +664,8 @@ mod restore {
             // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
             //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
             let mut decryption_stats = ReadStats::new();
-            let compressed_archive_reader = if backup_name.ends_with(".gpg") {
-                if let Some(config) = self.decryption_helper.gpg.as_ref() {
+            let compressed_archive_reader = if backup_name.ends_with(".pgp") {
+                if let Some(config) = self.decryption_helper.pgp.as_ref() {
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
                         .context("Failed creating decryptor builder")?
                         .with_policy(config.policy, Some(created_at.into()), config)
