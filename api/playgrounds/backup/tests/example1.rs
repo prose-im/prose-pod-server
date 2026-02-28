@@ -158,7 +158,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let CreateBackupOutput {
         backup_id,
         digest_ids,
-        signature_ids,
+        ..
     } = {
         let backup_name = "backup";
         service
