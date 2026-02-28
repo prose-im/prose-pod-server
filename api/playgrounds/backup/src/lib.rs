@@ -376,9 +376,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         let checks = self.check_store.list_all_after(oldest_backup).await?;
 
-        let todo = "Make this dynamic via configuration.";
         let signing_is_mandatory = self.signing_config.as_ref().is_some_and(|c| c.mandatory);
-        let encryption_is_mandatory = false;
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 
@@ -386,9 +384,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
             let is_encrypted = backup_file_name.ends_with(".gpg");
 
-            let can_be_restored = true
-                && (!signing_is_mandatory || is_signed)
-                && (!encryption_is_mandatory || is_encrypted);
+            let can_be_restored = true && (!signing_is_mandatory || is_signed);
 
             let BackupNameComponents {
                 created_at,
