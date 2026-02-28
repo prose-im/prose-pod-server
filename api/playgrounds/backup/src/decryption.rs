@@ -5,36 +5,25 @@
 
 #[non_exhaustive]
 #[derive(Debug, Default)]
-pub struct DecryptionHelper {
-    pub gpg: Option<GpgDecryptionHelper>,
+pub struct DecryptionHelper<'a> {
+    pub gpg: Option<GpgDecryptionHelper<'a, 'a>>,
 }
 
 pub use self::gpg::GpgDecryptionHelper;
 mod gpg {
-    use std::sync::Arc;
-
     use openpgp::{
         crypto::SessionKey, packet::prelude::*, parse::stream::*, types::SymmetricAlgorithm,
     };
 
     #[derive(Debug)]
-    pub struct GpgDecryptionHelper {
-        pub cert: openpgp::Cert,
-        pub policy: Arc<dyn openpgp::policy::Policy>,
+    pub struct GpgDecryptionHelper<'cert, 'policy> {
+        pub cert: &'cert openpgp::Cert,
+        pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
-    impl GpgDecryptionHelper {
-        pub fn new(cert: openpgp::Cert) -> Self {
-            use openpgp::policy::StandardPolicy;
-
-            Self {
-                cert,
-                policy: Arc::new(StandardPolicy::new()),
-            }
-        }
-    }
-
-    impl openpgp::parse::stream::DecryptionHelper for &GpgDecryptionHelper {
+    impl<'cert, 'policy> openpgp::parse::stream::DecryptionHelper
+        for &GpgDecryptionHelper<'cert, 'policy>
+    {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         fn decrypt(
             &mut self,
@@ -54,7 +43,7 @@ mod gpg {
             for pkesk in pkesks {
                 for key in cert
                     .keys()
-                    .with_policy(self.policy.as_ref(), None)
+                    .with_policy(self.policy, None)
                     .for_storage_encryption()
                     .secret()
                 {
@@ -74,7 +63,7 @@ mod gpg {
         }
     }
 
-    impl VerificationHelper for &GpgDecryptionHelper {
+    impl<'cert, 'policy> VerificationHelper for &GpgDecryptionHelper<'cert, 'policy> {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],

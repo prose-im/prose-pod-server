@@ -72,7 +72,7 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 
     pub encryption_context: Option<encryption::EncryptionContext<'service>>,
     pub pgp_signing_context: Option<signing::PgpSigningContext<'service>>,
-    pub decryption_helper: decryption::DecryptionHelper,
+    pub decryption_helper: decryption::DecryptionHelper<'service>,
     pub pgp_verification_context:
         Option<verification::pgp::PgpVerificationContext<'service, 'service>>,
 
@@ -672,7 +672,7 @@ mod restore {
                 if let Some(config) = self.decryption_helper.gpg.as_ref() {
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
                         .context("Failed creating decryptor builder")?
-                        .with_policy(config.policy.as_ref(), Some(created_at.into()), config)
+                        .with_policy(config.policy, Some(created_at.into()), config)
                         .context("Failed creating decryptor")?;
 
                     let decryptor = StatsReader::new(decryptor, &mut decryption_stats);

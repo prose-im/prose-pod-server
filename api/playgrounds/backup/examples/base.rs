@@ -8,7 +8,6 @@ use std::{
     fs,
     io::Read as _,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use bytes::Bytes;
@@ -117,8 +116,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
                 let mut helper = DecryptionHelper::default();
                 helper.gpg = Some(GpgDecryptionHelper {
-                    cert: pgp_cert.to_owned(),
-                    policy: Arc::new(pgp_policy.to_owned()),
+                    cert: &pgp_cert,
+                    policy: &pgp_policy,
                 });
                 helper
             }

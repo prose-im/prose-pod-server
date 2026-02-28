@@ -118,12 +118,12 @@ mod gpg {
     use openpgp::policy::Policy;
     use openpgp::serialize::stream::*;
 
-    pub fn encrypt<'c, W: Write + Send + Sync + 'c>(
+    pub fn encrypt<'cert, 'policy: 'cert, W: Write + Send + Sync + 'cert>(
         writer: W,
-        cert: &'c openpgp::Cert,
-        policy: &'c dyn Policy,
+        cert: &'cert openpgp::Cert,
+        policy: &'policy dyn Policy,
         created_at: std::time::SystemTime,
-    ) -> Result<Message<'c>, anyhow::Error> {
+    ) -> Result<Message<'cert>, anyhow::Error> {
         let message = Message::new(writer);
 
         // NOTE: Do NOT cache this (e.g. in `EncryptionContext`)! It’s
@@ -143,7 +143,7 @@ mod gpg {
 
         let mut recipients = recipients.peekable();
         if recipients.peek().is_none() {
-            return Err(anyhow::Error::msg("No valid encryption key"));
+            return Err(anyhow::Error::msg("No valid encryption key."));
         }
 
         let encryptor = Encryptor::for_recipients(message, recipients).build()?;
