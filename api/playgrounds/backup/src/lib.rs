@@ -153,7 +153,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         let created_at = std::time::SystemTime::now();
 
-        let backup_name = BackupName::from(description, &created_at);
+        let backup_name = BackupName::new(description, &created_at);
 
         let backup_file_name = match self.encryption_context {
             Some(encryption::EncryptionContext::Pgp { .. }) => {
@@ -386,11 +386,11 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
             let can_be_restored = true && (!signing_is_mandatory || is_signed);
 
-            let BackupNameComponents {
+            let BackupFileNameComponents {
                 created_at,
                 description,
                 ..
-            } = match parse_backup_file_name(&backup_file_name) {
+            } = match BackupFileNameComponents::parse(&backup_file_name) {
                 Ok(components) => components,
                 Err(err) => {
                     tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
@@ -421,195 +421,6 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
     }
 }
 
-struct BackupNameComponents<'a> {
-    created_at: time::UtcDateTime,
-    description: Cow<'a, str>,
-    extensions: Vec<&'a str>,
-}
-
-#[derive(Clone)]
-#[repr(transparent)]
-pub struct BackupName(String);
-
-impl BackupName {
-    pub fn from(description: &str, created_at: &std::time::SystemTime) -> Self {
-        use crate::util::SystemTimeExt as _;
-
-        // Arbitrary safety limits.
-        assert!(description.len() <= 256);
-        // NOTE: Provide a default value instead of passing an empty string.
-        assert!(description.len() > 0);
-
-        // “URL encode” the backup name to get rid of spaces, emojis, etc.
-        let backup_name = urlencoding::encode(description);
-        // Also percent-encode `.` to prevent incorrect file extension parsing.
-        debug_assert_eq!(
-            urlencoding::decode("test%2Eext"),
-            Ok(Cow::Borrowed("test.ext"))
-        );
-        let backup_name = backup_name.replace(".", "%2E");
-        // Also percent-encode `/` to prevent incorrect parsing of HTTP
-        // requests when a backup ID is used in the path.
-        debug_assert_eq!(
-            urlencoding::decode("test%2Ffoo"),
-            Ok(Cow::Borrowed("test/foo"))
-        );
-        let backup_name = backup_name.replace("/", "%2F");
-
-        // Unix timestamp with second precision as 10 chars covers 2001-09-09
-        // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
-        // For correctness, we’ll still format the number as 10 digits with
-        // leading zeros (even if not necessary).
-        let created_at = created_at.unix_timestamp();
-        assert!(created_at < 99_999_999_999);
-        debug_assert!(created_at > 999_999_999);
-        let backup_name = format!("{created_at:010}-{backup_name}");
-
-        Self(backup_name)
-    }
-}
-
-impl BackupName {
-    fn with_extension(&self, extension: &'static str) -> BackupFileName {
-        debug_assert!(!extension.starts_with('.'));
-
-        let suffix_start_idx = self.0.len();
-        BackupFileName {
-            value: format!("{self}.{extension}"),
-            suffix_start_idx,
-        }
-    }
-}
-
-impl std::fmt::Debug for BackupName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl std::fmt::Display for BackupName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-#[derive(Clone)]
-pub struct BackupFileName {
-    value: String,
-
-    /// Index of the dot before the file extention.
-    suffix_start_idx: usize,
-}
-
-impl std::fmt::Debug for BackupFileName {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.value, f)
-    }
-}
-
-impl std::fmt::Display for BackupFileName {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.value, f)
-    }
-}
-
-impl AsRef<std::path::Path> for BackupFileName {
-    #[inline]
-    fn as_ref(&self) -> &std::path::Path {
-        self.value.as_ref()
-    }
-}
-
-impl BackupFileName {
-    /// ```rs
-    /// let file_name = BackupName::from("test").with_extension("foo.bar");
-    /// assert_eq!(file_name.basename(), "test");
-    /// ```
-    fn basename(&self) -> &str {
-        &self.value[..self.suffix_start_idx]
-    }
-
-    /// ```rs
-    /// let file_name = BackupName::from("test").with_extension("foo.bar");
-    /// assert_eq!(file_name.extension(), "foo.bar");
-    /// ```
-    fn extension(&self) -> &str {
-        &self.value[(self.suffix_start_idx + 1)..]
-    }
-
-    /// ```rs
-    /// let file_name = BackupName::from("test").with_extension("foo.bar");
-    /// let other_file_name = file_name.with_extension("baz");
-    /// assert_eq!(file_name.extension(), "foo.bar.baz");
-    /// ```
-    fn with_extension(&self, extension: &'static str) -> Self {
-        debug_assert!(!extension.starts_with('.'));
-
-        Self {
-            value: format!("{self}.{extension}", self = self.value),
-            suffix_start_idx: self.suffix_start_idx,
-        }
-    }
-}
-
-impl std::ops::Deref for BackupFileName {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.value.as_str()
-    }
-}
-
-impl AsRef<String> for BackupFileName {
-    fn as_ref(&self) -> &String {
-        &self.value
-    }
-}
-
-impl AsRef<str> for BackupFileName {
-    fn as_ref(&self) -> &str {
-        self.value.as_str()
-    }
-}
-
-fn parse_backup_file_name<'a>(
-    file_name: &'a str,
-) -> Result<BackupNameComponents<'a>, anyhow::Error> {
-    let Some((prefix, suffix)) = file_name.split_once('-') else {
-        anyhow::bail!("File `{file_name}` is missing the timestamp prefix.");
-    };
-
-    let secs: i64 = prefix
-        .parse()
-        .with_context(|| format!("Could not read integer from `{prefix}`"))?;
-
-    let created_at = match time::UtcDateTime::from_unix_timestamp(secs) {
-        Ok(timestamp) => timestamp,
-        Err(err) => {
-            return Err(
-                anyhow::Error::from(err).context("Could not parse timestamp from file name")
-            );
-        }
-    };
-
-    let Some((description, extensions)) = suffix.split_once('.') else {
-        todo!();
-    };
-
-    let description = urlencoding::decode(description)
-        .with_context(|| format!("Backup description `{description}` contains invalid UTF-8"))?;
-
-    let extensions = extensions.split(".").collect::<Vec<_>>();
-
-    Ok(BackupNameComponents {
-        created_at,
-        description,
-        extensions,
-    })
-}
-
 // MARK: Restore
 
 mod restore {
@@ -620,7 +431,7 @@ mod restore {
     use openpgp::parse::stream::DecryptorBuilder;
 
     use crate::{
-        BackupFileName, ProseBackupService,
+        BackupFileName, BackupFileNameComponents, ProseBackupService,
         archiving::{ExtractionSuccess, extract_archive},
         stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
@@ -636,8 +447,8 @@ mod restore {
         ) -> Result<ExtractionSuccess, anyhow::Error> {
             // Parse backup name first.
             // Avoids unnecessary I/O if malformed.
-            let crate::BackupNameComponents { created_at, .. } =
-                crate::parse_backup_file_name(&backup_name)?;
+            let BackupFileNameComponents { created_at, .. } =
+                BackupFileNameComponents::parse(&backup_name)?;
 
             let (tmp, backup_path) = self
                 .download_backup_and_check_integrity(&backup_name, created_at.clone())
@@ -706,5 +517,229 @@ mod restore {
 
             Ok(restore_result)
         }
+    }
+}
+
+// MARK: File name serialization and deserialization
+
+pub(crate) struct BackupFileNameComponents<'a> {
+    pub created_at: time::UtcDateTime,
+
+    pub description: Cow<'a, str>,
+
+    #[allow(dead_code)]
+    pub extensions: &'a str,
+}
+
+impl<'a> BackupFileNameComponents<'a> {
+    fn parse(file_name: &'a str) -> Result<Self, anyhow::Error> {
+        let Some((prefix, suffix)) = file_name.split_once('-') else {
+            anyhow::bail!("File `{file_name}` is missing the timestamp prefix.");
+        };
+
+        let secs: i64 = prefix
+            .parse()
+            .with_context(|| format!("Could not read integer from `{prefix}`"))?;
+
+        let created_at = match time::UtcDateTime::from_unix_timestamp(secs) {
+            Ok(timestamp) => timestamp,
+            Err(err) => {
+                return Err(
+                    anyhow::Error::from(err).context("Could not parse timestamp from file name")
+                );
+            }
+        };
+
+        let Some((description, extensions)) = suffix.split_once('.') else {
+            todo!();
+        };
+
+        let description = urlencoding::decode(description).with_context(|| {
+            format!("Backup description `{description}` contains invalid UTF-8")
+        })?;
+
+        Ok(BackupFileNameComponents {
+            created_at,
+            description,
+            extensions,
+        })
+    }
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+pub struct BackupName(String);
+
+impl BackupName {
+    pub fn new(description: &str, created_at: &std::time::SystemTime) -> Self {
+        use crate::util::SystemTimeExt as _;
+
+        // Arbitrary safety limits.
+        assert!(description.len() <= 256);
+        // NOTE: Provide a default value instead of passing an empty string.
+        assert!(description.len() > 0);
+
+        // “URL encode” the backup name to get rid of spaces, emojis, etc.
+        let backup_name = urlencoding::encode(description);
+        // Also percent-encode `.` to prevent incorrect file extension parsing.
+        debug_assert_eq!(
+            urlencoding::decode("test%2Eext"),
+            Ok(Cow::Borrowed("test.ext"))
+        );
+        let backup_name = backup_name.replace(".", "%2E");
+        // Also percent-encode `/` to prevent incorrect parsing of HTTP
+        // requests when a backup ID is used in the path.
+        debug_assert_eq!(
+            urlencoding::decode("test%2Ffoo"),
+            Ok(Cow::Borrowed("test/foo"))
+        );
+        let backup_name = backup_name.replace("/", "%2F");
+
+        // Unix timestamp with second precision as 10 chars covers 2001-09-09
+        // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
+        // For correctness, we’ll still format the number as 10 digits with
+        // leading zeros (even if not necessary).
+        let created_at = created_at.unix_timestamp();
+        assert!(created_at < 99_999_999_999);
+        debug_assert!(created_at > 999_999_999);
+        let backup_name = format!("{created_at:010}-{backup_name}");
+
+        Self(backup_name)
+    }
+}
+
+impl BackupName {
+    pub fn with_extension(&self, extension: &'static str) -> BackupFileName {
+        debug_assert!(!extension.starts_with('.'));
+
+        let suffix_start_idx = self.0.len();
+        BackupFileName {
+            value: format!("{self}.{extension}"),
+            suffix_start_idx,
+        }
+    }
+}
+
+impl std::fmt::Debug for BackupName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for BackupName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+#[derive(Clone)]
+pub struct BackupFileName {
+    value: String,
+
+    /// Index of the dot before the file extention.
+    suffix_start_idx: usize,
+}
+
+impl std::fmt::Debug for BackupFileName {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.value, f)
+    }
+}
+
+impl std::fmt::Display for BackupFileName {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.value, f)
+    }
+}
+
+impl AsRef<std::path::Path> for BackupFileName {
+    #[inline]
+    fn as_ref(&self) -> &std::path::Path {
+        self.value.as_ref()
+    }
+}
+
+#[derive(Debug)]
+pub struct BackupFileNameHasNoExtension;
+
+impl std::fmt::Display for BackupFileNameHasNoExtension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Backup file name has no extension.")
+    }
+}
+
+impl std::error::Error for BackupFileNameHasNoExtension {}
+
+impl std::str::FromStr for BackupFileName {
+    type Err = BackupFileNameHasNoExtension;
+
+    fn from_str(file_name: &str) -> Result<Self, Self::Err> {
+        match file_name.find('.') {
+            Some(suffix_start_idx) => Ok(Self {
+                value: file_name.to_owned(),
+                suffix_start_idx,
+            }),
+            None => Err(BackupFileNameHasNoExtension),
+        }
+    }
+}
+
+impl BackupFileName {
+    /// ```
+    /// # use prose_backup::BackupFileName;
+    /// # use std::str::FromStr as _;
+    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
+    /// assert_eq!(file_name.basename(), "test");
+    /// ```
+    pub fn basename(&self) -> &str {
+        &self.value[..self.suffix_start_idx]
+    }
+
+    /// ```
+    /// # use prose_backup::BackupFileName;
+    /// # use std::str::FromStr as _;
+    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
+    /// assert_eq!(file_name.extension(), "foo.bar");
+    /// ```
+    pub fn extension(&self) -> &str {
+        &self.value[(self.suffix_start_idx + 1)..]
+    }
+
+    /// ```
+    /// # use prose_backup::BackupFileName;
+    /// # use std::str::FromStr as _;
+    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
+    /// let other_file_name = file_name.with_extension("baz");
+    /// assert_eq!(other_file_name.extension(), "foo.bar.baz");
+    /// ```
+    pub fn with_extension(&self, extension: &'static str) -> Self {
+        debug_assert!(!extension.starts_with('.'));
+
+        Self {
+            value: format!("{self}.{extension}", self = self.value),
+            suffix_start_idx: self.suffix_start_idx,
+        }
+    }
+}
+
+impl std::ops::Deref for BackupFileName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.as_str()
+    }
+}
+
+impl AsRef<String> for BackupFileName {
+    fn as_ref(&self) -> &String {
+        &self.value
+    }
+}
+
+impl AsRef<str> for BackupFileName {
+    fn as_ref(&self) -> &str {
+        self.value.as_str()
     }
 }

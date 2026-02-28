@@ -236,7 +236,7 @@ mod tests {
             ($key:ident) => {
                 assert_eq!(
                     json.get(stringify!($key)),
-                    $key.ok_or(&json::Value::Null).err()
+                    $key.map_or(None, |_| unreachable!())
                 );
             };
         }
