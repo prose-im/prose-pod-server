@@ -435,6 +435,7 @@ mod restore {
         archiving::{ExtractionSuccess, extract_archive},
         stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
+        util::debug_panic,
         writer_chain::either::Either,
     };
 
@@ -454,20 +455,9 @@ mod restore {
                 .download_backup_and_check_integrity(&backup_name, created_at.clone())
                 .await?;
 
-            let fixme = "Comment";
-            // WARN: Not streaming to decompression just now to
-            //   avoid decompressing a malicious archive.
-            // WARN: Only extract backup AFTER running
-            //   integrity checks to avoid potentially executing a malicious
-            //   archive if it’s been tampered with.
-
             let backup_file = std::fs::File::open(backup_path)
-                .context("Could not find downloaded backup")
-                .inspect_err(|err| {
-                    if cfg!(debug_assertions) {
-                        panic!("{err:?}")
-                    }
-                })?;
+                .context("Could not open backup file")
+                .inspect_err(debug_panic)?;
 
             let mut raw_read_stats = ReadStats::new();
             let backup_reader = StatsReader::new(backup_file, &mut raw_read_stats);

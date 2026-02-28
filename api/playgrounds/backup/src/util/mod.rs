@@ -66,6 +66,16 @@ impl SystemTimeExt for std::time::SystemTime {
     }
 }
 
+/// Panic in debug mode.
+///
+/// To use with [`Result::inspect_err`].
+#[inline(always)]
+pub fn debug_panic<E: std::fmt::Debug>(error: &E) {
+    if cfg!(debug_assertions) {
+        panic!("{error:?}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

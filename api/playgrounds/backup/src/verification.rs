@@ -124,7 +124,42 @@ where
             ))?;
 
             if let Some(mut reader) = reader {
-                todo!("Check hash.");
+                use crate::writer_chain::tee::TeeWriter;
+                use sha2::{Digest as _, Sha256};
+
+                // Read signature.
+                let mut expected_hash: Vec<u8> = Vec::new();
+                reader
+                    .read_to_end(&mut expected_hash)
+                    .context("Failed reading SHA-256 checksum")?;
+
+                // Create the verifier and abort early if the hash is invalid.
+                if expected_hash.len() != Sha256::output_size() {
+                    return Err(anyhow!("Invalid SHA-256 checksum: `{check_name}`"));
+                }
+                let verifier = Sha256::new();
+
+                // Read the backup to a temporary file, but also feed it to the
+                // SHA-256 hasher in parallel.
+                let mut tee_writer = TeeWriter::new(backup_file, verifier);
+                std::io::copy(&mut backup_reader, &mut tee_writer)?;
+
+                let TeeWriter {
+                    // NOTE: It’s okay to drop the file as-is:
+                    //   the OS will flush before closing the file.
+                    w1: _backup_file,
+                    w2: verifier,
+                } = tee_writer;
+
+                // Verify the checksum.
+                if verifier.finalize().as_ref() == expected_hash {
+                    tracing::debug!("SHA-256 checksum verified.");
+
+                    // Don’t process any other integrity check.
+                    return Ok((tmp, backup_path));
+                } else {
+                    return Err(anyhow!("Invalid SHA-256 checksum (verify): `{check_name}`"));
+                }
             } else {
                 return Err(anyhow!("Could not check the integrity of the backup."));
             }
