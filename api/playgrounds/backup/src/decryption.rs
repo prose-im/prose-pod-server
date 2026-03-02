@@ -7,8 +7,8 @@
 
 #[non_exhaustive]
 #[derive(Debug, Default)]
-pub struct DecryptionContext<'a> {
-    pub pgp: Option<PgpDecryptionContext<'a>>,
+pub struct DecryptionContext {
+    pub pgp: Option<PgpDecryptionContext>,
 }
 
 pub(crate) fn reader<'a, R>(
@@ -55,14 +55,14 @@ mod pgp {
     use crate::pgp::lookup_secret_key;
 
     #[derive(Debug)]
-    pub struct PgpDecryptionContext<'policy> {
+    pub struct PgpDecryptionContext {
         pub tsks: Vec<openpgp::Cert>,
-        pub policy: &'policy dyn openpgp::policy::Policy,
+        pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
-    struct PgpDecryptionHelper<'keys, 'policy> {
-        tsks: &'keys [openpgp::Cert],
-        policy: &'policy dyn openpgp::policy::Policy,
+    struct PgpDecryptionHelper<'a> {
+        tsks: &'a [openpgp::Cert],
+        policy: &'a dyn openpgp::policy::Policy,
         time: std::time::SystemTime,
     }
 
@@ -76,20 +76,18 @@ mod pgp {
     {
         let helper = PgpDecryptionHelper {
             tsks: context.tsks.as_slice(),
-            policy: context.policy,
+            policy: context.policy.as_ref(),
             time: (*created_at).into(),
         };
         let decryptor = DecryptorBuilder::from_reader(backup_reader)
             .context("Failed creating decryptor builder")?
-            .with_policy(context.policy, Some(helper.time.clone()), helper)
+            .with_policy(context.policy.as_ref(), Some(helper.time.clone()), helper)
             .context("Failed creating decryptor")?;
 
         Ok(decryptor)
     }
 
-    impl<'keys, 'policy> openpgp::parse::stream::DecryptionHelper
-        for PgpDecryptionHelper<'keys, 'policy>
-    {
+    impl<'keys> openpgp::parse::stream::DecryptionHelper for PgpDecryptionHelper<'keys> {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         // TODO: Improve by looking at <https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770> too.
         // TODO: Add support for encrypted secrets (passphrase-protected).
@@ -136,7 +134,7 @@ mod pgp {
         }
     }
 
-    impl<'keys, 'policy> VerificationHelper for PgpDecryptionHelper<'keys, 'policy> {
+    impl<'keys> VerificationHelper for PgpDecryptionHelper<'keys> {
         fn get_certs(
             &mut self,
             // NOTE: Not filtering certs because the certs we have access to

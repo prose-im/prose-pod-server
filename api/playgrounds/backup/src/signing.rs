@@ -18,17 +18,17 @@ mod pgp {
 
     use anyhow::Context as _;
 
-    pub struct PgpSigningContext<'a> {
-        pub tsk: &'a openpgp::Cert,
-        pub policy: &'a dyn openpgp::policy::Policy,
+    pub struct PgpSigningContext {
+        pub tsk: openpgp::Cert,
+        pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
     pub struct PgpSignatureWriter<'a> {
         signer: openpgp::serialize::stream::Signer<'a>,
     }
 
-    impl<'a> PgpSigningContext<'a> {
-        pub fn new_writer<W>(
+    impl PgpSigningContext {
+        pub fn new_writer<'a, W>(
             &self,
             writer: W,
             time: SystemTime,
@@ -41,7 +41,7 @@ mod pgp {
             let keypair = (self.tsk)
                 .keys()
                 // Validate keys and subkeys (check expiration, crypto algorithm…).
-                .with_policy(self.policy, Some(time))
+                .with_policy(self.policy.as_ref(), Some(time))
                 // Filter out unwanted keys.
                 .supported()
                 .alive()

@@ -16,7 +16,7 @@ use crate::{ProseBackupService, stores::ObjectStore};
 /// if we stay stuck at downloading a very very large file.
 const MAX_PGP_SIGNATURE_LENGTH: u64 = 2 * 1024;
 
-impl<'s, S1, S2> ProseBackupService<'s, S1, S2>
+impl<S1, S2> ProseBackupService<S1, S2>
 where
     S1: ObjectStore,
     S2: ObjectStore,
@@ -99,7 +99,7 @@ where
                 // NOTE: Validates the signature, which avoids reading the
                 //   backup entirely if the signature itself is invalid.
                 let mut verifier =
-                    pgp::PgpSignatureVerifier::new(context.to_owned(), &bytes, created_at.into())
+                    pgp::PgpSignatureVerifier::new(context, &bytes, created_at.into())
                         .context(format!("Invalid OpenPGP signature: `{check_name}`"))?;
 
                 // Read the backup to a temporary file.
@@ -122,7 +122,7 @@ where
         }
 
         // Ensure backup is signed if configuration enforces it.
-        if self.signing_config.as_ref().is_some_and(|c| c.mandatory) {
+        if self.signing_config.mandatory {
             return Err(anyhow!(
                 "Backup not signed (but signing is mandatory per configuration)."
             ));
@@ -190,16 +190,16 @@ pub mod pgp {
     use openpgp::parse::{Parse as _, stream::*};
 
     #[repr(transparent)]
-    pub struct PgpSignatureVerifier<'sig>(DetachedVerifier<'sig, PgpVerificationHelper>);
+    pub struct PgpSignatureVerifier<'ctx>(DetachedVerifier<'ctx, PgpVerificationHelper>);
 
-    impl<'sig> PgpSignatureVerifier<'sig> {
-        pub fn new<'policy: 'sig>(
-            context: &'_ PgpVerificationContext<'policy>,
+    impl<'ctx> PgpSignatureVerifier<'ctx> {
+        pub fn new<'sig: 'ctx>(
+            context: &'ctx PgpVerificationContext,
             expected: &'sig [u8],
             time: SystemTime,
         ) -> Result<Self, anyhow::Error> {
             let verifier = DetachedVerifierBuilder::from_bytes(expected)?.with_policy(
-                context.policy,
+                context.policy.as_ref(),
                 Some(time),
                 context.helper.clone(),
             )?;
@@ -216,9 +216,9 @@ pub mod pgp {
     }
 
     #[derive(Debug)]
-    pub struct PgpVerificationContext<'policy> {
+    pub struct PgpVerificationContext {
         pub helper: PgpVerificationHelper,
-        pub policy: &'policy dyn openpgp::policy::Policy,
+        pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
     #[derive(Debug, Clone)]

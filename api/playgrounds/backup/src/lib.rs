@@ -27,6 +27,7 @@ pub use openpgp;
 
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
+    config::BackupConfig,
     hashing::{DigestWriter, Sha256DigestWriter},
     stores::{ObjectStore, S3Store},
 };
@@ -37,25 +38,129 @@ pub use self::archiving::ExtractionSuccess;
 // MARK: Service
 
 /// Convenient alias to [`ProseBackupService`] with sensible defaults.
-pub type BackupService<'service, BackupStore = S3Store, CheckStore = S3Store> =
-    ProseBackupService<'service, BackupStore, CheckStore>;
+pub type BackupService<BackupStore = S3Store, CheckStore = S3Store> =
+    ProseBackupService<BackupStore, CheckStore>;
 
 /// Backup service. Central component of the library.
-pub struct ProseBackupService<'service, BackupStore, CheckStore> {
+pub struct ProseBackupService<BackupStore, CheckStore> {
     pub fs_root: std::path::PathBuf,
 
     pub archiving_config: config::ArchivingConfig,
     pub compression_config: config::CompressionConfig,
     pub hashing_config: config::HashingConfig,
-    pub signing_config: Option<config::SigningConfig>,
+    pub signing_config: config::SigningConfig,
 
-    pub encryption_context: Option<encryption::EncryptionContext<'service>>,
-    pub pgp_signing_context: Option<signing::PgpSigningContext<'service>>,
-    pub decryption_context: decryption::DecryptionContext<'service>,
-    pub pgp_verification_context: Option<verification::pgp::PgpVerificationContext<'service>>,
+    pub encryption_context: Option<encryption::EncryptionContext>,
+    pub pgp_signing_context: Option<signing::PgpSigningContext>,
+    pub decryption_context: decryption::DecryptionContext,
+    pub pgp_verification_context: Option<verification::pgp::PgpVerificationContext>,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
+}
+
+impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
+    pub fn from_config(
+        config: BackupConfig,
+        backup_store: BackupStore,
+        check_store: CheckStore,
+    ) -> Result<Self, anyhow::Error> {
+        Self::from_config_custom(
+            config,
+            "/",
+            backup_store,
+            check_store,
+            |path| {
+                use openpgp::parse::Parse as _;
+                openpgp::Cert::from_file(path)
+            },
+            openpgp::policy::StandardPolicy::new,
+        )
+    }
+
+    /// This is what [`ProseBackupService::from_config`] calls internally.
+    ///
+    /// You should not have to use it. It’s only made public because it’s used
+    /// in integration tests.
+    #[doc(hidden)]
+    #[cfg_attr(not(feature = "test"), inline(always))]
+    pub fn from_config_custom<P>(
+        config: BackupConfig,
+        fs_root: impl Into<std::path::PathBuf>,
+        backup_store: BackupStore,
+        check_store: CheckStore,
+        get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
+        pgp_policy: impl Fn() -> P,
+    ) -> Result<Self, anyhow::Error>
+    where
+        P: openpgp::policy::Policy + 'static,
+    {
+        use decryption::{DecryptionContext, PgpDecryptionContext};
+        use encryption::EncryptionContext;
+        use signing::PgpSigningContext;
+        use verification::pgp::{PgpVerificationContext, PgpVerificationHelper};
+
+        let encryption_context = match config.encryption.pgp.as_ref() {
+            _ if !config.encryption.enabled => None,
+            Some(pgp) => {
+                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+                Some(EncryptionContext::Pgp {
+                    cert: pgp_cert,
+                    policy: Box::new(pgp_policy()),
+                })
+            }
+            None => None,
+        };
+
+        let pgp_signing_context = match config.signing.pgp.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+                Some(PgpSigningContext {
+                    tsk: pgp_cert,
+                    policy: Box::new(pgp_policy()),
+                })
+            }
+            None => None,
+        };
+
+        let pgp_verification_context = match config.signing.pgp.as_ref() {
+            Some(pgp) => {
+                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+                Some(PgpVerificationContext {
+                    helper: PgpVerificationHelper {
+                        certs: vec![pgp_cert],
+                    },
+                    policy: Box::new(pgp_policy()),
+                })
+            }
+            None => None,
+        };
+
+        let mut decryption_context = DecryptionContext::default();
+        if config.encryption.enabled {
+            if let Some(pgp) = config.encryption.pgp.as_ref() {
+                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+                decryption_context.pgp = Some(PgpDecryptionContext {
+                    tsks: vec![pgp_cert],
+                    policy: Box::new(pgp_policy()),
+                });
+            }
+        };
+
+        Ok(Self {
+            fs_root: fs_root.into(),
+            archiving_config: config.archiving,
+            compression_config: config.compression,
+            hashing_config: config.hashing,
+            signing_config: config.signing,
+            pgp_signing_context,
+            encryption_context,
+            pgp_verification_context,
+            decryption_context,
+            backup_store,
+            check_store,
+        })
+    }
 }
 
 // MARK: DTOs
@@ -205,7 +310,7 @@ pub struct CreateBackupOutput {
     pub signature_ids: Vec<BackupFileName>,
 }
 
-impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
+impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     /// Create a new backup and upload it to the store.
     ///
     /// Everything is done in a single stream of the following shape:
@@ -420,7 +525,7 @@ pub enum CreateBackupError {
 
 // MARK: List
 
-impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
+impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     /// List all backups, in alphabetically ascending order.
     pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
@@ -447,7 +552,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         let checks = self.check_store.list_all_after(oldest_backup).await?;
 
-        let signing_is_mandatory = self.signing_config.as_ref().is_some_and(|c| c.mandatory);
+        let signing_is_mandatory = self.signing_config.mandatory;
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 
@@ -455,7 +560,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
             let is_encrypted = backup_file_name.ends_with(".pgp");
 
-            let can_be_restored = true && (!signing_is_mandatory || is_signed);
+            let can_be_restored = (!signing_is_mandatory) || is_signed;
 
             let BackupFileNameComponents {
                 created_at,
@@ -508,7 +613,7 @@ mod restore {
         util::debug_panic,
     };
 
-    impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
+    impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         #[must_use]
         pub async fn restore_backup(
             &self,

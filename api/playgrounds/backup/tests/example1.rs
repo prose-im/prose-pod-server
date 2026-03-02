@@ -13,16 +13,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use anyhow::anyhow;
 use bytes::Bytes;
 use openpgp::{policy::StandardPolicy, types::ReasonForRevocation};
 use prose_backup::{
-    BackupService, CreateBackupCommand, CreateBackupOutput,
-    config::{EncryptionMode, HashingAlgorithm, *},
-    decryption::{DecryptionContext, PgpDecryptionContext},
-    encryption::EncryptionContext,
-    openpgp,
-    signing::PgpSigningContext,
-    verification::pgp::{PgpVerificationContext, PgpVerificationHelper},
+    BackupService, CreateBackupCommand, CreateBackupOutput, config::*,
+    decryption::PgpDecryptionContext, openpgp,
 };
 
 use crate::common::revoke_subkey_simple;
@@ -58,13 +54,20 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let hashing_config = HashingConfig {
         algorithm: HashingAlgorithm::Sha256,
     };
-    let signing_config = Some(SigningConfig {
+    let signing_config = SigningConfig {
         mandatory: false,
         pgp: Some(SigningPgpConfig {
             tsk: Path::new("sign.pgp").to_path_buf(),
             additional_trusted_issuers: vec![],
         }),
-    });
+    };
+    let backup_config = BackupConfig {
+        archiving: archiving_config,
+        compression: compression_config,
+        hashing: hashing_config,
+        signing: signing_config,
+        encryption: encryption_config.clone(),
+    };
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
         (
@@ -81,65 +84,6 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
-    let encryption_context = if encryption_config.enabled {
-        match encryption_config.pgp.as_ref() {
-            Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.tsk).unwrap();
-                Some(EncryptionContext::Pgp {
-                    cert: &pgp_cert,
-                    policy: &pgp_policy,
-                })
-            }
-            None => None,
-        }
-    } else {
-        None
-    };
-    let pgp_signing_context = match signing_config.as_ref() {
-        Some(config) => match config.pgp.as_ref() {
-            Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.tsk).unwrap();
-                Some(PgpSigningContext {
-                    tsk: &pgp_cert,
-                    policy: &pgp_policy,
-                })
-            }
-            None => None,
-        },
-        None => None,
-    };
-    let pgp_verification_context = match signing_config.as_ref() {
-        Some(config) => match config.pgp.as_ref() {
-            Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.tsk).unwrap();
-                Some(PgpVerificationContext {
-                    helper: PgpVerificationHelper {
-                        certs: vec![pgp_cert.clone()],
-                    },
-                    policy: &pgp_policy,
-                })
-            }
-            None => None,
-        },
-        None => None,
-    };
-    let decryption_context = if encryption_config.enabled {
-        match encryption_config.pgp.as_ref() {
-            Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.tsk).unwrap();
-                let mut context = DecryptionContext::default();
-                context.pgp = Some(PgpDecryptionContext {
-                    tsks: vec![pgp_cert.clone()],
-                    policy: &pgp_policy,
-                });
-                context
-            }
-            None => DecryptionContext::default(),
-        }
-    } else {
-        DecryptionContext::default()
-    };
-
     let fs_prefix = Path::new(".out");
 
     let fs_prefix_backups = fs_prefix.join("backups");
@@ -154,19 +98,19 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         .overwrite(true)
         .directory(&fs_prefix_integrity_checks);
 
-    let mut service = BackupService {
-        fs_root: PathBuf::from("./data"),
-        archiving_config,
-        compression_config,
-        hashing_config,
-        signing_config,
-        pgp_signing_context,
-        encryption_context,
+    let mut service = BackupService::from_config_custom(
+        backup_config,
+        PathBuf::from("./data"),
         backup_store,
         check_store,
-        pgp_verification_context,
-        decryption_context,
-    };
+        |path| {
+            certs
+                .get(path)
+                .cloned()
+                .ok_or(anyhow!("Unknown cert: `{}`.", path.display()))
+        },
+        || pgp_policy.clone(),
+    )?;
 
     let CreateBackupOutput {
         backup_id,
@@ -197,7 +141,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
             service.decryption_context.pgp = Some(PgpDecryptionContext {
                 tsks: vec![pgp_cert],
-                policy: &pgp_policy,
+                policy: Box::new(pgp_policy.clone()),
             });
             service.pgp_verification_context = None;
         }

@@ -16,22 +16,23 @@ use crate::{
 
 #[non_exhaustive]
 #[derive(Debug)]
-pub enum EncryptionContext<'a> {
+pub enum EncryptionContext {
     Pgp {
-        cert: &'a openpgp::Cert,
-        policy: &'a dyn openpgp::policy::Policy,
+        cert: openpgp::Cert,
+        policy: Box<dyn openpgp::policy::Policy>,
     },
 }
 
-impl<'a> EncryptionContext<'a> {
-    fn encrypt<W: Write + Send + Sync + 'a>(
-        &self,
+impl EncryptionContext {
+    fn encrypt<'a, W: Write + Send + Sync + 'a>(
+        &'a self,
         writer: W,
         created_at: SystemTime,
     ) -> Result<EncryptionWriter<'a>, anyhow::Error> {
-        match *self {
+        match self {
             Self::Pgp { cert, policy } => {
-                self::pgp::encrypt(writer, cert, policy, created_at).map(EncryptionWriter::Pgp)
+                self::pgp::encrypt(writer, cert, policy.as_ref(), created_at)
+                    .map(EncryptionWriter::Pgp)
             }
         }
     }

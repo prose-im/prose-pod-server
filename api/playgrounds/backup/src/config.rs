@@ -131,7 +131,7 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::E
 
 // MARK: Archiving
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct ArchivingConfig {
     pub version: u8,
@@ -139,7 +139,7 @@ pub struct ArchivingConfig {
 
 // MARK: Compression
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct CompressionConfig {
     pub zstd_compression_level: i32,
@@ -147,13 +147,13 @@ pub struct CompressionConfig {
 
 // MARK: Hashing
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct HashingConfig {
     pub algorithm: HashingAlgorithm,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[derive(serde::Deserialize)]
 pub enum HashingAlgorithm {
     #[serde(rename = "SHA-256")]
@@ -162,7 +162,7 @@ pub enum HashingAlgorithm {
 
 // MARK: Signing
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct SigningConfig {
     pub mandatory: bool,
@@ -171,7 +171,7 @@ pub struct SigningConfig {
     pub pgp: Option<SigningPgpConfig>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct SigningPgpConfig {
     pub tsk: std::path::PathBuf,
@@ -182,7 +182,7 @@ pub struct SigningPgpConfig {
 
 // MARK: Encryption
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct EncryptionConfig {
     pub enabled: bool,
@@ -193,14 +193,14 @@ pub struct EncryptionConfig {
     pub pgp: Option<EncryptionPgpConfig>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[derive(serde::Deserialize)]
 pub enum EncryptionMode {
     #[serde(rename = "pgp", alias = "gpg")]
     Pgp,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct EncryptionPgpConfig {
     pub tsk: std::path::PathBuf,
