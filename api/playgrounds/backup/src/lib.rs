@@ -3,10 +3,6 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-extern crate aws_sdk_s3 as s3;
-pub extern crate sequoia_openpgp as openpgp;
-extern crate serde_json as json;
-
 mod archiving;
 mod compression;
 pub mod config;
@@ -25,6 +21,7 @@ use std::borrow::Cow;
 
 use anyhow::Context;
 use bytes::Bytes;
+pub use openpgp;
 
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},

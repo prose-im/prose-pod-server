@@ -233,7 +233,7 @@ impl S3Writer {
             .key(&self.key)
             .upload_id(&self.upload_id)
             .multipart_upload(
-                aws_sdk_s3::types::CompletedMultipartUpload::builder()
+                s3::types::CompletedMultipartUpload::builder()
                     .set_parts(Some(self.parts))
                     .build(),
             )
