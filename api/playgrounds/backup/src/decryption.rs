@@ -121,6 +121,8 @@ mod pgp {
         for PgpDecryptionHelper<'cert, 'policy>
     {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
+        // TODO: Improve by looking at <https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770> too.
+        // TODO: Add support for encrypted secrets (passphrase-protected).
         fn decrypt(
             &mut self,
             pkesks: &[PKESK],
@@ -128,11 +130,7 @@ mod pgp {
             sym_algo: Option<SymmetricAlgorithm>,
             decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
         ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
-            let todo = "Get inspiration from https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770";
-            let fixme = "Support key password";
-
-            // Second, we try those keys that we can use without
-            // prompting for a password.
+            // Try unencrypted secret keys (not passphrase-protected).
             for pkesk in pkesks {
                 let Some(recipient) = pkesk.recipient() else {
                     if cfg!(debug_assertions) {
@@ -157,7 +155,12 @@ mod pgp {
                 }
             }
 
-            Err(openpgp::Error::MissingSessionKey("No matching key found.".into()).into())
+            Err(anyhow::Error::new(openpgp::Error::MissingSessionKey(
+                "No matching key found when decrypting. Matching keys might exist, \
+                but they would be expired, compromised, encrypted (passphrase-protected), \
+                or any other similar reason leading to it being dismissed."
+                    .to_owned(),
+            )))
         }
     }
 
