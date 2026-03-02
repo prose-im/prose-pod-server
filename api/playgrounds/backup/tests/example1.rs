@@ -46,7 +46,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         enabled: true,
         mode: EncryptionMode::Pgp,
         pgp: Some(EncryptionPgpConfig {
-            tsk: Path::new("cert1").to_path_buf(),
+            tsk: Path::new("encrypt.pgp").to_path_buf(),
             additional_decryption_keys: vec![],
             additional_recipients: vec![],
         }),
@@ -57,18 +57,18 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let signing_config = Some(SigningConfig {
         mandatory: false,
         pgp: Some(SigningPgpConfig {
-            tsk: Path::new("cert2").to_path_buf(),
+            tsk: Path::new("sign.pgp").to_path_buf(),
             additional_trusted_issuers: vec![],
         }),
     });
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
         (
-            Path::new("cert1").to_path_buf(),
+            Path::new("encrypt.pgp").to_path_buf(),
             generate_test_cert(now - Duration::from_hours(23))?,
         ),
         (
-            Path::new("cert2").to_path_buf(),
+            Path::new("sign.pgp").to_path_buf(),
             generate_test_cert(now - Duration::from_hours(23))?,
         ),
     ]
@@ -240,8 +240,8 @@ fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::E
 
     let validity = Duration::from_hours(24);
 
-    // Build a cert with user ID + primary key + subkey
-    let (mut cert, _signature) = CertBuilder::new()
+    // Build a TSK with user ID + primary key + subkey
+    let (mut tsk, _signature) = CertBuilder::new()
         .add_userid("Test User <test@example.org>")
         .set_creation_time(created_at)
         .set_validity_period(validity)
@@ -249,22 +249,22 @@ fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::E
         .add_storage_encryption_subkey()
         .generate()?;
     tracing::debug!(
-        "Created cert `{cert}` valid from {} to {}.",
+        "Created TSK `{tsk}` valid from {} to {}.",
         time::UtcDateTime::from(created_at),
         time::UtcDateTime::from(created_at + validity)
     );
 
     let revoke_encryption_key = false;
     if revoke_encryption_key {
-        cert = revoke_subkey_simple(
-            cert,
+        tsk = revoke_subkey_simple(
+            tsk,
             |keys| keys.for_storage_encryption(),
             created_at + Duration::from_hours(1),
             ReasonForRevocation::KeySuperseded,
         )?;
 
         assert_eq!(
-            cert.keys()
+            tsk.keys()
                 .with_policy(&StandardPolicy::new(), None)
                 .revoked(true)
                 .count(),
@@ -272,11 +272,11 @@ fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::E
         );
     }
 
-    Ok(cert)
+    Ok(tsk)
 }
 
 fn revoke_subkey_simple(
-    cert: openpgp::Cert,
+    tsk: openpgp::Cert,
     filter: impl FnOnce(
         ValidKeyAmalgamationIter<key::PublicParts, key::SubordinateRole>,
     ) -> ValidKeyAmalgamationIter<key::PublicParts, key::SubordinateRole>,
@@ -285,18 +285,18 @@ fn revoke_subkey_simple(
 ) -> openpgp::Result<openpgp::Cert> {
     let policy = StandardPolicy::new();
 
-    let subkeys = cert.keys().subkeys().with_policy(&policy, None);
+    let subkeys = tsk.keys().subkeys().with_policy(&policy, None);
     let revoked_subkey = filter(subkeys).next().unwrap().key();
 
-    let mut primary_keypair = cert
+    let mut primary_keypair = tsk
         .primary_key()
         .key()
         .clone()
         .parts_into_secret()?
         .into_keypair()?;
 
-    let (cert, _sig_superseded) = revoke_subkey(
-        &cert,
+    let (tsk, _sig_superseded) = revoke_subkey(
+        &tsk,
         &revoked_subkey,
         &mut primary_keypair,
         revocation_time,
@@ -308,7 +308,7 @@ fn revoke_subkey_simple(
         time::UtcDateTime::from(revocation_time)
     );
 
-    Ok(cert)
+    Ok(tsk)
 }
 
 fn revoke_subkey<P: key::KeyParts>(

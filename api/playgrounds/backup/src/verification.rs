@@ -224,7 +224,7 @@ pub mod pgp {
         pub certs: Vec<openpgp::Cert>,
     }
 
-    impl<'cert> VerificationHelper for PgpVerificationHelper {
+    impl VerificationHelper for PgpVerificationHelper {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],

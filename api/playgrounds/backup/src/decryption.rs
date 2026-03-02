@@ -46,7 +46,7 @@ pub use self::pgp::PgpDecryptionContext;
 mod pgp {
     use anyhow::Context as _;
     use openpgp::{
-        crypto::SessionKey, packet::prelude::*, parse::Parse as _, parse::stream::*,
+        crypto::SessionKey, packet::prelude::*, parse::stream::*, parse::Parse as _,
         types::SymmetricAlgorithm,
     };
 
@@ -58,8 +58,8 @@ mod pgp {
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
-    struct PgpDecryptionHelper<'cert, 'policy> {
-        tsks: &'cert [openpgp::Cert],
+    struct PgpDecryptionHelper<'keys, 'policy> {
+        tsks: &'keys [openpgp::Cert],
         policy: &'policy dyn openpgp::policy::Policy,
         time: std::time::SystemTime,
     }
@@ -85,8 +85,8 @@ mod pgp {
         Ok(decryptor)
     }
 
-    impl<'cert, 'policy> openpgp::parse::stream::DecryptionHelper
-        for PgpDecryptionHelper<'cert, 'policy>
+    impl<'keys, 'policy> openpgp::parse::stream::DecryptionHelper
+        for PgpDecryptionHelper<'keys, 'policy>
     {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         // TODO: Improve by looking at <https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770> too.
@@ -134,7 +134,7 @@ mod pgp {
         }
     }
 
-    impl<'cert, 'policy> VerificationHelper for PgpDecryptionHelper<'cert, 'policy> {
+    impl<'keys, 'policy> VerificationHelper for PgpDecryptionHelper<'keys, 'policy> {
         fn get_certs(
             &mut self,
             // NOTE: Not filtering certs because the certs we have access to
