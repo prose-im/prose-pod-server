@@ -429,18 +429,15 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 mod restore {
     use std::path::Path;
 
-    use anyhow::{Context as _, anyhow};
-    use openpgp::parse::Parse as _;
-    use openpgp::parse::stream::DecryptorBuilder;
+    use anyhow::Context as _;
 
     use crate::{
         BackupFileName, BackupFileNameComponents, ProseBackupService,
         archiving::{ExtractionSuccess, extract_archive},
-        decryption::PgpDecryptionHelper,
+        decryption,
         stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
         util::debug_panic,
-        writer_chain::either::Either,
     };
 
     impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
@@ -452,7 +449,7 @@ mod restore {
         ) -> Result<ExtractionSuccess, anyhow::Error> {
             // Parse backup name first.
             // Avoids unnecessary I/O if malformed.
-            let BackupFileNameComponents { created_at, .. } =
+            let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
                 BackupFileNameComponents::parse(&backup_name)?;
 
             let (tmp, backup_path) = self
@@ -469,31 +466,12 @@ mod restore {
             // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
             //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
             let mut decryption_stats = ReadStats::new();
-            let compressed_archive_reader = if backup_name.ends_with(".pgp") {
-                if let Some(config) = self.decryption_context.pgp.as_ref() {
-                    let helper = PgpDecryptionHelper {
-                        certs: config.certs.as_slice(),
-                        policy: config.policy,
-                        time: created_at.into(),
-                    };
-                    let decryptor = DecryptorBuilder::from_reader(backup_reader)
-                        .context("Failed creating decryptor builder")?
-                        .with_policy(config.policy, Some(created_at.into()), helper)
-                        .context("Failed creating decryptor")?;
-
-                    let decryptor = StatsReader::new(decryptor, &mut decryption_stats);
-
-                    Either::A(decryptor)
-                } else {
-                    return Err(anyhow!(
-                        "Encryption not configured. Cannot find private keys.",
-                    ));
-                }
-            } else {
-                tracing::debug!("NOT DECRYPTING");
-
-                Either::B(backup_reader)
-            };
+            let compressed_archive_reader = decryption::reader(
+                backup_reader,
+                &self.decryption_context,
+                &parsed_backup_name,
+                &mut decryption_stats,
+            )?;
 
             let archive_bytes =
                 zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;

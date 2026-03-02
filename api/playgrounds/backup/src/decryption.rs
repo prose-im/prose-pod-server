@@ -9,10 +9,45 @@ pub struct DecryptionContext<'a> {
     pub pgp: Option<PgpDecryptionContext<'a>>,
 }
 
-pub use self::pgp::{PgpDecryptionContext, PgpDecryptionHelper};
+pub(crate) fn reader<'a, R>(
+    backup_reader: R,
+    context: &'a DecryptionContext,
+    parsed_backup_name @ crate::BackupFileNameComponents {
+        extensions,
+        ..
+    }: &crate::BackupFileNameComponents,
+    stats: &mut crate::stats::ReadStats,
+) -> Result<impl std::io::Read, anyhow::Error>
+where
+    R: std::io::Read + Send + Sync + 'a,
+{
+    if extensions.ends_with(".pgp") {
+        if let Some(context) = context.pgp.as_ref() {
+            let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_name)?;
+
+            let decryptor = crate::stats::StatsReader::new(decryptor, stats);
+
+            Ok(Either::A(decryptor))
+        } else {
+            Err(anyhow::Error::msg(
+                "Encryption not configured. Cannot find private keys.",
+            ))
+        }
+    } else {
+        tracing::debug!("NOT DECRYPTING");
+
+        Ok(Either::B(backup_reader))
+    }
+}
+
+use crate::writer_chain::either::Either;
+
+pub use self::pgp::PgpDecryptionContext;
 mod pgp {
+    use anyhow::Context as _;
     use openpgp::{
-        crypto::SessionKey, packet::prelude::*, parse::stream::*, types::SymmetricAlgorithm,
+        crypto::SessionKey, packet::prelude::*, parse::Parse as _, parse::stream::*,
+        types::SymmetricAlgorithm,
     };
 
     #[derive(Debug)]
@@ -21,11 +56,31 @@ mod pgp {
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
-    #[derive(Debug)]
-    pub struct PgpDecryptionHelper<'cert, 'policy> {
-        pub certs: &'cert [openpgp::Cert],
-        pub policy: &'policy dyn openpgp::policy::Policy,
-        pub time: std::time::SystemTime,
+    struct PgpDecryptionHelper<'cert, 'policy> {
+        certs: &'cert [openpgp::Cert],
+        policy: &'policy dyn openpgp::policy::Policy,
+        time: std::time::SystemTime,
+    }
+
+    pub fn decryptor<'a, R>(
+        backup_reader: R,
+        context: &'a PgpDecryptionContext,
+        crate::BackupFileNameComponents { created_at, .. }: &crate::BackupFileNameComponents,
+    ) -> Result<impl std::io::Read, anyhow::Error>
+    where
+        R: std::io::Read + Send + Sync + 'a,
+    {
+        let helper = PgpDecryptionHelper {
+            certs: context.certs.as_slice(),
+            policy: context.policy,
+            time: (*created_at).into(),
+        };
+        let decryptor = DecryptorBuilder::from_reader(backup_reader)
+            .context("Failed creating decryptor builder")?
+            .with_policy(context.policy, Some(helper.time.clone()), helper)
+            .context("Failed creating decryptor")?;
+
+        Ok(decryptor)
     }
 
     impl<'cert, 'policy> PgpDecryptionHelper<'cert, 'policy> {
@@ -75,7 +130,6 @@ mod pgp {
         ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
             let todo = "Get inspiration from https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770";
             let fixme = "Support key password";
-            let fixme = "Make PgpDecryptionHelper not public by moving OpenPGP decryption-related code into this module.";
 
             // Second, we try those keys that we can use without
             // prompting for a password.
