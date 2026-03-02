@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Encryption logic.
+
 use std::{io::Write, time::SystemTime};
 
 use openpgp::serialize::stream::*;

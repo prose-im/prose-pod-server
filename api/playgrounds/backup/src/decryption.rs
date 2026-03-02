@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Decryption logic.
+
 #[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct DecryptionContext<'a> {
@@ -46,7 +48,7 @@ pub use self::pgp::PgpDecryptionContext;
 mod pgp {
     use anyhow::Context as _;
     use openpgp::{
-        crypto::SessionKey, packet::prelude::*, parse::stream::*, parse::Parse as _,
+        crypto::SessionKey, packet::prelude::*, parse::Parse as _, parse::stream::*,
         types::SymmetricAlgorithm,
     };
 

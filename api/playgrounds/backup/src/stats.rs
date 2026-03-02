@@ -3,6 +3,10 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! A reader used to measure stats when performing read operations.
+//!
+//! It measures things like the number of bytes read and the time spent reading.
+
 use std::{
     io::{self, Read},
     time::SystemTime,

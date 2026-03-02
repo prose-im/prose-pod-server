@@ -14,10 +14,14 @@ use bytes::Bytes;
 use crate::CreateBackupError;
 use crate::writer_chain::WriterChainBuilder;
 
+/// Current version of Prose backup archives.
+///
+/// If we change the internal structure of backups in the future, we’ll bump
+/// this version number and keep backward compatibility.
 pub const CURRENT_BACKUP_VERSION: u8 = 1;
 
-// WARN: Do not change as doing so would break backwards compatibility.
-pub(crate) const METADATA_FILE_NAME: &'static str = "metadata.json";
+// WARN: Do not change as doing so would break backward compatibility.
+const METADATA_FILE_NAME: &'static str = "metadata.json";
 
 #[non_exhaustive]
 #[derive(Debug)]
@@ -39,6 +43,7 @@ impl ArchivingBlueprint {
     }
 
     pub fn new(version: u8, prefix: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+        let fixme = "Add other paths too";
         match version {
             1 => Ok(Self {
                 version,

@@ -10,3 +10,4 @@
   - Old backup + PGP still configured but key lost
   - PGP now configured, malicious actor plants signatures for old unsigned
     backups, rendering them unrestorable
+- Return backup size when getting details.

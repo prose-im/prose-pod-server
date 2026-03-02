@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Hashing/checksum logic.
+//!
 //! When signing is enabled, we MUST still store a hash in addition to the
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!

@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Create a [`BackupService`], then use it to test
+
 mod archiving;
 mod compression;
 pub mod config;
@@ -19,7 +21,7 @@ mod writer_chain;
 
 use std::borrow::Cow;
 
-use anyhow::Context;
+use anyhow::Context as _;
 use bytes::Bytes;
 pub use openpgp;
 
@@ -30,35 +32,15 @@ use crate::{
 };
 
 pub use self::archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION;
+pub use self::archiving::ExtractionSuccess;
 
 // MARK: Service
 
+/// Convenient alias to [`ProseBackupService`] with sensible defaults.
 pub type BackupService<'service, BackupStore = S3Store, CheckStore = S3Store> =
     ProseBackupService<'service, BackupStore, CheckStore>;
 
-/// ```text
-/// ## Create backup
-///
-/// Abstract:
-///   File -> BackupWriter -> dyn BackupSink
-///
-/// Prod:
-///   -> S3Sink
-///
-/// Tests:
-///   -> FileSink
-///
-/// ## Restore backup
-///
-/// Abstract:
-///   File -> BackupWriter -> dyn BackupSink
-///
-/// Prod:
-///   S3Source -> BackupReader ->
-///
-/// Tests:
-///   -> FileSink
-/// ```
+/// Backup service. Central component of the library.
 pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub fs_root: std::path::PathBuf,
 
@@ -76,24 +58,156 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub check_store: CheckStore,
 }
 
+// MARK: DTOs
+
+use self::dtos::*;
+pub mod dtos {
+    //! [Data Transfer Objects].
+    //!
+    //! [Data Transfer Objects]: https://en.wikipedia.org/wiki/Data_transfer_object "“Data transfer object” on Wikipedia"
+
+    #[derive(Debug)]
+    pub struct BackupDto {
+        /// Unique identifier (file name / object key) of the backup.
+        ///
+        /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
+        pub id: Box<str>,
+
+        /// Metadata associated with the backup.
+        pub metadata: BackupMetadataPartialDto,
+    }
+
+    #[derive(Debug)]
+    pub struct BackupMetadataPartialDto {
+        /// Description of the backup.
+        ///
+        /// E.g. “Automatic backup”.
+        pub description: String,
+
+        /// UTC timestamp at which the backup was created.
+        pub created_at: time::UtcDateTime,
+
+        /// Whether or not the backup was signed.
+        ///
+        /// This doesn’t mean anything regarding whether or not the signature
+        /// was issued by a trusted entity nor if it’s valid. Such information
+        /// is only present in [`BackupMetadataFullDto`].
+        pub is_signed: bool,
+
+        /// Whether or not the backup is encrypted.
+        pub is_encrypted: bool,
+
+        /// An indicator potentially indicating a backup cannot be restored
+        /// (e.g. it’s not signed but signing is mandatory).
+        ///
+        /// ⚠️ Beware that [`can_be_restored`] is a one-sided indicator. `true`
+        /// doesn’t mean a restore will succeed for sure. More computation is
+        /// required to know if the backup is intact and using trusted keys for
+        /// example. `false`, however, means restoring this backup is impossible
+        /// and the option shouldn’t be presented to a user.
+        ///
+        /// [`can_be_restored`]: BackupMetadataPartialDto::can_be_restored
+        pub can_be_restored: bool,
+    }
+
+    /// [`BackupMetadataPartialDto`] with additional data that requires
+    /// expensive computation.
+    #[derive(Debug)]
+    pub struct BackupMetadataFullDto {
+        /// Description of the backup.
+        ///
+        /// E.g. “Automatic backup”.
+        pub description: String,
+
+        /// UTC timestamp at which the backup was created.
+        pub created_at: time::UtcDateTime,
+
+        /// Whether or not the backup is intact (not corrupted).
+        ///
+        /// If it’s not intact, you cannot restore it.
+        pub is_intact: bool,
+
+        /// Whether or not the backup was signed.
+        ///
+        /// This doesn’t mean anything regarding whether or not the signature
+        /// was issued by a trusted entity nor if it’s valid. Such information
+        /// is in [`is_signature_trusted`] and [`is_signature_valid`].
+        ///
+        /// [`is_signature_trusted`]: Self::is_signature_trusted
+        /// [`is_signature_valid`]: Self::is_signature_valid
+        pub is_signed: bool,
+
+        /// Fingerprint of the key used to sign the backup, if applicable.
+        pub signing_key: Option<openpgp::Fingerprint>,
+
+        /// Whether or not the backup signature was issued by a trusted entity.
+        ///
+        /// This doesn’t mean the signature is valid, which is indicated by
+        /// [`is_signature_valid`].
+        ///
+        /// [`is_signature_valid`]: Self::is_signature_valid
+        pub is_signature_trusted: Option<bool>,
+
+        /// Whether or not the backup was signed by a trusted issuer.
+        pub is_signature_valid: Option<bool>,
+
+        /// Whether or not the backup is encrypted.
+        pub is_encrypted: bool,
+
+        /// Fingerprint of the key used to encrypt the backup, if applicable.
+        pub encryption_key: Option<openpgp::Fingerprint>,
+
+        /// Whether or not the backup can be successfully decrypted
+        /// (i.e. encrypted with an known private key).
+        pub is_encryption_valid: Option<bool>,
+
+        /// Whether or not the backup can be restored (e.g. `false` if its
+        /// signature is invalid).
+        ///
+        /// ⚠️ Beware that [`BackupMetadataFullDto::can_be_restored`] might
+        /// differ from [`BackupMetadataPartialDto::can_be_restored`] as the
+        /// latter doesn’t know if the backup is intact or using trusted keys.
+        pub can_be_restored: bool,
+    }
+}
+
 // MARK: Create backup
 
 #[derive(Debug)]
 pub struct CreateBackupCommand<'a> {
+    /// Desired backup description (e.g. “Automatic backup”).
     pub description: &'a str,
 
+    /// Timestamp which should be associated with the backup.
+    ///
+    /// This is only useful in tests, as we have no way to read data as it was
+    /// at the previous date. It’s only metadata.
     #[cfg(feature = "test")]
     pub created_at: std::time::SystemTime,
 }
 
 #[derive(Debug)]
 pub struct CreateBackupOutput {
+    /// Unique identifier (file name / object key) of the backup.
+    ///
+    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
     pub backup_id: BackupFileName,
-    pub digest_ids: Vec<String>,
-    pub signature_ids: Vec<String>,
+
+    /// Unique identifiers (file names / object keys) of backup digests
+    /// (cryptographic checksums).
+    ///
+    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
+    pub digest_ids: Vec<BackupFileName>,
+
+    /// Unique identifiers (file names / object keys) of backup signatures.
+    ///
+    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp.sig`.
+    pub signature_ids: Vec<BackupFileName>,
 }
 
 impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
+    /// Create a new backup and upload it to the store.
+    ///
     /// Everything is done in a single stream of the following shape:
     ///
     /// ```text
@@ -203,7 +317,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
 
         () = finalize_backup(writer)?;
 
-        let mut digest_ids: Vec<String> = Vec::new();
+        let mut digest_ids: Vec<BackupFileName> = Vec::new();
 
         // SHA-256 digest.
         {
@@ -223,10 +337,10 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             std::io::copy(&mut cursor, &mut uploader)
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-            digest_ids.push(file_name.to_string());
+            digest_ids.push(file_name);
         }
 
-        let mut signature_ids: Vec<String> = Vec::new();
+        let mut signature_ids: Vec<BackupFileName> = Vec::new();
 
         // OpenPGP signature.
         if pgp_signature_writer.is_some() {
@@ -254,7 +368,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
             std::io::copy(&mut cursor, &mut uploader)
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-            signature_ids.push(file_name.to_string());
+            signature_ids.push(file_name);
         }
 
         Ok(CreateBackupOutput {
@@ -306,54 +420,11 @@ pub enum CreateBackupError {
 
 // MARK: List
 
-#[derive(Debug)]
-pub struct BackupDto {
-    pub id: Box<str>,
-    pub metadata: BackupMetadataPartialDto,
-}
-
-/// ⚠️ Beware that [`can_be_restored`] is a one-sided indicator. `true` doesn’t
-/// mean a restore will succeed for sure. More computation is required to know
-/// if the backup is intact and using trusted keys for example. `false`,
-/// however, means restoring this backup is impossible and the option shouldn’t
-/// be presented to a user.
-///
-/// [`can_be_restored`]: BackupMetadataPartialDto::can_be_restored
-#[derive(Debug)]
-pub struct BackupMetadataPartialDto {
-    pub description: String,
-    pub created_at: time::UtcDateTime,
-    pub is_signed: bool,
-    pub is_encrypted: bool,
-    pub can_be_restored: bool,
-}
-
-/// [`BackupMetadataPartialDto`] with additional data that requires expensive
-/// computation.
-///
-/// ⚠️ Beware that [`BackupMetadataFullDto::can_be_restored`] might differ from
-/// [`BackupMetadataPartialDto::can_be_restored`] as the latter doesn’t know if
-/// the backup is intact or using trusted keys.
-#[derive(Debug)]
-pub struct BackupMetadataFullDto {
-    pub description: String,
-    pub created_at: time::UtcDateTime,
-    pub is_intact: bool,
-    pub is_signed: bool,
-    pub signing_key: Option<openpgp::Fingerprint>,
-    pub is_signature_trusted: Option<bool>,
-    pub is_signature_valid: Option<bool>,
-    pub is_encrypted: bool,
-    pub encryption_key: Option<openpgp::Fingerprint>,
-    pub is_encryption_valid: Option<bool>,
-    pub is_trusted: bool,
-    pub can_be_restored: bool,
-}
-
 impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1, S2> {
+    /// List all backups, in alphabetically ascending order.
     pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
-        //   no way to list in reverse order or ist by “last modified” date
+        //   no way to list in reverse order or list by “last modified” date
         //   (even ascending). Therefore, we have no choice but to list ALL
         //   backups by name. It’s acceptable because backups will likely be
         //   deleted every once in a while which means we won’t end up with a
@@ -368,7 +439,7 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
         let backups = self.backup_store.list_all().await?;
 
         // NOTE: S3 results are sorted in alphabetically ascending order,
-        //   and backup names use RFC 3339 timestamps which are alphabetically
+        //   and backup names use Unix timestamps which are alphabetically
         //   sortable. The first result is the oldest backup.
         let Some(oldest_backup) = backups.first() else {
             return Ok(vec![]);
@@ -487,6 +558,9 @@ mod restore {
                 restore_result.restored_bytes_count,
             );
 
+            let fixme = "Do not drop tmp, but rather return a `FnOnce` \
+            which can be called by the Server API after the Pod API has \
+            restored its data to atomically restore the Server’s data.";
             drop(tmp);
 
             Ok(restore_result)
@@ -539,6 +613,9 @@ impl<'a> BackupFileNameComponents<'a> {
     }
 }
 
+/// Name of a backup (base name of the file).
+///
+/// E.g. `1772432392-Automatic%20backup`.
 #[derive(Clone)]
 #[repr(transparent)]
 pub struct BackupName(String);
@@ -605,6 +682,9 @@ impl std::fmt::Display for BackupName {
     }
 }
 
+/// Name of a backup file (base name with extensions).
+///
+/// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
 #[derive(Clone)]
 pub struct BackupFileName {
     value: String,
@@ -634,19 +714,23 @@ impl AsRef<std::path::Path> for BackupFileName {
     }
 }
 
-#[derive(Debug)]
-pub struct BackupFileNameHasNoExtension;
+#[derive(Debug, Clone, Copy)]
+pub enum BackupFileNameError {
+    NoExtension,
+}
 
-impl std::fmt::Display for BackupFileNameHasNoExtension {
+impl std::fmt::Display for BackupFileNameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Backup file name has no extension.")
+        match self {
+            Self::NoExtension => write!(f, "Backup file name has no extension."),
+        }
     }
 }
 
-impl std::error::Error for BackupFileNameHasNoExtension {}
+impl std::error::Error for BackupFileNameError {}
 
 impl std::str::FromStr for BackupFileName {
-    type Err = BackupFileNameHasNoExtension;
+    type Err = BackupFileNameError;
 
     fn from_str(file_name: &str) -> Result<Self, Self::Err> {
         match file_name.find('.') {
@@ -654,12 +738,14 @@ impl std::str::FromStr for BackupFileName {
                 value: file_name.to_owned(),
                 suffix_start_idx,
             }),
-            None => Err(BackupFileNameHasNoExtension),
+            None => Err(BackupFileNameError::NoExtension),
         }
     }
 }
 
 impl BackupFileName {
+    /// Get the file base name.
+    ///
     /// ```
     /// # use prose_backup::BackupFileName;
     /// # use std::str::FromStr as _;
@@ -670,6 +756,8 @@ impl BackupFileName {
         &self.value[..self.suffix_start_idx]
     }
 
+    /// Get the extensions of the file name (no leading `.`).
+    ///
     /// ```
     /// # use prose_backup::BackupFileName;
     /// # use std::str::FromStr as _;
@@ -680,6 +768,8 @@ impl BackupFileName {
         &self.value[(self.suffix_start_idx + 1)..]
     }
 
+    /// Push a new extension to the file name (keeps existing ones).
+    ///
     /// ```
     /// # use prose_backup::BackupFileName;
     /// # use std::str::FromStr as _;
@@ -689,6 +779,7 @@ impl BackupFileName {
     /// ```
     pub fn with_extension(&self, extension: &'static str) -> Self {
         debug_assert!(!extension.starts_with('.'));
+        assert!(!extension.ends_with('.'));
 
         Self {
             value: format!("{self}.{extension}", self = self.value),

@@ -3,8 +3,14 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Backups configuration.
+//!
+//! See [`BackupConfig`].
+
 use figment::Figment;
 
+/// Backup configuration.
+///
 /// Example full configuration (all keys have default values):
 ///
 /// ```toml

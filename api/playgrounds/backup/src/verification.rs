@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Verification logic.
+
 use crate::{ProseBackupService, stores::ObjectStore};
 
 /// Do not download OpenPGP signatures if larger than 2KiB.

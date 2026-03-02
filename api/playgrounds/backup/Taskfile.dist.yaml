@@ -3,6 +3,19 @@
 version: "3"
 
 tasks:
+  doc:open:
+    desc: Build and open Cargo docs.
+    cmd: cargo doc --no-deps --lib --open
+
   test:
     desc: Run all tests.
     cmd: cargo test -F test
+
+  dev:doc:
+    desc: Rebuild Cargo docs on source file changes.
+    preconditions:
+      - sh: command -v cargo-watch >/dev/null 2>&1
+        msg: "Install `cargo-watch` using `cargo install cargo-watch`."
+    cmds:
+      - task: doc:open
+      - cmd: cargo watch -x 'doc --no-deps --lib'

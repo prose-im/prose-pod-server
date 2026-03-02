@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! OpenPGP helpers.
+
 use std::time::SystemTime;
 
 use openpgp::{packet::key, policy::Policy};

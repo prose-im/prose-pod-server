@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Data stores.
+
 #[cfg(feature = "destination_fs")]
 pub mod file;
 #[cfg(feature = "destination_s3")]
