@@ -46,24 +46,21 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         enabled: true,
         mode: EncryptionMode::Pgp,
         pgp: Some(EncryptionPgpConfig {
-            key: Path::new("cert1").to_path_buf(),
-            additional_encryption_keys: vec![],
+            tsk: Path::new("cert1").to_path_buf(),
             additional_decryption_keys: vec![],
+            additional_recipients: vec![],
         }),
     };
-    // let encryption_config = None;
     let hashing_config = HashingConfig {
         algorithm: HashingAlgorithm::Sha256,
     };
     let signing_config = Some(SigningConfig {
         mandatory: false,
         pgp: Some(SigningPgpConfig {
-            key: Path::new("cert2").to_path_buf(),
-            additional_encryption_keys: vec![],
-            additional_decryption_keys: vec![],
+            tsk: Path::new("cert2").to_path_buf(),
+            additional_trusted_issuers: vec![],
         }),
     });
-    // let signing_config = None;
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
         (
@@ -83,7 +80,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let encryption_context = if encryption_config.enabled {
         match encryption_config.pgp.as_ref() {
             Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.key).unwrap();
+                let pgp_cert = certs.get(&pgp.tsk).unwrap();
                 Some(EncryptionContext::Pgp {
                     cert: &pgp_cert,
                     policy: &pgp_policy,
@@ -97,9 +94,9 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let pgp_signing_context = match signing_config.as_ref() {
         Some(config) => match config.pgp.as_ref() {
             Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.key).unwrap();
+                let pgp_cert = certs.get(&pgp.tsk).unwrap();
                 Some(PgpSigningContext {
-                    cert: &pgp_cert,
+                    tsk: &pgp_cert,
                     policy: &pgp_policy,
                 })
             }
@@ -110,7 +107,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let pgp_verification_context = match signing_config.as_ref() {
         Some(config) => match config.pgp.as_ref() {
             Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.key).unwrap();
+                let pgp_cert = certs.get(&pgp.tsk).unwrap();
                 Some(PgpVerificationContext {
                     helper: PgpVerificationHelper {
                         certs: vec![pgp_cert.clone()],
@@ -125,10 +122,10 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let decryption_context = if encryption_config.enabled {
         match encryption_config.pgp.as_ref() {
             Some(pgp) => {
-                let pgp_cert = certs.get(&pgp.key).unwrap();
+                let pgp_cert = certs.get(&pgp.tsk).unwrap();
                 let mut context = DecryptionContext::default();
                 context.pgp = Some(PgpDecryptionContext {
-                    certs: vec![pgp_cert.clone()],
+                    tsks: vec![pgp_cert.clone()],
                     policy: &pgp_policy,
                 });
                 context
@@ -185,7 +182,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     if encryption_config.enabled {
         if let Some(pgp) = encryption_config.pgp.as_ref() {
-            let mut pgp_cert = certs.get(&pgp.key).unwrap().clone();
+            let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
 
             pgp_cert = revoke_subkey_simple(
                 pgp_cert,
@@ -195,7 +192,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
             )?;
 
             service.decryption_context.pgp = Some(PgpDecryptionContext {
-                certs: vec![pgp_cert],
+                tsks: vec![pgp_cert],
                 policy: &pgp_policy,
             });
             service.pgp_verification_context = None;

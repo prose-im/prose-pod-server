@@ -17,7 +17,7 @@ mod pgp {
     use anyhow::Context as _;
 
     pub struct PgpSigningContext<'a> {
-        pub cert: &'a openpgp::Cert,
+        pub tsk: &'a openpgp::Cert,
         pub policy: &'a dyn openpgp::policy::Policy,
     }
 
@@ -36,7 +36,7 @@ mod pgp {
         {
             use openpgp::serialize::stream::{Message, Signer};
 
-            let keypair = (self.cert)
+            let keypair = (self.tsk)
                 .keys()
                 // Validate keys and subkeys (check expiration, crypto algorithm…).
                 .with_policy(self.policy, Some(time))

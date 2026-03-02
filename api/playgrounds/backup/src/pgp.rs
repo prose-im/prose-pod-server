@@ -3,6 +3,49 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use std::time::SystemTime;
+
+use openpgp::{packet::key, policy::Policy};
+
+// TODO: Cache? See [`DecryptionHelper`] docs for an example.
+pub(crate) fn lookup_secret_key(
+    recipient: &openpgp::KeyHandle,
+    tsks: &[openpgp::Cert],
+    policy: &dyn Policy,
+    time: SystemTime,
+) -> Option<(
+    openpgp::Cert,
+    key::Key<key::SecretParts, key::UnspecifiedRole>,
+)> {
+    for cert in tsks.iter() {
+        // Skip certificates without secret key material.
+        if !cert.is_tsk() {
+            continue;
+        }
+
+        for ka in cert
+            .keys()
+            // Validate keys and subkeys (check expiration, crypto algorithm…).
+            .with_policy(policy, Some(time))
+            // Filter out unwanted keys.
+            .supported()
+            .alive()
+            .revoked(false)
+            // Select key for encryption.
+            .for_storage_encryption()
+            .secret()
+        {
+            if ka.key().key_handle() == *recipient {
+                tracing::trace!("Lookup found key `{}`.", ka.key());
+                return Some((cert.clone(), ka.key().clone()));
+            }
+        }
+    }
+
+    tracing::debug!("Lookup found no key.");
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, SystemTime};

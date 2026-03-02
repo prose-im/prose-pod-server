@@ -50,14 +50,16 @@ mod pgp {
         types::SymmetricAlgorithm,
     };
 
+    use crate::pgp::lookup_secret_key;
+
     #[derive(Debug)]
     pub struct PgpDecryptionContext<'policy> {
-        pub certs: Vec<openpgp::Cert>,
+        pub tsks: Vec<openpgp::Cert>,
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
     struct PgpDecryptionHelper<'cert, 'policy> {
-        certs: &'cert [openpgp::Cert],
+        tsks: &'cert [openpgp::Cert],
         policy: &'policy dyn openpgp::policy::Policy,
         time: std::time::SystemTime,
     }
@@ -71,7 +73,7 @@ mod pgp {
         R: std::io::Read + Send + Sync + 'a,
     {
         let helper = PgpDecryptionHelper {
-            certs: context.certs.as_slice(),
+            tsks: context.tsks.as_slice(),
             policy: context.policy,
             time: (*created_at).into(),
         };
@@ -81,40 +83,6 @@ mod pgp {
             .context("Failed creating decryptor")?;
 
         Ok(decryptor)
-    }
-
-    impl<'cert, 'policy> PgpDecryptionHelper<'cert, 'policy> {
-        // TODO: Cache? See [`DecryptionHelper`] docs for an example.
-        fn lookup_key(
-            &self,
-            recipient: &openpgp::KeyHandle,
-        ) -> Option<(
-            openpgp::Cert,
-            key::Key<key::SecretParts, key::UnspecifiedRole>,
-        )> {
-            for cert in self.certs.iter() {
-                for ka in cert
-                    .keys()
-                    // Validate keys and subkeys (check expiration, crypto algorithm…).
-                    .with_policy(self.policy, Some(self.time))
-                    // Filter out unwanted keys.
-                    .supported()
-                    .alive()
-                    .revoked(false)
-                    // Select key for encryption.
-                    .for_storage_encryption()
-                    .secret()
-                {
-                    if ka.key().key_handle() == *recipient {
-                        tracing::trace!("Lookup found key `{}`.", ka.key());
-                        return Some((cert.clone(), ka.key().clone()));
-                    }
-                }
-            }
-
-            tracing::debug!("Lookup found no key.");
-            None
-        }
     }
 
     impl<'cert, 'policy> openpgp::parse::stream::DecryptionHelper
@@ -139,7 +107,9 @@ mod pgp {
                     continue;
                 };
 
-                if let Some((cert, key)) = self.lookup_key(&recipient) {
+                if let Some((cert, key)) =
+                    lookup_secret_key(&recipient, self.tsks, self.policy, self.time)
+                {
                     if !key.secret().is_encrypted() {
                         let mut keypair = key.clone().into_keypair()?;
                         tracing::trace!("Trying encryption key: `{key}`.");
@@ -171,7 +141,7 @@ mod pgp {
             //   are probably all relevant (e.g. not a whole contact list).
             _ids: &[openpgp::KeyHandle],
         ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-            Ok(self.certs.to_vec())
+            Ok(self.tsks.to_vec())
         }
 
         fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {

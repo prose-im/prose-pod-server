@@ -10,7 +10,7 @@ use figment::Figment;
 /// ```toml
 /// [archiving]
 /// # Default is `1`. No need to override this, it’s mostly there for
-/// # integration testing or in case a breaking change is released by mistake.
+/// # integration testing or if a breaking change is released by mistake.
 /// version = 1
 ///
 /// [compression]
@@ -23,27 +23,29 @@ use figment::Figment;
 /// zstd_compression_level = 3
 ///
 /// [hashing]
+/// # The algorithm to use when computing backup checksums.
+/// # Note that only SHA-256 is supported at the moment, and we don’t plan on
+/// # supporting more algorithms. This configuration key is mostly there for
+/// # future-proofing.
 /// algorithm = "SHA-256"
 ///
-/// # By default, backups are not signed as it requires an
-/// # signing key to be configured. This is where it is done.
+/// # By default, backups are not signed as it requires a secret signing key
+/// # to be configured and accessible. This is where it is done.
 /// [signing]
-/// # Default is `false` (opt-in). Also configure `signing.mode`
-/// # and `signing.<mode>` when enabling signing.
-/// enabled = true
 /// # `true` makes it impossible to restore a non-signed backup.
 /// # Default is `false` (opt-in).
 /// mandatory = true
-/// # Default is `true`. Use only if you need a global override
-/// # (e.g. in tests).
+/// # Default is `true`.
+/// # Use only if you need a global override (e.g. in tests).
 /// pgp.enabled = true
-/// # Path to the key to use when signing new backups.
-/// pgp.key = "/keys/prose-backup.asc"
-/// # Optional. Use if you changed the primary keys instead of
-/// # rotating subkeys. Those SHOULD NOT contain private key material.
-/// pgp.additional_trusted_keys = ["/keys/prose-backup-old.pub.asc"]
+/// # Path to the Transferable Secret Key to use when signing new backups.
+/// # This TSK MUST contain private key material suitable for signing.
+/// pgp.tsk = "/path/to/prose-backup.asc"
+/// # Optional. Use if you changed the primary key instead of rotating subkeys.
+/// # Those SHOULD NOT contain private key material.
+/// pgp.additional_trusted_issuers = ["/path/to/prose-backup-old.pub.asc"]
 ///
-/// # By default, backups are not encrypted as it requires an
+/// # By default, backups are not encrypted as it requires a secret
 /// # encryption key to be configured. This is where it is done.
 /// [encryption]
 /// # Default is `false` (opt-in). Also configure `encryption.mode`
@@ -52,16 +54,16 @@ use figment::Figment;
 /// # How to encrypt backups. Default is `"pgp"`.
 /// # Mostly there to allow non-breaking changes in the future.
 /// mode = "pgp"
-/// # Path to the key/certificate to use when encrypting new backups. This cert
-/// # MUST contain private key material suitable for storage encryption.
-/// pgp.key = "/keys/prose-backup.asc"
+/// # Path to the Transferable Secret Key to use when encrypting new backups.
+/// # This TSK MUST contain private key material suitable for storage encryption.
+/// pgp.tsk = "/path/to/prose-backup.asc"
+/// # Optional. Use if you changed the primary key instead of rotating subkeys.
+/// # Those MUST contain private key material.
+/// pgp.additional_decryption_keys = ["/path/to/prose-backup-old.asc"]
 /// # Optional. Use if you want to decrypt using private keys not present
 /// # on the server (e.g. in a separate environment for forensic analysis).
 /// # Those SHOULD NOT contain private key material.
-/// pgp.additional_encryption_keys = ["/keys/other-system.pub.asc"]
-/// # Optional. Use if you changed the primary keys instead of
-/// # rotating subkeys. Those MUST contain private key material.
-/// pgp.additional_decryption_keys = ["/keys/prose-backup-old.asc"]
+/// pgp.additional_recipients = ["/path/to/other-system.pub.asc"]
 /// ```
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
@@ -166,13 +168,10 @@ pub struct SigningConfig {
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub struct SigningPgpConfig {
-    pub key: std::path::PathBuf,
+    pub tsk: std::path::PathBuf,
 
     #[serde(default)]
-    pub additional_encryption_keys: Vec<std::path::PathBuf>,
-
-    #[serde(default)]
-    pub additional_decryption_keys: Vec<std::path::PathBuf>,
+    pub additional_trusted_issuers: Vec<std::path::PathBuf>,
 }
 
 // MARK: Encryption
@@ -198,13 +197,13 @@ pub enum EncryptionMode {
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub struct EncryptionPgpConfig {
-    pub key: std::path::PathBuf,
-
-    #[serde(default)]
-    pub additional_encryption_keys: Vec<std::path::PathBuf>,
+    pub tsk: std::path::PathBuf,
 
     #[serde(default)]
     pub additional_decryption_keys: Vec<std::path::PathBuf>,
+
+    #[serde(default)]
+    pub additional_recipients: Vec<std::path::PathBuf>,
 }
 
 // MARK: Tests
