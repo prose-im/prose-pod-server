@@ -102,7 +102,9 @@ async fn test() -> Result<(), anyhow::Error> {
             Some(pgp) => {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
                 Some(PgpVerificationContext {
-                    helper: PgpVerificationHelper { cert: &pgp_cert },
+                    helper: PgpVerificationHelper {
+                        certs: vec![pgp_cert.clone()],
+                    },
                     policy: &pgp_policy,
                 })
             }
@@ -116,7 +118,7 @@ async fn test() -> Result<(), anyhow::Error> {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
                 let mut helper = DecryptionHelper::default();
                 helper.pgp = Some(PgpDecryptionHelper {
-                    cert: &pgp_cert,
+                    certs: vec![pgp_cert.clone()],
                     policy: &pgp_policy,
                 });
                 helper

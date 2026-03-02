@@ -73,8 +73,7 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
     pub encryption_context: Option<encryption::EncryptionContext<'service>>,
     pub pgp_signing_context: Option<signing::PgpSigningContext<'service>>,
     pub decryption_helper: decryption::DecryptionHelper<'service>,
-    pub pgp_verification_context:
-        Option<verification::pgp::PgpVerificationContext<'service, 'service>>,
+    pub pgp_verification_context: Option<verification::pgp::PgpVerificationContext<'service>>,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,

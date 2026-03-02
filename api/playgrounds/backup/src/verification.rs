@@ -188,13 +188,11 @@ pub mod pgp {
     use openpgp::parse::{Parse as _, stream::*};
 
     #[repr(transparent)]
-    pub struct PgpSignatureVerifier<'sig, 'cert>(
-        DetachedVerifier<'sig, PgpVerificationHelper<'cert>>,
-    );
+    pub struct PgpSignatureVerifier<'sig>(DetachedVerifier<'sig, PgpVerificationHelper>);
 
-    impl<'sig, 'cert> PgpSignatureVerifier<'sig, 'cert> {
+    impl<'sig> PgpSignatureVerifier<'sig> {
         pub fn new<'policy: 'sig>(
-            context: &'_ PgpVerificationContext<'cert, 'policy>,
+            context: &'_ PgpVerificationContext<'policy>,
             expected: &'sig [u8],
             time: SystemTime,
         ) -> Result<Self, anyhow::Error> {
@@ -216,24 +214,22 @@ pub mod pgp {
     }
 
     #[derive(Debug)]
-    pub struct PgpVerificationContext<'cert, 'policy> {
-        pub helper: PgpVerificationHelper<'cert>,
+    pub struct PgpVerificationContext<'policy> {
+        pub helper: PgpVerificationHelper,
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
     #[derive(Debug, Clone)]
-    pub struct PgpVerificationHelper<'cert> {
-        pub cert: &'cert openpgp::Cert,
+    pub struct PgpVerificationHelper {
+        pub certs: Vec<openpgp::Cert>,
     }
 
-    impl<'cert> VerificationHelper for PgpVerificationHelper<'cert> {
+    impl<'cert> VerificationHelper for PgpVerificationHelper {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],
         ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-            let fixme = "Return multiple certs";
-
-            Ok(vec![self.cert.clone()])
+            Ok(self.certs.clone())
         }
 
         fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {

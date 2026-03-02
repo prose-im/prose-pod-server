@@ -6,7 +6,7 @@
 #[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct DecryptionHelper<'a> {
-    pub pgp: Option<PgpDecryptionHelper<'a, 'a>>,
+    pub pgp: Option<PgpDecryptionHelper<'a>>,
 }
 
 pub use self::pgp::PgpDecryptionHelper;
@@ -16,14 +16,12 @@ mod pgp {
     };
 
     #[derive(Debug)]
-    pub struct PgpDecryptionHelper<'cert, 'policy> {
-        pub cert: &'cert openpgp::Cert,
+    pub struct PgpDecryptionHelper<'policy> {
+        pub certs: Vec<openpgp::Cert>,
         pub policy: &'policy dyn openpgp::policy::Policy,
     }
 
-    impl<'cert, 'policy> openpgp::parse::stream::DecryptionHelper
-        for &PgpDecryptionHelper<'cert, 'policy>
-    {
+    impl<'policy> openpgp::parse::stream::DecryptionHelper for &PgpDecryptionHelper<'policy> {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         fn decrypt(
             &mut self,
@@ -32,29 +30,29 @@ mod pgp {
             sym_algo: Option<SymmetricAlgorithm>,
             decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
         ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
-            let cert = self.cert.clone();
-
             let todo = "Get inspiration from https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770";
             let fixme = "Pass time!";
             let fixme = "Support key password";
 
-            // Second, we try those keys that we can use without
-            // prompting for a password.
-            for pkesk in pkesks {
-                for key in cert
-                    .keys()
-                    .with_policy(self.policy, None)
-                    .for_storage_encryption()
-                    .secret()
-                {
-                    let mut keypair = key.key().to_owned().into_keypair()?;
-                    if pkesk
-                        .decrypt(&mut keypair, sym_algo)
-                        .map(|(algo, sk)| decrypt(algo, &sk))
-                        .unwrap_or(false)
+            for cert in self.certs.iter() {
+                // Second, we try those keys that we can use without
+                // prompting for a password.
+                for pkesk in pkesks {
+                    for key in cert
+                        .keys()
+                        .with_policy(self.policy, None)
+                        .for_storage_encryption()
+                        .secret()
                     {
-                        drop(key);
-                        return Ok(Some(cert));
+                        let mut keypair = key.key().to_owned().into_keypair()?;
+                        if pkesk
+                            .decrypt(&mut keypair, sym_algo)
+                            .map(|(algo, sk)| decrypt(algo, &sk))
+                            .unwrap_or(false)
+                        {
+                            drop(key);
+                            return Ok(Some(cert.clone()));
+                        }
                     }
                 }
             }
@@ -63,14 +61,12 @@ mod pgp {
         }
     }
 
-    impl<'cert, 'policy> VerificationHelper for &PgpDecryptionHelper<'cert, 'policy> {
+    impl<'policy> VerificationHelper for &PgpDecryptionHelper<'policy> {
         fn get_certs(
             &mut self,
             _ids: &[openpgp::KeyHandle],
         ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-            let fixme = "Return multiple certs";
-
-            Ok(vec![self.cert.clone()])
+            Ok(self.certs.clone())
         }
 
         fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
