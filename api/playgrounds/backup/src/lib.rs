@@ -504,7 +504,6 @@ pub(crate) struct BackupFileNameComponents<'a> {
 
     pub description: Cow<'a, str>,
 
-    #[allow(dead_code)]
     pub extensions: &'a str,
 }
 
