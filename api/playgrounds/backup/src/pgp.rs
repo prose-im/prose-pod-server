@@ -7,7 +7,6 @@
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use openpgp::anyhow::anyhow;
     use openpgp::cert::CertBuilder;
     use openpgp::cert::amalgamation::{ValidAmalgamation, ValidateAmalgamation};
     use openpgp::packet::prelude::*;
@@ -20,8 +19,10 @@ mod tests {
     /// No need to handle this case ourselves.
     #[test]
     fn test_standard_policy_handles_retroactive_compromission() -> openpgp::Result<()> {
+        let now = SystemTime::now();
+
         let (cert, _) = CertBuilder::new()
-            .set_creation_time(SystemTime::now() - Duration::from_hours(8))
+            .set_creation_time(now - Duration::from_hours(8))
             .add_userid("Alice")
             .add_signing_subkey()
             .add_authentication_subkey()
@@ -29,50 +30,58 @@ mod tests {
 
         let policy = StandardPolicy::new();
 
-        let compromised_subkey_fingerprint = cert
+        let compromised_subkey = cert
             .keys()
+            .subkeys()
             .with_policy(&policy, None)
             // NOTE: In a production app, we’d filter more than that.
             .for_signing()
             .next()
             .unwrap()
-            .key()
-            .fingerprint();
-        let superseded_subkey_fingerprint = cert
+            .key();
+        let superseded_subkey = cert
             .keys()
+            .subkeys()
             .with_policy(&policy, None)
             // NOTE: In a production app, we’d filter more than that.
             .for_authentication()
             .next()
             .unwrap()
-            .key()
-            .fingerprint();
+            .key();
 
-        let mut keypair = cert
+        let mut primary_keypair = cert
             .primary_key()
             .key()
             .clone()
             .parts_into_secret()?
             .into_keypair()?;
 
-        let revocation_time = SystemTime::now() - Duration::from_hours(4);
+        let revocation_time = now - Duration::from_hours(4);
 
         let (cert, sig_compromised) = revoke_subkey(
             &cert,
-            &compromised_subkey_fingerprint,
-            &mut keypair,
+            &compromised_subkey,
+            &mut primary_keypair,
             revocation_time.clone(),
             ReasonForRevocation::KeyCompromised,
             b"It was the maid :/",
         )?;
         let (cert, sig_superseded) = revoke_subkey(
             &cert,
-            &superseded_subkey_fingerprint,
-            &mut keypair,
+            &superseded_subkey,
+            &mut primary_keypair,
             revocation_time.clone(),
             ReasonForRevocation::KeySuperseded,
             b"Rotated.",
         )?;
+
+        assert_eq!(
+            cert.keys()
+                .with_policy(&policy, Some(revocation_time))
+                .revoked(true)
+                .count(),
+            2
+        );
 
         fn after(time: &SystemTime) -> SystemTime {
             time.checked_add(Duration::from_hours(1)).unwrap()
@@ -88,7 +97,7 @@ mod tests {
             let compromised_key = cert
                 .keys()
                 .subkeys()
-                .find(|ka| ka.key().fingerprint() == compromised_subkey_fingerprint)
+                .find(|ka| ka.key() == compromised_subkey)
                 .expect("Subkey should exist");
 
             // Compromission is retroactive.
@@ -104,7 +113,7 @@ mod tests {
             let superseded_key = cert
                 .keys()
                 .subkeys()
-                .find(|ka| ka.key().fingerprint() == superseded_subkey_fingerprint)
+                .find(|ka| ka.key() == superseded_subkey)
                 .expect("Subkey should exist");
 
             // Supersession is NOT retroactive.
@@ -124,7 +133,7 @@ mod tests {
                 .keys()
                 .with_policy(&policy, after(&revocation_time))
                 .subkeys()
-                .find(|ka| ka.key().fingerprint() == compromised_subkey_fingerprint)
+                .find(|ka| ka.key() == compromised_subkey)
                 .expect("Subkey should exist");
 
             // Compromission is retroactive.
@@ -143,7 +152,7 @@ mod tests {
                 .keys()
                 .with_policy(&policy, after(&revocation_time))
                 .subkeys()
-                .find(|ka| ka.key().fingerprint() == superseded_subkey_fingerprint)
+                .find(|ka| ka.key() == superseded_subkey)
                 .expect("Subkey should exist");
 
             // Supersession is NOT retroactive.
@@ -163,28 +172,19 @@ mod tests {
         Ok(())
     }
 
-    fn revoke_subkey(
+    fn revoke_subkey<P: key::KeyParts>(
         cert: &openpgp::Cert,
-        subkey_fingerprint: &openpgp::Fingerprint,
+        subkey: &Key<P, key::SubordinateRole>,
         signer: &mut dyn openpgp::crypto::Signer,
         time: impl Into<SystemTime>,
         code: ReasonForRevocation,
         reason: impl AsRef<[u8]>,
     ) -> openpgp::Result<(openpgp::Cert, Signature)> {
-        // Find the subkey.
-        let Some(ka) = cert
-            .keys()
-            .subkeys()
-            .find(|ka| ka.key().fingerprint() == *subkey_fingerprint)
-        else {
-            return Err(anyhow!("Subkey not found."));
-        };
-
         // Build the revocation signature.
         let revocation = SignatureBuilder::new(SignatureType::SubkeyRevocation)
             .set_signature_creation_time(time)?
             .set_reason_for_revocation(code, reason)?
-            .sign_subkey_binding(signer, cert.primary_key().key(), ka.key())?;
+            .sign_subkey_binding(signer, cert.primary_key().key(), subkey)?;
 
         // Add the revocation packet to the cert.
         let revoked_cert = cert.clone().insert_packets(revocation.clone())?.0;

@@ -5,4 +5,4 @@ version: "3"
 tasks:
   test:
     desc: Run all tests.
-    cmd: cargo test -F destination_fs
+    cmd: cargo test -F test

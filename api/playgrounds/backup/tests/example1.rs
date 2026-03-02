@@ -8,13 +8,15 @@ use std::{
     fs,
     io::Read as _,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use bytes::Bytes;
+use openpgp::{cert::prelude::*, packet::key, policy::StandardPolicy, types::ReasonForRevocation};
 use prose_backup::{
-    BackupService, CreateBackupOutput,
+    BackupService, CreateBackupCommand, CreateBackupOutput,
     config::{EncryptionMode, HashingAlgorithm, *},
-    decryption::{DecryptionHelper, PgpDecryptionHelper},
+    decryption::{DecryptionContext, PgpDecryptionContext},
     encryption::EncryptionContext,
     openpgp,
     signing::PgpSigningContext,
@@ -22,7 +24,7 @@ use prose_backup::{
 };
 
 #[tokio::test]
-async fn test() -> Result<(), anyhow::Error> {
+async fn test_example1() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
         .compact()
         .without_time()
@@ -31,6 +33,8 @@ async fn test() -> Result<(), anyhow::Error> {
         .init();
 
     let prose_pod_api_data = Bytes::new();
+
+    let now = SystemTime::now();
 
     let archiving_config = ArchivingConfig {
         version: prose_backup::CURRENT_VERSION,
@@ -62,8 +66,14 @@ async fn test() -> Result<(), anyhow::Error> {
     // let signing_config = None;
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
-        (Path::new("cert1").to_path_buf(), generate_test_cert()?),
-        (Path::new("cert2").to_path_buf(), generate_test_cert()?),
+        (
+            Path::new("cert1").to_path_buf(),
+            generate_test_cert(now - Duration::from_hours(23))?,
+        ),
+        (
+            Path::new("cert2").to_path_buf(),
+            generate_test_cert(now - Duration::from_hours(23))?,
+        ),
     ]
     .into_iter()
     .collect();
@@ -112,21 +122,21 @@ async fn test() -> Result<(), anyhow::Error> {
         },
         None => None,
     };
-    let decryption_helper = if encryption_config.enabled {
+    let decryption_context = if encryption_config.enabled {
         match encryption_config.pgp.as_ref() {
             Some(pgp) => {
                 let pgp_cert = certs.get(&pgp.key).unwrap();
-                let mut helper = DecryptionHelper::default();
-                helper.pgp = Some(PgpDecryptionHelper {
+                let mut context = DecryptionContext::default();
+                context.pgp = Some(PgpDecryptionContext {
                     certs: vec![pgp_cert.clone()],
                     policy: &pgp_policy,
                 });
-                helper
+                context
             }
-            None => DecryptionHelper::default(),
+            None => DecryptionContext::default(),
         }
     } else {
-        DecryptionHelper::default()
+        DecryptionContext::default()
     };
 
     let fs_prefix = Path::new(".out");
@@ -143,7 +153,7 @@ async fn test() -> Result<(), anyhow::Error> {
         .overwrite(true)
         .directory(&fs_prefix_integrity_checks);
 
-    let service = BackupService {
+    let mut service = BackupService {
         fs_root: PathBuf::from("./data"),
         archiving_config,
         compression_config,
@@ -154,7 +164,7 @@ async fn test() -> Result<(), anyhow::Error> {
         backup_store,
         check_store,
         pgp_verification_context,
-        decryption_helper,
+        decryption_context,
     };
 
     let CreateBackupOutput {
@@ -162,15 +172,35 @@ async fn test() -> Result<(), anyhow::Error> {
         digest_ids,
         ..
     } = {
-        let backup_name = "backup";
-        service
-            .create_backup(backup_name, prose_pod_api_data)
-            .await?
+        let command = CreateBackupCommand {
+            description: "backup",
+            created_at: now - Duration::from_mins(90),
+        };
+        service.create_backup(command, prose_pod_api_data).await?
     };
     let integrity_check_file_name = digest_ids
         .first()
         .expect("At least one digest should have been created");
     tracing::info!("Created backup '{backup_id}'.");
+
+    if encryption_config.enabled {
+        if let Some(pgp) = encryption_config.pgp.as_ref() {
+            let mut pgp_cert = certs.get(&pgp.key).unwrap().clone();
+
+            pgp_cert = revoke_subkey_simple(
+                pgp_cert,
+                |keys| keys.for_storage_encryption(),
+                SystemTime::now() - Duration::from_mins(10),
+                ReasonForRevocation::KeySuperseded,
+            )?;
+
+            service.decryption_context.pgp = Some(PgpDecryptionContext {
+                certs: vec![pgp_cert],
+                policy: &pgp_policy,
+            });
+            service.pgp_verification_context = None;
+        }
+    }
 
     print!("\n");
     let backups = service.list_backups().await?;
@@ -207,16 +237,101 @@ async fn test() -> Result<(), anyhow::Error> {
 
 // MARK: - Helpers
 
-fn generate_test_cert() -> Result<openpgp::Cert, anyhow::Error> {
+fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::Error> {
     use openpgp::cert::CertBuilder;
+    use std::time::Duration;
+
+    let validity = Duration::from_hours(24);
 
     // Build a cert with user ID + primary key + subkey
-    let (cert, _signature) = CertBuilder::new()
+    let (mut cert, _signature) = CertBuilder::new()
         .add_userid("Test User <test@example.org>")
+        .set_creation_time(created_at)
+        .set_validity_period(validity)
         .add_signing_subkey()
         .add_storage_encryption_subkey()
-        .set_validity_period(std::time::Duration::from_secs(3600))
         .generate()?;
+    tracing::debug!(
+        "Created cert `{cert}` valid from {} to {}.",
+        time::UtcDateTime::from(created_at),
+        time::UtcDateTime::from(created_at + validity)
+    );
+
+    let revoke_encryption_key = false;
+    if revoke_encryption_key {
+        cert = revoke_subkey_simple(
+            cert,
+            |keys| keys.for_storage_encryption(),
+            created_at + Duration::from_hours(1),
+            ReasonForRevocation::KeySuperseded,
+        )?;
+
+        assert_eq!(
+            cert.keys()
+                .with_policy(&StandardPolicy::new(), None)
+                .revoked(true)
+                .count(),
+            1
+        );
+    }
 
     Ok(cert)
+}
+
+fn revoke_subkey_simple(
+    cert: openpgp::Cert,
+    filter: impl FnOnce(
+        ValidKeyAmalgamationIter<key::PublicParts, key::SubordinateRole>,
+    ) -> ValidKeyAmalgamationIter<key::PublicParts, key::SubordinateRole>,
+    revocation_time: SystemTime,
+    code: openpgp::types::ReasonForRevocation,
+) -> openpgp::Result<openpgp::Cert> {
+    let policy = StandardPolicy::new();
+
+    let subkeys = cert.keys().subkeys().with_policy(&policy, None);
+    let revoked_subkey = filter(subkeys).next().unwrap().key();
+
+    let mut primary_keypair = cert
+        .primary_key()
+        .key()
+        .clone()
+        .parts_into_secret()?
+        .into_keypair()?;
+
+    let (cert, _sig_superseded) = revoke_subkey(
+        &cert,
+        &revoked_subkey,
+        &mut primary_keypair,
+        revocation_time,
+        code,
+        b"No reason specified.",
+    )?;
+    tracing::debug!(
+        "Revoked subkey `{revoked_subkey}` ({code:?}) at {}.",
+        time::UtcDateTime::from(revocation_time)
+    );
+
+    Ok(cert)
+}
+
+fn revoke_subkey<P: key::KeyParts>(
+    cert: &openpgp::Cert,
+    subkey: &openpgp::packet::Key<P, key::SubordinateRole>,
+    signer: &mut dyn openpgp::crypto::Signer,
+    time: impl Into<std::time::SystemTime>,
+    code: openpgp::types::ReasonForRevocation,
+    reason: impl AsRef<[u8]>,
+) -> openpgp::Result<(openpgp::Cert, openpgp::packet::Signature)> {
+    use openpgp::packet::prelude::*;
+
+    // Build the revocation signature.
+    let revocation = SignatureBuilder::new(openpgp::types::SignatureType::SubkeyRevocation)
+        .set_signature_creation_time(time)?
+        .set_reason_for_revocation(code, reason)?
+        .sign_subkey_binding(signer, cert.primary_key().key(), subkey)?;
+
+    // Add the revocation packet to the cert.
+    let revoked_cert = cert.clone().insert_packets(revocation.clone())?.0;
+
+    Ok((revoked_cert, revocation))
 }

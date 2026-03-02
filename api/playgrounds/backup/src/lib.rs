@@ -72,7 +72,7 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 
     pub encryption_context: Option<encryption::EncryptionContext<'service>>,
     pub pgp_signing_context: Option<signing::PgpSigningContext<'service>>,
-    pub decryption_helper: decryption::DecryptionHelper<'service>,
+    pub decryption_context: decryption::DecryptionContext<'service>,
     pub pgp_verification_context: Option<verification::pgp::PgpVerificationContext<'service>>,
 
     pub backup_store: BackupStore,
@@ -80,6 +80,14 @@ pub struct ProseBackupService<'service, BackupStore, CheckStore> {
 }
 
 // MARK: Create backup
+
+#[derive(Debug)]
+pub struct CreateBackupCommand<'a> {
+    pub description: &'a str,
+
+    #[cfg(feature = "test")]
+    pub created_at: std::time::SystemTime,
+}
 
 #[derive(Debug)]
 pub struct CreateBackupOutput {
@@ -132,24 +140,20 @@ impl<'service, S1: ObjectStore, S2: ObjectStore> ProseBackupService<'service, S1
     /// ```
     pub async fn create_backup(
         &self,
-        description: &str,
+        CreateBackupCommand {
+            description,
+            #[cfg(feature = "test")]
+            created_at,
+        }: CreateBackupCommand<'_>,
         prose_pod_api_data: Bytes,
     ) -> Result<CreateBackupOutput, CreateBackupError> {
-        // ///
-        // use openpgp::parse::Parse as _;
-
-        // let cert = openpgp::Cert::from_file(&config.key)
-        //     .context("Cannot read OpenPGP cert")
-        //     .map_err(CreateBackupError::CannotEncrypt)?;
-        // let helper = PgpHelper::new(cert);
-        // ///
-
         let archiving_blueprint =
             ArchivingBlueprint::new(self.archiving_config.version, &self.fs_root)
                 .context("Invalid archiving version in configuration")
                 .map_err(CreateBackupError::Other)?;
         check_archiving_will_succeed(&archiving_blueprint)?;
 
+        #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
 
         let backup_name = BackupName::new(description, &created_at);
@@ -432,6 +436,7 @@ mod restore {
     use crate::{
         BackupFileName, BackupFileNameComponents, ProseBackupService,
         archiving::{ExtractionSuccess, extract_archive},
+        decryption::PgpDecryptionHelper,
         stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
         util::debug_panic,
@@ -465,10 +470,15 @@ mod restore {
             //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
             let mut decryption_stats = ReadStats::new();
             let compressed_archive_reader = if backup_name.ends_with(".pgp") {
-                if let Some(config) = self.decryption_helper.pgp.as_ref() {
+                if let Some(config) = self.decryption_context.pgp.as_ref() {
+                    let helper = PgpDecryptionHelper {
+                        certs: config.certs.as_slice(),
+                        policy: config.policy,
+                        time: created_at.into(),
+                    };
                     let decryptor = DecryptorBuilder::from_reader(backup_reader)
                         .context("Failed creating decryptor builder")?
-                        .with_policy(config.policy, Some(created_at.into()), config)
+                        .with_policy(config.policy, Some(created_at.into()), helper)
                         .context("Failed creating decryptor")?;
 
                     let decryptor = StatsReader::new(decryptor, &mut decryption_stats);

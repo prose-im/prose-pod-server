@@ -52,4 +52,4 @@ destination_s3 = ["dep:aws-sdk-s3"]
 
 [[test]]
 name = "example1"
-required-features = ["destination_fs"]
+required-features = ["test"]

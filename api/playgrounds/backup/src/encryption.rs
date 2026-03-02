@@ -141,8 +141,19 @@ mod pgp {
             // Select key for encryption.
             .for_storage_encryption();
 
-        let mut recipients = recipients.peekable();
-        if recipients.peek().is_none() {
+        let recipients = recipients.collect::<Vec<_>>();
+
+        if cfg!(debug_assertions) {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let recipients = recipients
+                    .iter()
+                    .map(|ka| ka.key().fingerprint())
+                    .collect::<Vec<_>>();
+                tracing::debug!("Encrypting for `{recipients:?}` with cert `{cert}`.")
+            }
+        }
+
+        if recipients.is_empty() {
             return Err(anyhow::Error::msg("No valid encryption key."));
         }
 
