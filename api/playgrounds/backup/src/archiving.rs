@@ -3,58 +3,32 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
-use bytes::Bytes;
 
 use crate::CreateBackupError;
 use crate::writer_chain::WriterChainBuilder;
-
-/// Current version of Prose backup archives.
-///
-/// If we change the internal structure of backups in the future, we’ll bump
-/// this version number and keep backward compatibility.
-pub const CURRENT_BACKUP_VERSION: u8 = 1;
 
 // WARN: Do not change as doing so would break backward compatibility.
 const METADATA_FILE_NAME: &'static str = "metadata.json";
 
 #[non_exhaustive]
 #[derive(Debug)]
-pub struct ArchivingBlueprint {
+pub struct ArchiveBlueprint {
     pub version: u8,
-    pub paths: Vec<(&'static str, PathBuf)>,
-    pub api_archive_name: &'static str,
+    pub paths: Vec<(String, PathBuf)>,
 }
 
-impl Default for ArchivingBlueprint {
-    fn default() -> Self {
-        Self::version(CURRENT_BACKUP_VERSION).unwrap()
-    }
-}
-
-impl ArchivingBlueprint {
-    pub fn version(version: u8) -> Result<Self, anyhow::Error> {
-        Self::new(version, "/")
-    }
-
-    pub fn new(version: u8, prefix: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
-        let fixme = "Add other paths too";
-        match version {
-            1 => Ok(Self {
-                version,
-                paths: vec![
-                    ("prosody-data", prefix.as_ref().join("var/lib/prosody")),
-                    ("prosody-config", prefix.as_ref().join("etc/prosody")),
-                ],
-                api_archive_name: "prose-pod-api-data",
-            }),
-            n => Err(anyhow!("Unknown backup version: {n}")),
-        }
+impl ArchiveBlueprint {
+    // NOTE: The reason why we have this trivial constructor is so we can later
+    //   add non-breaking support for in-memory reads instead of forcing one
+    //   to store files.
+    pub fn from_paths(version: u8, paths: Vec<(String, PathBuf)>) -> Self {
+        Self { version, paths }
     }
 }
 
@@ -66,7 +40,7 @@ struct BackupInternalMetadata {
 // MARK: - Archiving
 
 pub(crate) fn check_archiving_will_succeed(
-    blueprint: &ArchivingBlueprint,
+    blueprint: &ArchiveBlueprint,
 ) -> Result<(), CreateBackupError> {
     for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
@@ -79,7 +53,7 @@ pub(crate) fn check_archiving_will_succeed(
 
 fn archive_writer<W: Write>(
     builder: &mut tar::Builder<W>,
-    blueprint: &ArchivingBlueprint,
+    blueprint: &ArchiveBlueprint,
 ) -> Result<(), anyhow::Error> {
     for (archive_path, local_path) in blueprint.paths.iter() {
         let path = Path::new(local_path);
@@ -108,8 +82,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     ///   the rest of the server’s data and creates the backup file.
     pub(crate) fn archive<InnerWriter, OuterWriter>(
         self,
-        prose_pod_api_data: Bytes,
-        blueprint: &ArchivingBlueprint,
+        blueprint: &ArchiveBlueprint,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
@@ -132,9 +105,6 @@ impl<M, F> WriterChainBuilder<M, F> {
                     &mut builder,
                 )
                 .map_err(CreateBackupError::CannotArchive)?;
-
-                append_data(prose_pod_api_data, blueprint.api_archive_name, &mut builder)
-                    .map_err(CreateBackupError::CannotArchive)?;
 
                 archive_writer(&mut builder, blueprint)
                     .map_err(CreateBackupError::CannotArchive)?;
@@ -176,49 +146,39 @@ fn add_metadata_file<W: std::io::Write>(
     Ok(())
 }
 
-fn append_data<W: std::io::Write>(
-    data: Bytes,
-    path: &'static str,
-    builder: &mut tar::Builder<W>,
-) -> Result<(), anyhow::Error> {
-    let mut header = tar::Header::new_gnu();
-    header.set_size(data.len() as u64);
-    header.set_cksum();
+// MARK: - Extraction (unarchiving)
 
-    builder.append_data(&mut header, path, std::io::Cursor::new(data))?;
-
-    Ok(())
-}
-
-// MARK: - Unarchiving
-
-pub struct ExtractionSuccess {
-    /// The total amount of data restored on the Prose Pod Server.
-    pub restored_bytes_count: u64,
-
-    /// The Prose Pod Server cannot restore Prose Pod API data as it doesn’t
-    /// have access to its file system. Here is where it’s stored before being
-    /// sent to the Prose Pod API and restored there.
-    pub prose_pod_api_data: fs::File,
-
-    /// Backups archives are unpacked in a temporary directory, that gets
-    /// deleted when this is dropped. In order for [`prose_pod_api_data`] to
+pub struct ExtractionSuccess<'a> {
+    /// Backup archives are unpacked in a temporary directory, that gets
+    /// deleted when this is dropped. In order for the Prose to
     /// stay available, this needs to stay alive. Drop when done sending data.
     ///
     /// [`prose_pod_api_data`]: ExtractionSuccess::prose_pod_api_data
     pub tmp_dir: tempfile::TempDir,
+
+    /// Blueprint of the extracted backup.
+    ///
+    /// Its paths are guaranteed to exist in [`tmp_dir`].
+    ///
+    /// [`tmp_dir`]: ExtractionSuccess::tmp_dir
+    pub blueprint: &'a ArchiveBlueprint,
+
+    /// Total amount of data extracted in [`tmp_dir`].
+    ///
+    /// [`tmp_dir`]: ExtractionSuccess::tmp_dir
+    pub extracted_bytes_count: u64,
 }
 
-pub(crate) fn extract_archive<R>(
+pub(crate) fn extract_archive<'a, R>(
     archive_reader: R,
-    location: impl AsRef<Path>,
-) -> Result<ExtractionSuccess, anyhow::Error>
+    blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+) -> Result<ExtractionSuccess<'a>, anyhow::Error>
 where
     R: std::io::Read,
 {
     use std::ffi::OsString;
 
-    let mut extracted_bytes: u64 = 0;
+    let mut extracted_bytes_count: u64 = 0;
 
     let mut archive = tar::Archive::new(archive_reader);
 
@@ -242,6 +202,7 @@ where
         Ok(())
     }
 
+    // Read first archive entry, which should be the metadata file.
     let metadata: BackupInternalMetadata = {
         let entry = match entries.next() {
             Some(Ok(entry)) => entry,
@@ -250,7 +211,7 @@ where
         };
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes += entry_size;
+            extracted_bytes_count += entry_size;
         }
 
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -268,63 +229,69 @@ where
         json::from_reader(entry)?
     };
 
-    let blueprint = ArchivingBlueprint::new(metadata.version, location)?;
-    let mut extract_paths: HashMap<OsString, PathBuf> = blueprint
-        .paths
-        .into_iter()
-        .map(|(a, b)| (OsString::from(a), b))
-        .collect();
+    // Find where to extract entries based on the backup version.
+    // NOTE: This is done before computing-heavy tasks, to fail faster.
+    let Some(blueprint) = blueprints.get(&metadata.version) else {
+        return Err(anyhow!("Unknown backup version: {}", metadata.version));
+    };
+    // Soundness check.
+    assert_eq!(blueprint.version, metadata.version);
 
-    let tmp = tempfile::TempDir::new()?;
+    // Extract into temporary directory.
+    let tmp_dir = tempfile::TempDir::new()?;
     for entry in entries {
         let mut entry = entry?;
 
-        entry.unpack_in(tmp.path())?;
+        // Unpack the archive entry.
+        entry.unpack_in(tmp_dir.path())?;
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes += entry_size;
+            extracted_bytes_count += entry_size;
         }
 
         #[cfg(debug_assertions)]
         log_extracted_entry(&entry)?;
     }
 
-    let extracted_files = fs::read_dir(tmp.path())?;
-    for entry in extracted_files.into_iter() {
-        match entry {
-            Ok(entry) => {
-                let entry_name = entry.file_name();
+    // Make sure all expected paths were present,
+    // before attempting the real restoration.
+    {
+        let mut expected_paths: HashSet<OsString> = blueprint
+            .paths
+            .iter()
+            .map(|(src, _)| OsString::from(&src))
+            .collect();
 
-                if entry_name == OsString::from(blueprint.api_archive_name) {
-                    continue;
+        let extracted_files = fs::read_dir(tmp_dir.path())?;
+        for entry in extracted_files.into_iter() {
+            match entry {
+                Ok(entry) => {
+                    let entry_name = entry.file_name();
+
+                    // Mark path as visited.
+                    if !expected_paths.remove(&entry_name) {
+                        tracing::warn!(
+                            "Extracted unknown entry '{src}'.",
+                            src = entry_name.display()
+                        );
+                        continue;
+                    };
                 }
-
-                let Some(dst) = extract_paths.remove(&entry_name) else {
-                    tracing::warn!(
-                        "Don’t know where to extract '{src}', skipping.",
-                        src = entry_name.display()
-                    );
-                    continue;
-                };
-
-                crate::util::safe_replace(entry.path(), &dst)?;
+                Err(err) => tracing::error!("{err:?}"),
             }
-            Err(err) => tracing::error!("{err:?}"),
+        }
+
+        if !expected_paths.is_empty() {
+            return Err(anyhow!(
+                "Backup invalid: Missing data ({:?}).",
+                expected_paths
+            ));
         }
     }
 
-    if !extract_paths.is_empty() {
-        return Err(anyhow!(
-            "Backup invalid: Missing data ({:?}).",
-            extract_paths.keys().collect::<Vec<_>>()
-        ));
-    }
-
-    let api_archive = fs::File::open(tmp.path().join(blueprint.api_archive_name))?;
-
     Ok(ExtractionSuccess {
-        restored_bytes_count: extracted_bytes,
-        prose_pod_api_data: api_archive,
-        tmp_dir: tmp,
+        tmp_dir,
+        blueprint,
+        extracted_bytes_count,
     })
 }

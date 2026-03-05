@@ -30,6 +30,7 @@ pub mod decryption;
 pub mod encryption;
 mod hashing;
 mod pgp;
+mod restoration;
 pub mod signing;
 mod stats;
 pub mod stores;
@@ -40,20 +41,15 @@ mod writer_chain;
 use std::borrow::Cow;
 
 use anyhow::Context as _;
-use bytes::Bytes;
 pub use openpgp;
 pub use tokio;
 pub use toml;
 
-use crate::{
-    archiving::{ArchivingBlueprint, check_archiving_will_succeed},
-    hashing::{DigestWriter, Sha256DigestWriter},
-    stores::{ObjectStore, S3Store},
-};
+use crate::stores::{ObjectStore, S3Store};
 
-pub use self::archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION;
-pub use self::archiving::ExtractionSuccess;
+pub use self::archiving::ArchiveBlueprint;
 pub use self::config::BackupConfig;
+pub use self::restoration::RestorationSuccess;
 
 // MARK: Service
 
@@ -63,12 +59,8 @@ pub type BackupService<BackupStore = S3Store, CheckStore = S3Store> =
 
 /// Backup service. Central component of the library.
 pub struct ProseBackupService<BackupStore, CheckStore> {
-    pub fs_root: std::path::PathBuf,
-
-    pub archiving_config: config::ArchivingConfig,
     pub compression_config: config::CompressionConfig,
     pub hashing_config: config::HashingConfig,
-
     pub encryption_context: Option<encryption::Context>,
     pub signing_context: signing::Context,
     pub verification_context: verification::Context,
@@ -87,7 +79,6 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
         // NOTE: This gets inlined in release builds.
         Self::from_config_custom(
             config,
-            "/",
             backup_store,
             check_store,
             |path| {
@@ -106,7 +97,6 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
     #[cfg_attr(not(feature = "test"), inline(always))]
     pub fn from_config_custom<P>(
         config: BackupConfig,
-        fs_root: impl Into<std::path::PathBuf>,
         backup_store: BackupStore,
         check_store: CheckStore,
         get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
@@ -184,8 +174,6 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
         }
 
         Ok(Self {
-            fs_root: fs_root.into(),
-            archiving_config: config.archiving,
             compression_config: config.compression,
             hashing_config: config.hashing,
             encryption_context,
@@ -396,13 +384,11 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
             #[cfg(feature = "test")]
             created_at,
         }: CreateBackupCommand<'_>,
-        prose_pod_api_data: Bytes,
+        archiving_blueprint: &ArchiveBlueprint,
     ) -> Result<CreateBackupOutput, CreateBackupError> {
-        let archiving_blueprint =
-            ArchivingBlueprint::new(self.archiving_config.version, &self.fs_root)
-                .context("Invalid archiving version in configuration")
-                .map_err(CreateBackupError::Other)?;
-        check_archiving_will_succeed(&archiving_blueprint)?;
+        use crate::hashing::{DigestWriter, Sha256DigestWriter};
+
+        archiving::check_archiving_will_succeed(&archiving_blueprint)?;
 
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
@@ -448,7 +434,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         };
 
         let (writer, finalize_backup) = writer_chain::builder()
-            .archive(prose_pod_api_data, &archiving_blueprint)
+            .archive(&archiving_blueprint)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
             .tee(&mut digest_writer)
@@ -635,26 +621,26 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 // MARK: Restore
 
 mod restore {
-    use std::path::Path;
+    use std::collections::HashMap;
 
     use anyhow::Context as _;
 
     use crate::{
         BackupFileName, BackupFileNameComponents, ProseBackupService,
-        archiving::{ExtractionSuccess, extract_archive},
+        archiving::{ArchiveBlueprint, ExtractionSuccess, extract_archive},
         decryption,
+        restoration::{RestorationSuccess, restore},
         stats::{ReadStats, StatsReader, print_stats},
         stores::ObjectStore,
         util::debug_panic,
     };
 
     impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
-        #[must_use]
-        pub async fn restore_backup(
+        pub async fn extract_backup<'a>(
             &self,
             backup_name: &BackupFileName,
-            location: impl AsRef<Path>,
-        ) -> Result<ExtractionSuccess, anyhow::Error> {
+            blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+        ) -> Result<ExtractionSuccess<'a>, anyhow::Error> {
             // Parse backup name first.
             // Avoids unnecessary I/O if malformed.
             let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
@@ -687,21 +673,28 @@ mod restore {
             let mut decompression_stats = ReadStats::new();
             let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
 
-            let restore_result =
-                extract_archive(archive_bytes, location).context("Backup extraction failed")?;
+            let extraction_result =
+                extract_archive(archive_bytes, blueprints).context("Backup extraction failed")?;
+            drop(tmp);
 
             print!("\n");
             print_stats(
                 &raw_read_stats,
                 &decryption_stats,
                 &decompression_stats,
-                restore_result.restored_bytes_count,
+                extraction_result.extracted_bytes_count,
             );
 
-            let fixme = "Do not drop tmp, but rather return a `FnOnce` \
-            which can be called by the Server API after the Pod API has \
-            restored its data to atomically restore the Server’s data.";
-            drop(tmp);
+            Ok(extraction_result)
+        }
+
+        pub async fn restore_backup<'a>(
+            &self,
+            ExtractionSuccess {
+                tmp_dir, blueprint, ..
+            }: ExtractionSuccess<'a>,
+        ) -> Result<RestorationSuccess, anyhow::Error> {
+            let restore_result = restore(tmp_dir, blueprint)?;
 
             Ok(restore_result)
         }

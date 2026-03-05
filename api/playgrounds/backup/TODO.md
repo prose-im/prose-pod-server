@@ -31,7 +31,6 @@ High priority (ordered):
 
 Medium priority (unordered):
 
-- Prose-agnostic archiving blueprints.
 - Overridable archiving blueprints (with non-overridable packaged ones).
 - Cache S3 requests.
   - Also cache metadata when listing objects (it should already be present).

@@ -14,11 +14,6 @@ use figment::Figment;
 /// Example full configuration (all keys have default values):
 ///
 /// ```toml
-/// [archiving]
-/// # Default is `1`. No need to override this, it’s mostly there for
-/// # integration testing or if a breaking change is released by mistake.
-/// version = 1
-///
 /// [compression]
 /// # Zstd compression level (see https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html).
 /// # This value is transparently passed to the `zstd` library for forward
@@ -71,8 +66,6 @@ use figment::Figment;
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
 pub struct BackupConfig {
-    pub archiving: ArchivingConfig,
-
     pub compression: CompressionConfig,
 
     pub hashing: HashingConfig,
@@ -85,14 +78,10 @@ pub struct BackupConfig {
 // MARK: Parsing
 
 fn default_config_static() -> Figment {
-    use crate::CURRENT_VERSION;
     use figment::providers::*;
     use toml::toml;
 
     let static_defaults = toml! {
-        [archiving]
-        version = CURRENT_VERSION
-
         [compression]
         zstd_compression_level = 3
 
@@ -144,14 +133,6 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
     }
 
     Ok(figment)
-}
-
-// MARK: Archiving
-
-#[derive(Debug, Clone)]
-#[derive(serde::Deserialize)]
-pub struct ArchivingConfig {
-    pub version: u8,
 }
 
 // MARK: Compression
