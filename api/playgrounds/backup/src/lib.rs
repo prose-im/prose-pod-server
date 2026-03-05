@@ -130,9 +130,16 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
                     ));
                 };
 
-                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+                let mut recipients = Vec::with_capacity(pgp.additional_recipients.len() + 1);
+
+                recipients.push(get_pgp_cert(&pgp.tsk)?);
+
+                for path in pgp.additional_recipients.iter() {
+                    recipients.push(get_pgp_cert(path)?);
+                }
+
                 Some(EncryptionContext::Pgp {
-                    cert: pgp_cert,
+                    recipients,
                     policy: Box::new(pgp_policy()),
                 })
             }

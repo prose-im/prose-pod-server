@@ -18,7 +18,7 @@ use crate::{
 #[derive(Debug)]
 pub enum EncryptionContext {
     Pgp {
-        cert: openpgp::Cert,
+        recipients: Vec<openpgp::Cert>,
         policy: Box<dyn openpgp::policy::Policy>,
     },
 }
@@ -30,8 +30,8 @@ impl EncryptionContext {
         created_at: SystemTime,
     ) -> Result<EncryptionWriter<'a>, anyhow::Error> {
         match self {
-            Self::Pgp { cert, policy } => {
-                self::pgp::encrypt(writer, cert, policy.as_ref(), created_at)
+            Self::Pgp { recipients, policy } => {
+                self::pgp::encrypt(writer, recipients.as_slice(), policy.as_ref(), created_at)
                     .map(EncryptionWriter::Pgp)
             }
         }
@@ -123,36 +123,46 @@ mod pgp {
 
     pub fn encrypt<'cert, 'policy: 'cert, W: Write + Send + Sync + 'cert>(
         writer: W,
-        cert: &'cert openpgp::Cert,
+        recipient_certs: &'cert [openpgp::Cert],
         policy: &'policy dyn Policy,
         created_at: std::time::SystemTime,
     ) -> Result<Message<'cert>, anyhow::Error> {
         let message = Message::new(writer);
 
-        // NOTE: Do NOT cache this (e.g. in `EncryptionContext`)! It’s
-        //   important that the recipients are computed at every backup,
-        //   to detect when the key becomes invalid. If a backup is produced
-        //   with an expired key, it will never be readable.
-        let recipients = cert
-            .keys()
-            // Validate keys and subkeys (check expiration, crypto algorithm…).
-            .with_policy(policy, Some(created_at))
-            // Filter out unwanted keys.
-            .supported()
-            .alive()
-            .revoked(false)
-            // Select key for encryption.
-            .for_storage_encryption();
+        let mut recipients = Vec::with_capacity(recipient_certs.len());
 
-        let recipients = recipients.collect::<Vec<_>>();
+        for cert in recipient_certs.iter() {
+            // NOTE: Do NOT cache this (e.g. in `EncryptionContext`)! It’s
+            //   important that the recipients are computed at every backup,
+            //   to detect when the key becomes invalid. If a backup is
+            //   produced with an expired key, it will never be readable.
+            let kas = cert
+                .keys()
+                // Validate keys and subkeys (check expiration, crypto algorithm…).
+                .with_policy(policy, Some(created_at))
+                // Filter out unwanted keys.
+                .supported()
+                .alive()
+                .revoked(false)
+                // Select key for encryption.
+                .for_storage_encryption();
+            for ka in kas.into_iter() {
+                recipients.push((ka, cert));
+            }
+        }
 
         if cfg!(debug_assertions) {
             if tracing::enabled!(tracing::Level::DEBUG) {
                 let recipients = recipients
                     .iter()
-                    .map(|ka| ka.key().fingerprint())
-                    .collect::<Vec<_>>();
-                tracing::debug!("Encrypting for `{recipients:?}` with cert `{cert}`.")
+                    .map(|(ka, cert)| (ka.key().fingerprint(), cert.fingerprint()));
+                tracing::debug!(
+                    "Encrypting for {}.",
+                    recipients
+                        .map(|(ka, cert)| format!("`{ka}` of cert `{cert}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
         }
 
@@ -160,7 +170,8 @@ mod pgp {
             return Err(anyhow::Error::msg("No valid encryption key."));
         }
 
-        let encryptor = Encryptor::for_recipients(message, recipients).build()?;
+        let encryptor =
+            Encryptor::for_recipients(message, recipients.into_iter().map(|(ka, _)| ka)).build()?;
 
         // NOTE: Do not compress as we’re already using zstd for compression.
 
