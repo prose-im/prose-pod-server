@@ -4,7 +4,6 @@
 
 High priority (ordered):
 
-1. Check/fix permissions of downloaded backups.
 1. Make Pod Server restoration atomic.
 1. `encryption.additional_recipients` is never used.
 1. Although the Pod Server restoration in itself is atomic, if the Pod API

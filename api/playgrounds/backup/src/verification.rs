@@ -5,6 +5,8 @@
 
 //! Verification logic.
 
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 use crate::{ProseBackupService, stores::ObjectStore};
 
 /// Do not download OpenPGP signatures if larger than 2KiB.
@@ -61,8 +63,20 @@ where
         let tmp = tempfile::TempDir::new()
             .context("Failed creating a temporary directory to download the backup in")?;
         let backup_path = tmp.path().join(&backup_name);
-        let mut backup_file = std::fs::File::create_new(&backup_path)
+
+        let mut backup_file = std::fs::File::options()
+            .create_new(true)
+            .write(true)
+            // Only allow read and write for the current user.
+            // This is very important, as not doing so would virtually leak all
+            // Prose data if the backup is unencrypted (default mode is `644`).
+            .mode(0o600)
+            .open(&backup_path)
             .context("Failed opening a file path to download the backup to")?;
+        if cfg!(debug_assertions) {
+            let metadata = std::fs::metadata(&backup_path).unwrap();
+            debug_assert_eq!(metadata.permissions().mode(), 0o600);
+        }
 
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
