@@ -3,7 +3,25 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-//! Create a [`BackupService`], then use it to test
+//! Create a [`BackupService`], then use it to create, read and delete backups.
+//!
+//! ```no_run
+//! use prose_backup::{BackupService, BackupConfig};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), anyhow::Error> {
+//!   let backup_store: prose_backup::stores::S3 = todo!();
+//!   let check_store: prose_backup::stores::S3 = todo!();
+//!
+//!   let service = BackupService::from_config(
+//!     BackupConfig::default(),
+//!     backup_store,
+//!     check_store,
+//!   )?;
+//!
+//!   let _backups = service.list_backups().await?;
+//! }
+//! ```
 
 mod archiving;
 mod compression;
@@ -24,16 +42,18 @@ use std::borrow::Cow;
 use anyhow::Context as _;
 use bytes::Bytes;
 pub use openpgp;
+pub use tokio;
+pub use toml;
 
 use crate::{
     archiving::{ArchivingBlueprint, check_archiving_will_succeed},
-    config::BackupConfig,
     hashing::{DigestWriter, Sha256DigestWriter},
     stores::{ObjectStore, S3Store},
 };
 
 pub use self::archiving::CURRENT_BACKUP_VERSION as CURRENT_VERSION;
 pub use self::archiving::ExtractionSuccess;
+pub use self::config::BackupConfig;
 
 // MARK: Service
 
@@ -65,6 +85,7 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
         backup_store: BackupStore,
         check_store: CheckStore,
     ) -> Result<Self, anyhow::Error> {
+        // NOTE: This gets inlined in release builds.
         Self::from_config_custom(
             config,
             "/",
@@ -100,16 +121,21 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
         use signing::PgpSigningContext;
         use verification::pgp::{PgpVerificationContext, PgpVerificationHelper};
 
-        let encryption_context = match config.encryption.pgp.as_ref() {
-            _ if !config.encryption.enabled => None,
-            Some(pgp) => {
+        let encryption_context = match config.encryption.mode {
+            config::EncryptionMode::Off => None,
+            config::EncryptionMode::Pgp => {
+                let Some(pgp) = config.encryption.pgp.as_ref() else {
+                    return Err(anyhow::Error::msg(
+                        "`encryption.mode` is `\"pgp\"` but `encryption.pgp` is missing.",
+                    ));
+                };
+
                 let pgp_cert = get_pgp_cert(&pgp.tsk)?;
                 Some(EncryptionContext::Pgp {
                     cert: pgp_cert,
                     policy: Box::new(pgp_policy()),
                 })
             }
-            None => None,
         };
 
         let pgp_signing_context = match config.signing.pgp.as_ref() {
@@ -137,15 +163,13 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
         };
 
         let mut decryption_context = DecryptionContext::default();
-        if config.encryption.enabled {
-            if let Some(pgp) = config.encryption.pgp.as_ref() {
-                let pgp_cert = get_pgp_cert(&pgp.tsk)?;
-                decryption_context.pgp = Some(PgpDecryptionContext {
-                    tsks: vec![pgp_cert],
-                    policy: Box::new(pgp_policy()),
-                });
-            }
-        };
+        if let Some(pgp) = config.encryption.pgp.as_ref() {
+            let pgp_cert = get_pgp_cert(&pgp.tsk)?;
+            decryption_context.pgp = Some(PgpDecryptionContext {
+                tsks: vec![pgp_cert],
+                policy: Box::new(pgp_policy()),
+            });
+        }
 
         Ok(Self {
             fs_root: fs_root.into(),
@@ -526,7 +550,7 @@ pub enum CreateBackupError {
 // MARK: List
 
 impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
-    /// List all backups, in alphabetically ascending order.
+    /// List all backups, in alphabetically descending order.
     pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
         //   no way to list in reverse order or list by “last modified” date
@@ -556,7 +580,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 
-        for backup_file_name in backups.into_iter() {
+        for backup_file_name in backups.into_iter().rev() {
             let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
             let is_encrypted = backup_file_name.ends_with(".pgp");
 
@@ -755,7 +779,7 @@ impl BackupName {
         // For correctness, we’ll still format the number as 10 digits with
         // leading zeros (even if not necessary).
         let created_at = created_at.unix_timestamp();
-        assert!(created_at < 99_999_999_999);
+        assert!(created_at <= 9_999_999_999);
         debug_assert!(created_at > 999_999_999);
         let backup_name = format!("{created_at:010}-{backup_name}");
 

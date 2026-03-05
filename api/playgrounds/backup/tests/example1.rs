@@ -20,6 +20,7 @@ use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, config::*,
     decryption::PgpDecryptionContext, openpgp,
 };
+use toml::toml;
 
 use crate::common::revoke_subkey_simple;
 
@@ -36,38 +37,14 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     let now = SystemTime::now();
 
-    let archiving_config = ArchivingConfig {
-        version: prose_backup::CURRENT_VERSION,
-    };
-    let compression_config = CompressionConfig {
-        zstd_compression_level: 5,
-    };
-    let encryption_config = EncryptionConfig {
-        enabled: true,
-        mode: EncryptionMode::Pgp,
-        pgp: Some(EncryptionPgpConfig {
-            tsk: Path::new("encrypt.pgp").to_path_buf(),
-            additional_decryption_keys: vec![],
-            additional_recipients: vec![],
-        }),
-    };
-    let hashing_config = HashingConfig {
-        algorithm: HashingAlgorithm::Sha256,
-    };
-    let signing_config = SigningConfig {
-        mandatory: false,
-        pgp: Some(SigningPgpConfig {
-            tsk: Path::new("sign.pgp").to_path_buf(),
-            additional_trusted_issuers: vec![],
-        }),
-    };
-    let backup_config = BackupConfig {
-        archiving: archiving_config,
-        compression: compression_config,
-        hashing: hashing_config,
-        signing: signing_config,
-        encryption: encryption_config.clone(),
-    };
+    let backup_config = BackupConfig::try_from(toml! {
+        [encryption]
+        mode = "pgp"
+        pgp.tsk = "encrypt.pgp"
+
+        [signing]
+        pgp.tsk = "sign.pgp"
+    })?;
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
         (
@@ -97,6 +74,8 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let check_store = prose_backup::stores::Fs::default()
         .overwrite(true)
         .directory(&fs_prefix_integrity_checks);
+
+    let encryption_config = backup_config.encryption.clone();
 
     let mut service = BackupService::from_config_custom(
         backup_config,
@@ -128,7 +107,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         .expect("At least one digest should have been created");
     tracing::info!("Created backup '{backup_id}'.");
 
-    if encryption_config.enabled {
+    if encryption_config.mode == EncryptionMode::Pgp {
         if let Some(pgp) = encryption_config.pgp.as_ref() {
             let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
 

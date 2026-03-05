@@ -39,7 +39,7 @@ use figment::Figment;
 /// # to be configured and accessible. This is where it is done.
 /// [signing]
 /// # `true` makes it impossible to restore a non-signed backup.
-/// # Default is `false` (opt-in).
+/// # Default is `true` (opt-in).
 /// mandatory = true
 /// # Default is `true`.
 /// # Use only if you need a global override (e.g. in tests).
@@ -54,14 +54,12 @@ use figment::Figment;
 /// # By default, backups are not encrypted as it requires a secret
 /// # encryption key to be configured. This is where it is done.
 /// [encryption]
-/// # Default is `false` (opt-in). Also configure `encryption.mode`
-/// # and `encryption.<mode>` when enabling encryption.
-/// enabled = true
-/// # How to encrypt backups. Default is `"pgp"`.
-/// # Mostly there to allow non-breaking changes in the future.
+/// # Encryption mode. Allowed values: `"off"` (default), `"pgp"`.
+/// # Also configure `encryption.<mode>` when you enable encryption.
 /// mode = "pgp"
 /// # Path to the Transferable Secret Key to use when encrypting new backups.
-/// # This TSK MUST contain private key material suitable for storage encryption.
+/// # This TSK MUST contain private key material suitable for storage
+/// # encryption (as it’s the one used when decrypting).
 /// pgp.tsk = "/path/to/prose-backup.asc"
 /// # Optional. Use if you changed the primary key instead of rotating subkeys.
 /// # Those MUST contain private key material.
@@ -87,13 +85,14 @@ pub struct BackupConfig {
 
 // MARK: Parsing
 
-pub fn default_config_static() -> Figment {
+fn default_config_static() -> Figment {
+    use crate::CURRENT_VERSION;
     use figment::providers::*;
     use toml::toml;
 
     let static_defaults = toml! {
         [archiving]
-        version = 1
+        version = CURRENT_VERSION
 
         [compression]
         zstd_compression_level = 3
@@ -103,18 +102,20 @@ pub fn default_config_static() -> Figment {
 
         [signing]
         enabled = false
-        mandatory = false
+        mandatory = true
 
         [encryption]
-        enabled = false
-        mode = "pgp"
+        // Note that, for consistency with `signing`, `enabled = false`
+        // overrides `mode` to `"off"`. It can be useful in tests or
+        // when overriding configuration with environment variables.
+        mode = "off"
     }
     .to_string();
 
     Figment::from(Toml::string(&static_defaults))
 }
 
-pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
+fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
     use figment::providers::*;
 
     let signing_enabled = figment.extract_inner::<bool>("signing.enabled")?;
@@ -124,6 +125,14 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::E
     let signing_pgp_enabled = figment.extract_inner::<bool>("signing.pgp.enabled")?;
     if !signing_pgp_enabled {
         figment = figment.merge(Serialized::default("signing.pgp", json::Value::Null));
+    }
+
+    let encryption_enabled = figment.extract_inner::<bool>("encryption.enabled").ok();
+    if encryption_enabled == Some(false) {
+        figment = figment.merge(Serialized::default(
+            "encryption.mode",
+            json::Value::String("off".to_owned()),
+        ));
     }
 
     Ok(figment)
@@ -185,17 +194,17 @@ pub struct SigningPgpConfig {
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 pub struct EncryptionConfig {
-    pub enabled: bool,
-
     pub mode: EncryptionMode,
 
     #[serde(default, alias = "gpg")]
     pub pgp: Option<EncryptionPgpConfig>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(serde::Deserialize)]
 pub enum EncryptionMode {
+    #[serde(rename = "off")]
+    Off,
     #[serde(rename = "pgp", alias = "gpg")]
     Pgp,
 }
@@ -212,11 +221,57 @@ pub struct EncryptionPgpConfig {
     pub additional_recipients: Vec<std::path::PathBuf>,
 }
 
+// MARK: Constructors
+
+impl BackupConfig {
+    #[inline(always)]
+    pub fn default_figment() -> Figment {
+        default_config_static()
+    }
+}
+
+impl Default for BackupConfig {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::try_from(Self::default_figment())
+            .expect("Default figment should always be valid (enforced by tests)")
+    }
+}
+
+impl TryFrom<Figment> for BackupConfig {
+    type Error = anyhow::Error;
+
+    #[inline]
+    fn try_from(figment: Figment) -> Result<Self, Self::Error> {
+        with_dynamic_defaults(figment)?
+            .extract::<Self>()
+            .map_err(anyhow::Error::new)
+    }
+}
+
+impl TryFrom<toml::Table> for BackupConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(toml: toml::Table) -> Result<Self, Self::Error> {
+        use figment::providers::*;
+
+        let figment = Self::default_figment().merge(Toml::string(toml.to_string().as_str()));
+
+        Self::try_from(figment)
+    }
+}
+
 // MARK: Tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_default_contructor() {
+        // NOTE: Ensures this doesn’t panic.
+        _ = BackupConfig::default();
+    }
 
     #[test]
     fn test_signing_defaults() {
