@@ -59,9 +59,10 @@ mod tests {
     use openpgp::types::*;
 
     /// It’s important that compromised keys are not considered valid at any
-    /// point in time once they are marked as compromised. It’s not clear that
-    /// `sequoia_openpgp` handles that internally so here is a test to prove it.
-    /// No need to handle this case ourselves.
+    /// point in time once they are marked as compromised.
+    ///
+    /// It is required per the OpenPGP spec, but here is a test ensuring
+    /// `sequoia_openpgp` it internally. No need to handle this case ourselves.
     #[test]
     fn test_standard_policy_handles_retroactive_compromission() -> openpgp::Result<()> {
         let now = SystemTime::now();

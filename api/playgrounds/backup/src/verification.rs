@@ -65,8 +65,11 @@ where
         let backup_path = tmp.path().join(&backup_name);
 
         let mut backup_file = std::fs::File::options()
+            // Allow creating the file and writing to it.
             .create_new(true)
             .write(true)
+            // Allow reading the file (necessary when verifying).
+            .read(true)
             // Only allow read and write for the current user.
             // This is very important, as not doing so would virtually leak all
             // Prose data if the backup is unencrypted (default mode is `644`).
@@ -75,7 +78,7 @@ where
             .context("Failed opening a file path to download the backup to")?;
         if cfg!(debug_assertions) {
             let metadata = std::fs::metadata(&backup_path).unwrap();
-            debug_assert_eq!(metadata.permissions().mode(), 0o600);
+            debug_assert_eq!(metadata.permissions().mode(), 0o100600);
         }
 
         // Make sure the backup exists.
@@ -253,6 +256,15 @@ pub mod pgp {
                 match layer {
                     MessageLayer::SignatureGroup { results } if i == 0 => {
                         if !results.iter().any(Result::is_ok) {
+                            if cfg!(debug_assertions) {
+                                tracing::debug!(
+                                    "SignatureGroup errors: {:#?}",
+                                    results
+                                        .into_iter()
+                                        .map(|res| res.err().unwrap().to_string())
+                                        .collect::<Vec<_>>()
+                                );
+                            }
                             return Err(anyhow!("No valid signature."));
                         }
                     }

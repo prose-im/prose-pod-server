@@ -56,7 +56,9 @@ mod pgp {
                 .into_keypair()?;
 
             let message = Message::new(writer);
-            let signer = Signer::new(message, keypair)?.detached();
+            let signer = Signer::new(message, keypair)?
+                .detached()
+                .creation_time(time);
 
             Ok(PgpSignatureWriter { signer })
         }

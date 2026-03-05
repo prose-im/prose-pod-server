@@ -27,6 +27,7 @@ pub trait ObjectStore {
     async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error>;
 
     /// Returns `None` if key does not exist or object too large.
+    #[inline]
     async fn reader_if_not_too_large(
         &self,
         key: &str,

@@ -43,8 +43,10 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         pgp.tsk = "encrypt.pgp"
 
         [signing]
+        pgp.enabled = true
         pgp.tsk = "sign.pgp"
     })?;
+    tracing::debug!("Parsed config: {backup_config:#?}");
 
     let certs: HashMap<PathBuf, openpgp::Cert> = [
         (
@@ -122,7 +124,6 @@ async fn test_example1() -> Result<(), anyhow::Error> {
                 tsks: vec![pgp_cert],
                 policy: Box::new(pgp_policy.clone()),
             });
-            service.pgp_verification_context = None;
         }
     }
 

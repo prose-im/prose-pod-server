@@ -39,10 +39,9 @@ use figment::Figment;
 /// # to be configured and accessible. This is where it is done.
 /// [signing]
 /// # `true` makes it impossible to restore a non-signed backup.
-/// # Default is `true` (opt-in).
+/// # Default is `true` (opt-out) as soon as you enabled a signing method.
 /// mandatory = true
-/// # Default is `true`.
-/// # Use only if you need a global override (e.g. in tests).
+/// # Default is `false` (opt-in).
 /// pgp.enabled = true
 /// # Path to the Transferable Secret Key to use when signing new backups.
 /// # This TSK MUST contain private key material suitable for signing.
@@ -101,8 +100,7 @@ fn default_config_static() -> Figment {
         algorithm = "SHA-256"
 
         [signing]
-        enabled = false
-        mandatory = true
+        pgp.enabled = false
 
         [encryption]
         // Note that, for consistency with `signing`, `enabled = false`
@@ -118,13 +116,23 @@ fn default_config_static() -> Figment {
 fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
     use figment::providers::*;
 
-    let signing_enabled = figment.extract_inner::<bool>("signing.enabled")?;
+    let signing_enabled_opt = figment.extract_inner::<bool>("signing.enabled").ok();
+    if signing_enabled_opt == Some(false) {
+        figment = figment.merge(Serialized::default("signing", json::Value::Null));
+    } else {
+        let signing_pgp_enabled = figment.extract_inner::<bool>("signing.pgp.enabled")?;
 
-    figment = figment.join(Serialized::default("signing.pgp.enabled", &signing_enabled));
+        let signing_should_be_mandatory =
+            signing_enabled_opt.unwrap_or(false) || signing_pgp_enabled;
 
-    let signing_pgp_enabled = figment.extract_inner::<bool>("signing.pgp.enabled")?;
-    if !signing_pgp_enabled {
-        figment = figment.merge(Serialized::default("signing.pgp", json::Value::Null));
+        figment = figment.join(Serialized::default(
+            "signing.mandatory",
+            &signing_should_be_mandatory,
+        ));
+
+        if !signing_pgp_enabled {
+            figment = figment.merge(Serialized::default("signing.pgp", json::Value::Null));
+        }
     }
 
     let encryption_enabled = figment.extract_inner::<bool>("encryption.enabled").ok();
