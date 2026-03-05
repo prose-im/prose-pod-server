@@ -9,6 +9,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use crate::{ProseBackupService, stores::ObjectStore};
 
+pub use self::VerificationContext as Context;
+
 /// Do not download OpenPGP signatures if larger than 2KiB.
 /// FYI it should be 191 bytes so we’re being pretty safe here.
 ///
@@ -17,6 +19,12 @@ use crate::{ProseBackupService, stores::ObjectStore};
 /// files a malicious actor might have stored. We also prevent Denial of Service
 /// if we stay stuck at downloading a very very large file.
 const MAX_PGP_SIGNATURE_LENGTH: u64 = 2 * 1024;
+
+#[non_exhaustive]
+#[derive(Default)]
+pub struct VerificationContext {
+    pub pgp: Option<PgpVerificationContext>,
+}
 
 impl<S1, S2> ProseBackupService<S1, S2>
 where
@@ -93,7 +101,7 @@ where
         };
 
         // Look for an OpenPGP signature.
-        if let Some(context) = self.pgp_verification_context.as_ref() {
+        if let Some(context) = self.verification_context.pgp.as_ref() {
             let check_name = backup_name.with_extension("sig");
 
             let reader = self
@@ -139,7 +147,7 @@ where
         }
 
         // Ensure backup is signed if configuration enforces it.
-        if self.signing_config.mandatory {
+        if self.signing_context.is_signing_mandatory {
             return Err(anyhow!(
                 "Backup not signed (but signing is mandatory per configuration)."
             ));
@@ -200,6 +208,7 @@ where
     }
 }
 
+pub use self::pgp::*;
 pub mod pgp {
     use std::{io, time::SystemTime};
 

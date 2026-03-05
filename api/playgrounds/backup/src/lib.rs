@@ -68,12 +68,11 @@ pub struct ProseBackupService<BackupStore, CheckStore> {
     pub archiving_config: config::ArchivingConfig,
     pub compression_config: config::CompressionConfig,
     pub hashing_config: config::HashingConfig,
-    pub signing_config: config::SigningConfig,
 
-    pub encryption_context: Option<encryption::EncryptionContext>,
-    pub pgp_signing_context: Option<signing::PgpSigningContext>,
-    pub decryption_context: decryption::DecryptionContext,
-    pub pgp_verification_context: Option<verification::pgp::PgpVerificationContext>,
+    pub encryption_context: Option<encryption::Context>,
+    pub signing_context: signing::Context,
+    pub verification_context: verification::Context,
+    pub decryption_context: decryption::Context,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
@@ -116,10 +115,9 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
     where
         P: openpgp::policy::Policy + 'static,
     {
-        use decryption::{DecryptionContext, PgpDecryptionContext};
-        use encryption::EncryptionContext;
+        use decryption::PgpDecryptionContext;
         use signing::PgpSigningContext;
-        use verification::pgp::{PgpVerificationContext, PgpVerificationHelper};
+        use verification::{PgpVerificationContext, PgpVerificationHelper};
 
         let encryption_context = match config.encryption.mode {
             config::EncryptionMode::Off => None,
@@ -138,7 +136,7 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
                     recipients.push(get_pgp_cert(path)?);
                 }
 
-                Some(EncryptionContext::Pgp {
+                Some(encryption::Context::Pgp {
                     recipients,
                     policy: Box::new(pgp_policy()),
                 })
@@ -155,6 +153,10 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
             }
             None => None,
         };
+        let signing_context = signing::Context {
+            is_signing_mandatory: config.signing.mandatory,
+            pgp: pgp_signing_context,
+        };
 
         let pgp_verification_context = match config.signing.pgp.as_ref() {
             Some(pgp) => {
@@ -168,8 +170,11 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
             }
             None => None,
         };
+        let verification_context = verification::Context {
+            pgp: pgp_verification_context,
+        };
 
-        let mut decryption_context = DecryptionContext::default();
+        let mut decryption_context = decryption::Context::default();
         if let Some(pgp) = config.encryption.pgp.as_ref() {
             let pgp_cert = get_pgp_cert(&pgp.tsk)?;
             decryption_context.pgp = Some(PgpDecryptionContext {
@@ -183,10 +188,9 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
             archiving_config: config.archiving,
             compression_config: config.compression,
             hashing_config: config.hashing,
-            signing_config: config.signing,
-            pgp_signing_context,
             encryption_context,
-            pgp_verification_context,
+            signing_context,
+            verification_context,
             decryption_context,
             backup_store,
             check_store,
@@ -433,7 +437,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
         let mut pgp_signature: Vec<u8> = Vec::new();
-        let mut pgp_signature_writer = match self.pgp_signing_context.as_ref() {
+        let mut pgp_signature_writer = match self.signing_context.pgp.as_ref() {
             Some(context) => {
                 let writer = context
                     .new_writer(&mut pgp_signature, created_at)
@@ -583,7 +587,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 
         let checks = self.check_store.list_all_after(oldest_backup).await?;
 
-        let signing_is_mandatory = self.signing_config.mandatory;
+        let signing_is_mandatory = self.signing_context.is_signing_mandatory;
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 

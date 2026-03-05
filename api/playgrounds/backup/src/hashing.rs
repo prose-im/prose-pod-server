@@ -51,14 +51,14 @@ impl AsRef<[u8]> for Digest {
 
 // MARK: SHA-256
 
-pub(crate) use self::sha256::Sha256DigestWriter;
+pub use self::sha256::*;
 mod sha256 {
     use std::io::{self, Write};
 
     use anyhow::Context as _;
     use sha2::{Digest as _, Sha256};
 
-    pub struct Sha256DigestWriter<W> {
+    pub(crate) struct Sha256DigestWriter<W> {
         hasher: Sha256,
         writer: W,
     }

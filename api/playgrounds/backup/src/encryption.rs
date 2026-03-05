@@ -14,6 +14,8 @@ use crate::{
     writer_chain::{WriterChainBuilder, either::Either},
 };
 
+pub use self::EncryptionContext as Context;
+
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum EncryptionContext {
@@ -121,7 +123,7 @@ mod pgp {
     use openpgp::policy::Policy;
     use openpgp::serialize::stream::*;
 
-    pub fn encrypt<'cert, 'policy: 'cert, W: Write + Send + Sync + 'cert>(
+    pub(crate) fn encrypt<'cert, 'policy: 'cert, W: Write + Send + Sync + 'cert>(
         writer: W,
         recipient_certs: &'cert [openpgp::Cert],
         policy: &'policy dyn Policy,

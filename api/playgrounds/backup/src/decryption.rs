@@ -5,6 +5,8 @@
 
 //! Decryption logic.
 
+pub use self::DecryptionContext as Context;
+
 #[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct DecryptionContext {
@@ -44,8 +46,8 @@ where
 
 use crate::writer_chain::either::Either;
 
-pub use self::pgp::PgpDecryptionContext;
-mod pgp {
+pub use self::pgp::*;
+pub mod pgp {
     use anyhow::Context as _;
     use openpgp::{
         crypto::SessionKey, packet::prelude::*, parse::Parse as _, parse::stream::*,
@@ -66,7 +68,7 @@ mod pgp {
         time: std::time::SystemTime,
     }
 
-    pub fn decryptor<'a, R>(
+    pub(crate) fn decryptor<'a, R>(
         backup_reader: R,
         context: &'a PgpDecryptionContext,
         crate::BackupFileNameComponents { created_at, .. }: &crate::BackupFileNameComponents,
