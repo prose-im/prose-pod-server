@@ -92,10 +92,10 @@ impl ObjectStore for FsStore {
         Ok(self.directory.join(key).exists())
     }
 
-    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
+    async fn find(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
         let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
 
-        let mut file_names = Vec::new();
+        let mut results: Vec<ObjectMetadata> = Vec::new();
         for entry in files.into_iter() {
             match entry {
                 Ok(entry) => {
@@ -103,24 +103,29 @@ impl ObjectStore for FsStore {
                         .file_name()
                         .into_string()
                         .expect("File names should only contain Unicode data");
+
+                    let meta = entry.metadata()?;
 
                     if file_name.starts_with(prefix) {
-                        file_names.push(file_name);
+                        results.push(ObjectMetadata {
+                            file_name,
+                            size_bytes: meta.len(),
+                        });
                     }
                 }
                 Err(err) => tracing::error!("{err:?}"),
             }
         }
 
-        file_names.sort();
+        results.sort_unstable_by(|a, b| a.file_name.cmp(&b.file_name));
 
-        Ok(file_names)
+        Ok(results)
     }
 
-    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
         let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
 
-        let mut file_names = Vec::new();
+        let mut results: Vec<ObjectMetadata> = Vec::new();
         for entry in files.into_iter() {
             match entry {
                 Ok(entry) => {
@@ -129,32 +134,32 @@ impl ObjectStore for FsStore {
                         .into_string()
                         .expect("File names should only contain Unicode data");
 
+                    let meta = entry.metadata()?;
+
                     if file_name.as_str() > prefix {
-                        file_names.push(file_name);
+                        results.push(ObjectMetadata {
+                            file_name,
+                            size_bytes: meta.len(),
+                        });
                     }
                 }
                 Err(err) => tracing::error!("{err:?}"),
             }
         }
 
-        file_names.sort();
+        results.sort_unstable_by(|a, b| a.file_name.cmp(&b.file_name));
 
-        Ok(file_names)
+        Ok(results)
     }
 
     async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error> {
         let file_path = self.directory.join(file_name);
 
         let meta = fs::metadata(&file_path).context("Failed getting file metadata")?;
-        let created_at = meta.created().expect(
-            "File creation date should be accessible on filesystems \
-            where Prose is deployed",
-        );
 
         Ok(ObjectMetadata {
             file_name: file_name.to_owned(),
-            creation_date: created_at.into(),
-            size: meta.size(),
+            size_bytes: meta.size(),
         })
     }
 }

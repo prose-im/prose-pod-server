@@ -215,6 +215,9 @@ pub mod dtos {
         /// UTC timestamp at which the backup was created.
         pub created_at: time::UtcDateTime,
 
+        /// Size of the backup, in bytes.
+        pub size_bytes: u64,
+
         /// Whether or not the backup was signed.
         ///
         /// This doesn’t mean anything regarding whether or not the signature
@@ -249,6 +252,9 @@ pub mod dtos {
 
         /// UTC timestamp at which the backup was created.
         pub created_at: time::UtcDateTime,
+
+        /// Size of the backup, in bytes.
+        pub size_bytes: u64,
 
         /// Whether or not the backup is intact (not corrupted).
         ///
@@ -571,13 +577,21 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
             return Ok(vec![]);
         };
 
-        let checks = self.check_store.list_all_after(oldest_backup).await?;
+        let checks = self
+            .check_store
+            .list_all_after(&oldest_backup.file_name)
+            .await?
+            .into_iter()
+            .map(|meta| meta.file_name)
+            .collect::<Vec<_>>();
 
         let signing_is_mandatory = self.signing_context.is_signing_mandatory;
 
         let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
 
-        for backup_file_name in backups.into_iter().rev() {
+        for backup in backups.into_iter().rev() {
+            let backup_file_name = backup.file_name;
+
             let is_signed = checks.contains(&format!("{backup_file_name}.sig"));
             let is_encrypted = backup_file_name.ends_with(".pgp");
 
@@ -607,6 +621,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
                 metadata: BackupMetadataPartialDto {
                     description: description.into_owned(),
                     created_at,
+                    size_bytes: backup.size_bytes,
                     is_signed,
                     is_encrypted,
                     can_be_restored,

@@ -8,7 +8,7 @@ None.
 
 Medium priority (unordered):
 
-- Return backup size when getting details.
+None.
 
 Low priority (unordered):
 

@@ -7,7 +7,6 @@ use anyhow::Context as _;
 use bytes::Bytes;
 use s3::{error::SdkError, types::CompletedPart};
 use std::io::{self, Read, Write};
-use time::UtcDateTime;
 
 use crate::util::saturating_i64_to_u64;
 
@@ -59,8 +58,8 @@ impl ObjectStore for S3Store {
         }
     }
 
-    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
-        let mut keys = Vec::new();
+    async fn find(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
+        let mut results: Vec<ObjectMetadata> = Vec::new();
         let mut continuation_token = None;
 
         loop {
@@ -74,12 +73,15 @@ impl ObjectStore for S3Store {
                 .await
                 .context("Failed listing S3 objects")?;
 
-            keys.extend(
-                resp.contents()
-                    .into_iter()
-                    .filter_map(|obj| obj.key())
-                    .map(ToOwned::to_owned),
-            );
+            results.extend(resp.contents().into_iter().filter_map(|obj| {
+                match (obj.key(), obj.size()) {
+                    (Some(key), Some(size)) => Some(ObjectMetadata {
+                        file_name: key.to_owned(),
+                        size_bytes: saturating_i64_to_u64(size),
+                    }),
+                    _ => None,
+                }
+            }));
 
             if resp.is_truncated().unwrap_or(false) {
                 continuation_token = resp.next_continuation_token().map(|s| s.to_string());
@@ -88,11 +90,11 @@ impl ObjectStore for S3Store {
             }
         }
 
-        Ok(keys)
+        Ok(results)
     }
 
-    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error> {
-        let mut keys = Vec::new();
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
+        let mut results: Vec<ObjectMetadata> = Vec::new();
         let mut continuation_token = None;
 
         loop {
@@ -106,12 +108,15 @@ impl ObjectStore for S3Store {
                 .await
                 .context("Failed listing S3 objects")?;
 
-            keys.extend(
-                resp.contents()
-                    .into_iter()
-                    .filter_map(|obj| obj.key())
-                    .map(ToOwned::to_owned),
-            );
+            results.extend(resp.contents().into_iter().filter_map(|obj| {
+                match (obj.key(), obj.size()) {
+                    (Some(key), Some(size)) => Some(ObjectMetadata {
+                        file_name: key.to_owned(),
+                        size_bytes: saturating_i64_to_u64(size),
+                    }),
+                    _ => None,
+                }
+            }));
 
             if resp.is_truncated().unwrap_or(false) {
                 continuation_token = resp.next_continuation_token().map(|s| s.to_string());
@@ -120,7 +125,7 @@ impl ObjectStore for S3Store {
             }
         }
 
-        Ok(keys)
+        Ok(results)
     }
 
     async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error> {
@@ -133,13 +138,6 @@ impl ObjectStore for S3Store {
             .await
             .context("Failed getting S3 object metadata")?;
 
-        let created_at: &s3::primitives::DateTime = meta
-            .last_modified()
-            .context("S3 object has no last_modified timestamp")?;
-
-        let creation_date: UtcDateTime = UtcDateTime::from_unix_timestamp(created_at.secs())
-            .context("Failed converting S3 timestamp to OffsetDateTime")?;
-
         let size: u64 = saturating_i64_to_u64(
             meta.content_length()
                 .expect("S3 object has no content_length"),
@@ -147,8 +145,7 @@ impl ObjectStore for S3Store {
 
         Ok(ObjectMetadata {
             file_name: key.to_owned(),
-            creation_date: creation_date,
-            size,
+            size_bytes: size,
         })
     }
 }

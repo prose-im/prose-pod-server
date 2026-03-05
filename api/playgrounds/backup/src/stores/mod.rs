@@ -33,7 +33,9 @@ pub trait ObjectStore {
         key: &str,
         max_size: u64,
     ) -> Result<Option<Self::Reader>, anyhow::Error> {
-        let ObjectMetadata { size, .. } = self.metadata(key).await?;
+        let ObjectMetadata {
+            size_bytes: size, ..
+        } = self.metadata(key).await?;
 
         if size <= max_size {
             self.reader(key).await
@@ -46,11 +48,11 @@ pub trait ObjectStore {
 
     async fn exists(&self, key: &str) -> Result<bool, anyhow::Error>;
 
-    async fn find(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
+    async fn find(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error>;
 
-    async fn list_all_after(&self, prefix: &str) -> Result<Vec<String>, anyhow::Error>;
+    async fn list_all_after(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error>;
 
-    async fn list_all(&self) -> Result<Vec<String>, anyhow::Error> {
+    async fn list_all(&self) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
         self.list_all_after("").await
     }
 
@@ -59,6 +61,5 @@ pub trait ObjectStore {
 
 pub struct ObjectMetadata {
     pub file_name: String,
-    pub creation_date: time::UtcDateTime,
-    pub size: u64,
+    pub size_bytes: u64,
 }
