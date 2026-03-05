@@ -170,7 +170,15 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     tracing::info!("Backups: {backups:#?}");
 
     print!("\n");
-    let _extract_result = service.extract_backup(&backup_id, &blueprints).await?;
+    let mut extract_result = service.extract_backup(&backup_id, &blueprints).await?;
+
+    print!("\n");
+    let restore_blueprint = ArchiveBlueprint::from_paths(
+        2,
+        with_fs_root(".out/restore", &pod_api_scenario_base_paths),
+    );
+    extract_result.blueprint = &restore_blueprint;
+    service.restore_backup(extract_result).await?;
 
     if std::env::var("NO_DELETE").is_err() {
         fs::remove_file(fs_prefix_backups.join(backup_id))?;

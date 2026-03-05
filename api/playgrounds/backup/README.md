@@ -23,6 +23,7 @@ Advanced features:
   - Encrypt backups for multiple recipients, to decrypt backups on another
     machine (e.g. for forensic analysis)
   - Prevent untrusted backup restoration by enabling mandatory signing
+- Backups are atomically restored
 
 ## Unsupported features
 

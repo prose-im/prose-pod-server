@@ -3,9 +3,11 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+use std::path::PathBuf;
+
 use tempfile::TempDir;
 
-use crate::{archiving::ArchiveBlueprint, util::safe_replace};
+use crate::archiving::ArchiveBlueprint;
 
 #[derive(Debug)]
 pub struct RestorationSuccess;
@@ -13,14 +15,66 @@ pub struct RestorationSuccess;
 pub(crate) fn restore(
     tmp_dir: TempDir,
     blueprint: &ArchiveBlueprint,
-) -> Result<RestorationSuccess, anyhow::Error> {
-    let fixme = "Do this atomically (all or nothing), by keeping backups.";
+) -> Result<RestorationSuccess, RestorationError> {
+    use crate::util::{PathGuard, safe_replace};
+
+    let mut processed: Vec<(PathBuf, PathBuf, Option<PathGuard>)> = Vec::new();
 
     for (dir_name, dst) in blueprint.paths.iter() {
         let src = tmp_dir.path().join(dir_name);
 
-        safe_replace(src, dst)?;
+        match safe_replace(&src, &dst) {
+            Ok(backup_guard) => processed.push((src, dst.to_owned(), backup_guard)),
+            Err(err) => {
+                // Revert previous operations.
+                revert(processed);
+
+                // Abort backup restoration.
+                return Err(RestorationError::MoveFailed {
+                    tmp_dir,
+                    source: anyhow::Error::new(err),
+                });
+            }
+        };
     }
 
     Ok(RestorationSuccess)
+}
+
+/// Note that this is best-effort, meaning we’re already doing error recovery
+/// at this point so we can’t recover from subsequent internal errors.
+#[cold]
+fn revert(processed: Vec<(PathBuf, PathBuf, Option<crate::util::PathGuard>)>) {
+    use std::fs;
+
+    for (tmp_path, replaced, original) in processed {
+        // Move new file back into its original location.
+        if let Err(err) = fs::rename(&replaced, &tmp_path) {
+            tracing::error!(
+                "Could not revert `{path}`: {err:?}",
+                path = replaced.display()
+            );
+            continue;
+        }
+
+        // Recover backed up file/directory.
+        if let Some(original) = original {
+            fs::rename(&original, &replaced).unwrap_or_else(|err| {
+                tracing::error!(
+                    "Could not recover `{path}`: {err:?}",
+                    path = replaced.display()
+                )
+            });
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RestorationError {
+    #[error("Move failed.")]
+    MoveFailed {
+        tmp_dir: TempDir,
+        #[source]
+        source: anyhow::Error,
+    },
 }

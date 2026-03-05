@@ -4,11 +4,7 @@
 
 High priority (ordered):
 
-1. Make Pod Server restoration atomic.
-1. Although the Pod Server restoration in itself is atomic, if the Pod API
-   restoration fails we end up in an incorrect state. To prevent that we should
-   let the Pod API try to restoration first and only then finish the Pod Server
-   restoration.
+None.
 
 Medium priority (unordered):
 
