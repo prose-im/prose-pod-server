@@ -57,6 +57,12 @@ pub trait ObjectStore {
     }
 
     async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error>;
+
+    async fn download_url(
+        &self,
+        key: &str,
+        ttl: &std::time::Duration,
+    ) -> Result<String, anyhow::Error>;
 }
 
 pub struct ObjectMetadata {

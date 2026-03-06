@@ -5,7 +5,7 @@
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use s3::{error::SdkError, types::CompletedPart};
+use s3::{error::SdkError, presigning::PresigningConfig, types::CompletedPart};
 use std::io::{self, Read, Write};
 
 use crate::util::saturating_i64_to_u64;
@@ -147,6 +147,22 @@ impl ObjectStore for S3Store {
             file_name: key.to_owned(),
             size_bytes: size,
         })
+    }
+
+    async fn download_url(
+        &self,
+        key: &str,
+        ttl: &std::time::Duration,
+    ) -> Result<String, anyhow::Error> {
+        let presigned = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .presigned(PresigningConfig::expires_in(*ttl)?)
+            .await?;
+
+        Ok(presigned.uri().to_owned())
     }
 }
 

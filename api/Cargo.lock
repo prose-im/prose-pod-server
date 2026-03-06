@@ -575,6 +575,7 @@ dependencies = [
  "aws-sdk-s3",
  "bytes",
  "figment",
+ "iso8601-duration",
  "sequoia-openpgp",
  "serde",
  "serde_json",

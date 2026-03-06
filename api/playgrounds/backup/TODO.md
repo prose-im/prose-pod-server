@@ -22,7 +22,6 @@ Low priority (unordered):
 High priority (ordered):
 
 1. Add S3 end-to-end integration tests.
-1. Return download link.
 1. Customizable backup name prefix (use case: Prose Cloud).
 1. Nothing returns `BackupMetadataFullDto`s.
 
@@ -44,6 +43,7 @@ Medium priority (unordered):
 
 Low priority (unordered):
 
+- Add `#[serde(deny_unknown_fields)]` to config structs.
 - Add tests for all features and supported edge cases.
 - Support dynamically adding encryption recipients without breaking checksum
   - Yep, that’s possible!

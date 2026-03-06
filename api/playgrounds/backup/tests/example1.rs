@@ -170,6 +170,12 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     tracing::info!("Backups: {backups:#?}");
 
     print!("\n");
+    let download_url = service
+        .get_download_url(&backup_id, Duration::from_secs(3))
+        .await?;
+    tracing::info!("Download URL: <{download_url}>.");
+
+    print!("\n");
     let mut extract_result = service.extract_backup(&backup_id, &blueprints).await?;
 
     print!("\n");

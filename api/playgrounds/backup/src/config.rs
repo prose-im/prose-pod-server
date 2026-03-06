@@ -15,7 +15,7 @@ use figment::Figment;
 ///
 /// ```toml
 /// [compression]
-/// # Zstd compression level (see https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html).
+/// # Zstd compression level (see <https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html>).
 /// # This value is transparently passed to the `zstd` library for forward
 /// # compatibility, meaning any negative or positive value can be used
 /// # although `zstd` only supports `<= 22` at the moment.
@@ -62,6 +62,11 @@ use figment::Figment;
 /// # on the server (e.g. in a separate environment for forensic analysis).
 /// # Those SHOULD NOT contain private key material.
 /// pgp.additional_recipients = ["/path/to/other-system.pub.asc"]
+///
+/// [download]
+/// # Longest allowed validity for a backup download URL. Default is 5 minutes.
+/// # Uses the [ISO 8601 Duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations).
+/// url_max_ttl = "PT5M"
 /// ```
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
@@ -73,6 +78,8 @@ pub struct BackupConfig {
     pub signing: SigningConfig,
 
     pub encryption: EncryptionConfig,
+
+    pub download: DownloadConfig,
 }
 
 // MARK: Parsing
@@ -96,6 +103,9 @@ fn default_config_static() -> Figment {
         // overrides `mode` to `"off"`. It can be useful in tests or
         // when overriding configuration with environment variables.
         mode = "off"
+
+        [download]
+        url_max_ttl = "PT5M"
     }
     .to_string();
 
@@ -208,6 +218,15 @@ pub struct EncryptionPgpConfig {
 
     #[serde(default)]
     pub additional_recipients: Vec<std::path::PathBuf>,
+}
+
+// MARK: Download
+
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+pub struct DownloadConfig {
+    #[serde(with = "crate::util::serde::iso8601_duration")]
+    pub url_max_ttl: std::time::Duration,
 }
 
 // MARK: Constructors

@@ -65,6 +65,7 @@ pub struct ProseBackupService<BackupStore, CheckStore> {
     pub signing_context: signing::Context,
     pub verification_context: verification::Context,
     pub decryption_context: decryption::Context,
+    pub download_config: config::DownloadConfig,
 
     pub backup_store: BackupStore,
     pub check_store: CheckStore,
@@ -182,6 +183,7 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
             decryption_context,
             backup_store,
             check_store,
+            download_config: config.download,
         })
     }
 }
@@ -550,7 +552,7 @@ pub enum CreateBackupError {
     Other(anyhow::Error),
 }
 
-// MARK: List
+// MARK: Read
 
 impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     /// List all backups, in alphabetically descending order.
@@ -630,6 +632,18 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         }
 
         Ok(dtos)
+    }
+
+    /// Get a short-lived URL to download a backup.
+    pub async fn get_download_url(
+        &self,
+        backup_name: &BackupFileName,
+        ttl: std::time::Duration,
+    ) -> Result<String, anyhow::Error> {
+        // Apply max TTL from configuration.
+        let ttl = ttl.clamp(std::time::Duration::ZERO, self.download_config.url_max_ttl);
+
+        self.backup_store.download_url(&backup_name, &ttl).await
     }
 }
 

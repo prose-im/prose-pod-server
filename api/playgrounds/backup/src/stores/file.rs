@@ -162,4 +162,15 @@ impl ObjectStore for FsStore {
             size_bytes: meta.size(),
         })
     }
+
+    async fn download_url(
+        &self,
+        file_name: &str,
+        _ttl: &std::time::Duration,
+    ) -> Result<String, anyhow::Error> {
+        match self.directory.join(file_name).to_str() {
+            Some(str) => Ok(format!("file://{str}")),
+            None => Err(anyhow::Error::msg("File path is non-Unicode.")),
+        }
+    }
 }

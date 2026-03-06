@@ -9,6 +9,7 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 anyhow = { version = "1", default-features = false }
 bytes = { version = "1", default-features = false, features = ["std"] }
 figment = { version = "0.10", default-features = false, features = ["toml"] }
+iso8601-duration = { version = "0.2", default-features = false, features = ["serde"] }
 json = { version = "1", default-features = false, package = "serde_json", features = ["std"] }
 openpgp = { version = "2", default-features = false, package = "sequoia-openpgp", features = ["crypto-nettle"] }
 serde = { version = "1", default-features = false }
