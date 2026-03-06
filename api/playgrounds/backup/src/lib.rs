@@ -820,6 +820,9 @@ fn urlencode_file_name_component(str: &str) -> String {
     let res = res.replace("-", "%2D");
 
     // Also percent-encode `.` to prevent incorrect file extension parsing.
+    // WARN: Also prevents path traversal attacks. We should not be subject
+    //   to it given that backup IDs are object storage keys but better be safe
+    //   than sorry.
     #[cfg(feature = "test")]
     assert_eq!(
         urlencoding::decode("test%2Eext"),
