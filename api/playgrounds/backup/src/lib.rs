@@ -201,7 +201,7 @@ pub mod dtos {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-        pub id: Box<str>,
+        pub id: String,
 
         /// Metadata associated with the backup.
         pub metadata: BackupMetadataPartialDto,
@@ -615,15 +615,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
                 }
             };
 
-            let backup_name = match urlencoding::decode(&backup_file_name) {
-                Ok(backup_name) => backup_name,
-                Err(err) => {
-                    tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
-                    continue;
-                }
-            };
             dtos.push(BackupDto {
-                id: Box::from(backup_name),
                 metadata: BackupMetadataPartialDto {
                     description: description.into_owned(),
                     created_at,
@@ -632,6 +624,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
                     is_encrypted,
                     can_be_restored,
                 },
+                id: backup_file_name,
             });
         }
 

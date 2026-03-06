@@ -4,7 +4,7 @@
 
 High priority (ordered):
 
-- `BackupDto::id` is percent-decoded.
+None.
 
 Medium priority (unordered):
 
