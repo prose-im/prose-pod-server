@@ -1,3 +1,26 @@
-.test/
-.out/
-data/
+# Ignore all by default. This prevents unexpected leaks, and improves DX when
+# switching feature branches (e.g. tests in one branch created a directory
+# it git-ignores, but other branch doesn’t know about it and files are
+# committed unexpectedly).
+*
+
+!/examples
+!/examples/**
+
+!/src/
+!/src/**
+
+!/tests/
+!/tests/**
+
+!/.editorconfig
+
+!/.gitignore
+
+!/Cargo.toml
+
+!/README.md
+
+!/Taskfile.dist.yaml
+
+!/TODO.md
