@@ -203,17 +203,17 @@ pub mod dtos {
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
         pub id: String,
 
+        /// Description of the backup.
+        ///
+        /// E.g. “Automatic backup”.
+        pub description: String,
+
         /// Metadata associated with the backup.
         pub metadata: BackupMetadataPartialDto,
     }
 
     #[derive(Debug)]
     pub struct BackupMetadataPartialDto {
-        /// Description of the backup.
-        ///
-        /// E.g. “Automatic backup”.
-        pub description: String,
-
         /// UTC timestamp at which the backup was created.
         pub created_at: time::UtcDateTime,
 
@@ -247,11 +247,6 @@ pub mod dtos {
     /// expensive computation.
     #[derive(Debug)]
     pub struct BackupMetadataFullDto {
-        /// Description of the backup.
-        ///
-        /// E.g. “Automatic backup”.
-        pub description: String,
-
         /// UTC timestamp at which the backup was created.
         pub created_at: time::UtcDateTime,
 
@@ -617,13 +612,13 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 
             dtos.push(BackupDto {
                 metadata: BackupMetadataPartialDto {
-                    description: description.into_owned(),
                     created_at,
                     size_bytes: backup.size_bytes,
                     is_signed,
                     is_encrypted,
                     can_be_restored,
                 },
+                description: description.into_owned(),
                 id: backup_file_name,
             });
         }
