@@ -4,7 +4,7 @@
 
 High priority (ordered):
 
-None.
+- `BackupDto::id` is percent-decoded.
 
 Medium priority (unordered):
 
@@ -22,7 +22,6 @@ Low priority (unordered):
 High priority (ordered):
 
 1. Add S3 end-to-end integration tests.
-1. Customizable backup name prefix (use case: Prose Cloud).
 1. Nothing returns `BackupMetadataFullDto`s.
 
 Medium priority (unordered):

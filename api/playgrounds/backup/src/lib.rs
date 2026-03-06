@@ -200,7 +200,7 @@ pub mod dtos {
     pub struct BackupDto {
         /// Unique identifier (file name / object key) of the backup.
         ///
-        /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
+        /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
         pub id: Box<str>,
 
         /// Metadata associated with the backup.
@@ -311,6 +311,9 @@ pub mod dtos {
 
 #[derive(Debug)]
 pub struct CreateBackupCommand<'a> {
+    /// Desired backup prefix (e.g. “prose-backup”).
+    pub prefix: &'a str,
+
     /// Desired backup description (e.g. “Automatic backup”).
     pub description: &'a str,
 
@@ -326,18 +329,18 @@ pub struct CreateBackupCommand<'a> {
 pub struct CreateBackupOutput {
     /// Unique identifier (file name / object key) of the backup.
     ///
-    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
+    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
     pub backup_id: BackupFileName,
 
     /// Unique identifiers (file names / object keys) of backup digests
     /// (cryptographic checksums).
     ///
-    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
+    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
     pub digest_ids: Vec<BackupFileName>,
 
     /// Unique identifiers (file names / object keys) of backup signatures.
     ///
-    /// E.g. `1772432392-Automatic%20backup.tar.zst.pgp.sig`.
+    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sig`.
     pub signature_ids: Vec<BackupFileName>,
 }
 
@@ -388,6 +391,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
     pub async fn create_backup(
         &self,
         CreateBackupCommand {
+            prefix,
             description,
             #[cfg(feature = "test")]
             created_at,
@@ -401,7 +405,7 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
 
-        let backup_name = BackupName::new(description, &created_at);
+        let backup_name = BackupName::new(prefix, description, &created_at);
 
         let backup_file_name = match self.encryption_context {
             Some(encryption::EncryptionContext::Pgp { .. }) => {
@@ -732,7 +736,11 @@ mod restore {
 
 // MARK: File name serialization and deserialization
 
+#[derive(Debug)]
+#[cfg_attr(feature = "test", derive(PartialEq, Eq))]
 pub(crate) struct BackupFileNameComponents<'a> {
+    pub prefix: Cow<'a, str>,
+
     pub created_at: time::UtcDateTime,
 
     pub description: Cow<'a, str>,
@@ -742,32 +750,34 @@ pub(crate) struct BackupFileNameComponents<'a> {
 
 impl<'a> BackupFileNameComponents<'a> {
     fn parse(file_name: &'a str) -> Result<Self, anyhow::Error> {
-        let Some((prefix, suffix)) = file_name.split_once('-') else {
+        let Some((prefix, rest)) = file_name.split_once('-') else {
+            anyhow::bail!("File `{file_name}` has no prefix.");
+        };
+
+        let Some((timestamp_str, rest)) = rest.split_once('-') else {
             anyhow::bail!("File `{file_name}` is missing the timestamp prefix.");
         };
 
-        let secs: i64 = prefix
+        let secs: i64 = timestamp_str
             .parse()
-            .with_context(|| format!("Could not read integer from `{prefix}`"))?;
+            .with_context(|| format!("Could not read integer from `{timestamp_str}`"))?;
 
-        let created_at = match time::UtcDateTime::from_unix_timestamp(secs) {
-            Ok(timestamp) => timestamp,
-            Err(err) => {
-                return Err(
-                    anyhow::Error::from(err).context("Could not parse timestamp from file name")
-                );
-            }
+        let created_at = time::UtcDateTime::from_unix_timestamp(secs)
+            .context("Could not parse timestamp from file name")?;
+
+        let Some((description, extensions)) = rest.split_once('.') else {
+            anyhow::bail!("File `{file_name}` has no extension.");
         };
 
-        let Some((description, extensions)) = suffix.split_once('.') else {
-            todo!();
-        };
-
+        // “URL decode” components.
+        let prefix = urlencoding::decode(prefix)
+            .with_context(|| format!("Backup prefix `{prefix}` contains invalid UTF-8"))?;
         let description = urlencoding::decode(description).with_context(|| {
             format!("Backup description `{description}` contains invalid UTF-8")
         })?;
 
         Ok(BackupFileNameComponents {
+            prefix,
             created_at,
             description,
             extensions,
@@ -783,29 +793,19 @@ impl<'a> BackupFileNameComponents<'a> {
 pub struct BackupName(String);
 
 impl BackupName {
-    pub fn new(description: &str, created_at: &std::time::SystemTime) -> Self {
+    pub fn new(prefix: &str, description: &str, created_at: &std::time::SystemTime) -> Self {
         use crate::util::SystemTimeExt as _;
 
         // Arbitrary safety limits.
+        assert!(prefix.len() <= 256);
         assert!(description.len() <= 256);
-        // NOTE: Provide a default value instead of passing an empty string.
+        // NOTE: Provide default values instead of passing empty strings.
+        assert!(prefix.len() > 0);
         assert!(description.len() > 0);
 
-        // “URL encode” the backup name to get rid of spaces, emojis, etc.
-        let backup_name = urlencoding::encode(description);
-        // Also percent-encode `.` to prevent incorrect file extension parsing.
-        debug_assert_eq!(
-            urlencoding::decode("test%2Eext"),
-            Ok(Cow::Borrowed("test.ext"))
-        );
-        let backup_name = backup_name.replace(".", "%2E");
-        // Also percent-encode `/` to prevent incorrect parsing of HTTP
-        // requests when a backup ID is used in the path.
-        debug_assert_eq!(
-            urlencoding::decode("test%2Ffoo"),
-            Ok(Cow::Borrowed("test/foo"))
-        );
-        let backup_name = backup_name.replace("/", "%2F");
+        // “URL encode” components to get rid of spaces, emojis, etc.
+        let prefix = urlencode_file_name_component(prefix);
+        let description = urlencode_file_name_component(description);
 
         // Unix timestamp with second precision as 10 chars covers 2001-09-09
         // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
@@ -814,10 +814,41 @@ impl BackupName {
         let created_at = created_at.unix_timestamp();
         assert!(created_at <= 9_999_999_999);
         debug_assert!(created_at > 999_999_999);
-        let backup_name = format!("{created_at:010}-{backup_name}");
+        let backup_name = format!("{prefix}-{created_at:010}-{description}");
 
         Self(backup_name)
     }
+}
+
+fn urlencode_file_name_component(str: &str) -> String {
+    let res = urlencoding::encode(str);
+
+    // Also percent-encode `-` to prevent incorrect splitting.
+    #[cfg(feature = "test")]
+    assert_eq!(
+        urlencoding::decode("test%2Dext"),
+        Ok(Cow::Borrowed("test-ext"))
+    );
+    let res = res.replace("-", "%2D");
+
+    // Also percent-encode `.` to prevent incorrect file extension parsing.
+    #[cfg(feature = "test")]
+    assert_eq!(
+        urlencoding::decode("test%2Eext"),
+        Ok(Cow::Borrowed("test.ext"))
+    );
+    let res = res.replace(".", "%2E");
+
+    // Also percent-encode `/` to prevent incorrect parsing of HTTP
+    // requests when a backup ID is used in the path.
+    #[cfg(feature = "test")]
+    debug_assert_eq!(
+        urlencoding::decode("test%2Ffoo"),
+        Ok(Cow::Borrowed("test/foo"))
+    );
+    let res = res.replace("/", "%2F");
+
+    res
 }
 
 impl BackupName {
@@ -846,7 +877,7 @@ impl std::fmt::Display for BackupName {
 
 /// Name of a backup file (base name with extensions).
 ///
-/// E.g. `1772432392-Automatic%20backup.tar.zst.pgp`.
+/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
 #[derive(Clone)]
 pub struct BackupFileName {
     value: String,
@@ -967,5 +998,29 @@ impl AsRef<String> for BackupFileName {
 impl AsRef<str> for BackupFileName {
     fn as_ref(&self) -> &str {
         self.value.as_str()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_backup_file_name_components_parsing() -> Result<(), anyhow::Error> {
+        use crate::BackupFileNameComponents;
+        use std::borrow::Cow;
+
+        let components = BackupFileNameComponents::parse(
+            "prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp",
+        )?;
+        assert_eq!(
+            components,
+            BackupFileNameComponents {
+                prefix: Cow::Borrowed("prose-backup"),
+                created_at: time::UtcDateTime::UNIX_EPOCH + time::Duration::seconds(1772432392),
+                description: Cow::Borrowed("Automatic backup"),
+                extensions: "tar.zst.pgp",
+            }
+        );
+
+        Ok(())
     }
 }

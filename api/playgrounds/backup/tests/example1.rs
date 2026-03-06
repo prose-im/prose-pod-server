@@ -137,7 +137,8 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         ..
     } = {
         let command = CreateBackupCommand {
-            description: "backup",
+            prefix: "prose-backup",
+            description: "Test backup",
             created_at: now - Duration::from_mins(90),
         };
         service.create_backup(command, &current_blueprint).await?
