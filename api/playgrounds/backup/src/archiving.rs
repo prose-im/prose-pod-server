@@ -185,7 +185,7 @@ pub enum ExtractionError {
     #[error("Invalid backup")]
     InvalidBackup(#[source] anyhow::Error),
 
-    #[error("Unknown backup version: {0}")]
+    #[error("Unknown backup version: {0}.")]
     UnknownBackupVersion(u8),
 
     #[error(transparent)]

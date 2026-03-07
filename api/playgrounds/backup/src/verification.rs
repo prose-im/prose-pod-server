@@ -34,7 +34,7 @@ pub struct VerificationOutput {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerificationError {
-    #[error("Backup not found.")]
+    #[error("Backup not found")]
     BackupNotFound(#[source] anyhow::Error),
 
     #[error(transparent)]

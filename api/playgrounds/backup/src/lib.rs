@@ -543,37 +543,37 @@ pub enum CreateBackupError {
     #[error("Cannot create backup: '{0}' does not exist.")]
     MissingFile(std::path::PathBuf),
 
-    #[error("Cannot create backup sink: {0:?}")]
-    CannotCreateSink(anyhow::Error),
+    #[error("Cannot create backup sink")]
+    CannotCreateSink(#[source] anyhow::Error),
 
-    #[error("Cannot create backup archive: {0:?}")]
-    CannotArchive(anyhow::Error),
+    #[error("Cannot create backup archive")]
+    CannotArchive(#[source] anyhow::Error),
 
-    #[error("Cannot compress backup archive: {0:?}")]
-    CannotCompress(anyhow::Error),
+    #[error("Cannot compress backup archive")]
+    CannotCompress(#[source] anyhow::Error),
 
-    #[error("Backup archive compression failed: {0:?}")]
-    CompressionFailed(anyhow::Error),
+    #[error("Backup archive compression failed")]
+    CompressionFailed(#[source] anyhow::Error),
 
-    #[error("Cannot encrypt backup: {0:?}")]
-    CannotEncrypt(anyhow::Error),
+    #[error("Cannot encrypt backup")]
+    CannotEncrypt(#[source] anyhow::Error),
 
-    #[error("Backup encryption failed: {0:?}")]
-    EncryptionFailed(anyhow::Error),
+    #[error("Backup encryption failed")]
+    EncryptionFailed(#[source] anyhow::Error),
 
-    #[error("Backup hashing failed: {0:?}")]
-    HashingFailed(anyhow::Error),
+    #[error("Backup hashing failed")]
+    HashingFailed(#[source] anyhow::Error),
 
-    #[error("Cannot sign backup: {0:?}")]
-    CannotSign(anyhow::Error),
+    #[error("Cannot sign backup")]
+    CannotSign(#[source] anyhow::Error),
 
-    #[error("Backup signing failed: {0:?}")]
-    SigningFailed(anyhow::Error),
+    #[error("Backup signing failed")]
+    SigningFailed(#[source] anyhow::Error),
 
-    #[error("Failed uploading backup integrity check: {0:?}")]
-    IntegrityCheckUploadFailed(std::io::Error),
+    #[error("Failed uploading backup integrity check")]
+    IntegrityCheckUploadFailed(#[source] std::io::Error),
 
-    #[error("{0:?}")]
+    #[error(transparent)]
     Other(anyhow::Error),
 }
 

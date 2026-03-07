@@ -72,7 +72,7 @@ fn revert(processed: Vec<(PathBuf, PathBuf, Option<crate::util::PathGuard>)>) {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RestorationError {
-    #[error("Move failed.")]
+    #[error("Move failed")]
     MoveFailed {
         tmp_dir: TempDir,
         #[source]
