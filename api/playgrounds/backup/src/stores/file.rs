@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Context;
 
-use super::{ObjectMetadata, ObjectStore};
+use super::{ObjectMetadata, ObjectStore, ReadObjectError};
 
 /// Read and write backups on disk.
 pub struct FsStore {
@@ -71,7 +71,7 @@ impl ObjectStore for FsStore {
             .context("Failed opening file (write)")
     }
 
-    async fn reader(&self, file_name: &str) -> Result<Option<Self::Reader>, anyhow::Error> {
+    async fn reader(&self, file_name: &str) -> Result<Self::Reader, ReadObjectError> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
@@ -82,9 +82,13 @@ impl ObjectStore for FsStore {
         // tracing::debug!("Opening {} (read)…", path.display());
 
         match File::options().read(true).open(path) {
-            Ok(reader) => Ok(Some(reader)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(anyhow::Error::from(err).context("Failed opening file (read)")),
+            Ok(reader) => Ok(reader),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(ReadObjectError::ObjectNotFound(anyhow::Error::from(err)))
+            }
+            Err(err) => Err(ReadObjectError::Other(
+                anyhow::Error::from(err).context("Failed opening file (read)"),
+            )),
         }
     }
 
@@ -152,10 +156,12 @@ impl ObjectStore for FsStore {
         Ok(results)
     }
 
-    async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, anyhow::Error> {
+    async fn metadata(&self, file_name: &str) -> Result<ObjectMetadata, ReadObjectError> {
         let file_path = self.directory.join(file_name);
 
-        let meta = fs::metadata(&file_path).context("Failed getting file metadata")?;
+        let meta = fs::metadata(&file_path)
+            .context("Failed getting file metadata")
+            .map_err(|err| ReadObjectError::ObjectNotFound(anyhow::Error::from(err)))?;
 
         Ok(ObjectMetadata {
             file_name: file_name.to_owned(),

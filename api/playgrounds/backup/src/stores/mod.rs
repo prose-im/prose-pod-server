@@ -24,25 +24,25 @@ pub trait ObjectStore {
     async fn writer(&self, key: &str) -> Result<Self::Writer, anyhow::Error>;
 
     /// Returns `None` if key does not exist.
-    async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error>;
+    async fn reader(&self, key: &str) -> Result<Self::Reader, ReadObjectError>;
 
     /// Returns `None` if key does not exist or object too large.
     #[inline]
-    async fn reader_if_not_too_large(
+    async fn reader_if_not_too_large<'a>(
         &self,
-        key: &str,
+        key: &'a str,
         max_size: u64,
-    ) -> Result<Option<Self::Reader>, anyhow::Error> {
-        let ObjectMetadata {
-            size_bytes: size, ..
-        } = self.metadata(key).await?;
+    ) -> Result<Self::Reader, ReadSizedObjectError<'a>> {
+        let size = self.metadata(key).await?.size_bytes;
 
         if size <= max_size {
-            self.reader(key).await
+            (self.reader(key).await).map_err(ReadSizedObjectError::ReadFailed)
         } else {
-            Err(anyhow::Error::msg(format!(
-                "Object `{key}` too large ({size} > {max_size})."
-            )))
+            Err(ReadSizedObjectError::ObjectTooLarge {
+                key,
+                size,
+                max_size,
+            })
         }
     }
 
@@ -56,7 +56,7 @@ pub trait ObjectStore {
         self.list_all_after("").await
     }
 
-    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error>;
+    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, ReadObjectError>;
 
     async fn download_url(
         &self,
@@ -68,4 +68,26 @@ pub trait ObjectStore {
 pub struct ObjectMetadata {
     pub file_name: String,
     pub size_bytes: u64,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadObjectError {
+    #[error(transparent)]
+    ObjectNotFound(anyhow::Error),
+
+    #[error(transparent)]
+    Other(anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadSizedObjectError<'a> {
+    #[error(transparent)]
+    ReadFailed(#[from] ReadObjectError),
+
+    #[error("Object `{key}` too large ({size} > {max_size}).")]
+    ObjectTooLarge {
+        key: &'a str,
+        size: u64,
+        max_size: u64,
+    },
 }

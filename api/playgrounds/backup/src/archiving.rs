@@ -10,8 +10,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 
-use crate::CreateBackupError;
+use crate::decryption::{self, DecryptionContext, DecryptionReport};
+use crate::stats::{ReadStats, StatsReader};
+use crate::util::debug_panic;
+use crate::verification::VerificationOutput;
 use crate::writer_chain::WriterChainBuilder;
+use crate::{BackupFileNameComponents, CreateBackupError};
 
 // WARN: Do not change as doing so would break backward compatibility.
 const METADATA_FILE_NAME: &'static str = "metadata.json";
@@ -148,10 +152,9 @@ fn add_metadata_file<W: std::io::Write>(
 
 // MARK: - Extraction (unarchiving)
 
-pub struct ExtractionSuccess<'a> {
+pub struct ExtractionOutput<'a> {
     /// Backup archives are unpacked in a temporary directory, that gets
-    /// deleted when this is dropped. In order for the Prose to
-    /// stay available, this needs to stay alive. Drop when done sending data.
+    /// deleted when this is dropped. Drop when done processing data.
     ///
     /// [`prose_pod_api_data`]: ExtractionSuccess::prose_pod_api_data
     pub tmp_dir: tempfile::TempDir,
@@ -162,27 +165,84 @@ pub struct ExtractionSuccess<'a> {
     ///
     /// [`tmp_dir`]: ExtractionSuccess::tmp_dir
     pub blueprint: &'a ArchiveBlueprint,
+}
 
-    /// Total amount of data extracted in [`tmp_dir`].
-    ///
-    /// [`tmp_dir`]: ExtractionSuccess::tmp_dir
+#[derive(Debug, Default)]
+pub struct ExtractionStats {
+    pub raw_read_stats: ReadStats,
+    pub decryption_stats: ReadStats,
+    pub decompression_stats: ReadStats,
+
+    /// Total amount of data extracted in [`ExtractionOutput::tmp_dir`].
     pub extracted_bytes_count: u64,
 }
 
-pub(crate) fn extract_archive<'a, R>(
+#[derive(Debug, thiserror::Error)]
+pub enum ExtractionError {
+    #[error(transparent)]
+    VerificationError(#[from] crate::verification::VerificationError),
+
+    #[error("Invalid backup")]
+    InvalidBackup(#[source] anyhow::Error),
+
+    #[error("Unknown backup version: {0}")]
+    UnknownBackupVersion(u8),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<std::io::Error> for ExtractionError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Other(anyhow::Error::from(error))
+    }
+}
+
+pub(crate) fn extract<'a>(
+    VerificationOutput { backup_path, .. }: &VerificationOutput,
+    parsed_backup_name: &BackupFileNameComponents<'_>,
+    blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+    decryption_context: &DecryptionContext,
+    decryption_report: &mut DecryptionReport,
+    stats: &mut ExtractionStats,
+) -> Result<ExtractionOutput<'a>, ExtractionError> {
+    let backup_file = std::fs::File::open(backup_path)
+        .context("Could not open backup file")
+        .inspect_err(debug_panic)?;
+
+    let backup_reader = StatsReader::new(backup_file, &mut stats.raw_read_stats);
+
+    // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
+    //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
+    let compressed_archive_reader = decryption::reader(
+        backup_reader,
+        &decryption_context,
+        &parsed_backup_name,
+        &mut stats.decryption_stats,
+        decryption_report,
+    )?;
+
+    let archive_bytes =
+        zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
+
+    let archive_bytes = StatsReader::new(archive_bytes, &mut stats.decompression_stats);
+
+    extract_archive_(archive_bytes, blueprints, &mut stats.extracted_bytes_count)
+}
+
+pub(crate) fn extract_archive_<'a, R>(
     archive_reader: R,
     blueprints: &'a HashMap<u8, ArchiveBlueprint>,
-) -> Result<ExtractionSuccess<'a>, anyhow::Error>
+    extracted_bytes_count: &mut u64,
+) -> Result<ExtractionOutput<'a>, ExtractionError>
 where
     R: std::io::Read,
 {
     use std::ffi::OsString;
 
-    let mut extracted_bytes_count: u64 = 0;
-
     let mut archive = tar::Archive::new(archive_reader);
 
-    let mut entries = archive.entries()?;
+    let mut entries = archive.entries().map_err(anyhow::Error::from)?;
 
     #[inline]
     fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
@@ -206,12 +266,12 @@ where
     let metadata: BackupInternalMetadata = {
         let entry = match entries.next() {
             Some(Ok(entry)) => entry,
-            Some(Err(err)) => return Err(anyhow::Error::new(err).context("Backup invalid")),
-            None => return Err(anyhow!("Backup empty.")),
+            Some(Err(err)) => return Err(ExtractionError::InvalidBackup(anyhow::Error::from(err))),
+            None => return Err(ExtractionError::InvalidBackup(anyhow!("Backup empty."))),
         };
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes_count += entry_size;
+            *extracted_bytes_count += entry_size;
         }
 
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -221,24 +281,26 @@ where
         let path = entry.path()?;
 
         if path != Path::new(METADATA_FILE_NAME) {
-            return Err(anyhow!(
-                "Backup invalid: Metadata file not found (first entry: {path:?})."
-            ));
+            return Err(ExtractionError::InvalidBackup(anyhow!(
+                "Metadata file not found (first entry: {path:?})."
+            )));
         }
 
-        json::from_reader(entry)?
+        json::from_reader(entry).context("Invalid metadata file")?
     };
 
     // Find where to extract entries based on the backup version.
     // NOTE: This is done before computing-heavy tasks, to fail faster.
     let Some(blueprint) = blueprints.get(&metadata.version) else {
-        return Err(anyhow!("Unknown backup version: {}", metadata.version));
+        return Err(ExtractionError::UnknownBackupVersion(metadata.version));
     };
     // Soundness check.
     assert_eq!(blueprint.version, metadata.version);
 
     // Extract into temporary directory.
-    let tmp_dir = tempfile::TempDir::new()?;
+    let tmp_dir = tempfile::TempDir::new()
+        .context("Could not create temporary directory to extract the backup in")
+        .map_err(ExtractionError::Other)?;
     for entry in entries {
         let mut entry = entry?;
 
@@ -246,7 +308,7 @@ where
         entry.unpack_in(tmp_dir.path())?;
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            extracted_bytes_count += entry_size;
+            *extracted_bytes_count += entry_size;
         }
 
         #[cfg(debug_assertions)]
@@ -282,16 +344,11 @@ where
         }
 
         if !expected_paths.is_empty() {
-            return Err(anyhow!(
-                "Backup invalid: Missing data ({:?}).",
-                expected_paths
-            ));
+            return Err(ExtractionError::InvalidBackup(anyhow!(
+                "Missing data ({expected_paths:?})."
+            )));
         }
     }
 
-    Ok(ExtractionSuccess {
-        tmp_dir,
-        blueprint,
-        extracted_bytes_count,
-    })
+    Ok(ExtractionOutput { tmp_dir, blueprint })
 }

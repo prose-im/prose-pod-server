@@ -7,6 +7,7 @@
 
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+use crate::stores::{ReadObjectError, ReadSizedObjectError};
 use crate::{ProseBackupService, stores::ObjectStore};
 
 pub use self::VerificationContext as Context;
@@ -26,10 +27,44 @@ pub struct VerificationContext {
     pub pgp: Option<PgpVerificationContext>,
 }
 
-impl<S1, S2> ProseBackupService<S1, S2>
+pub struct VerificationOutput {
+    pub tmp_dir: tempfile::TempDir,
+    pub backup_path: std::path::PathBuf,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum VerificationError {
+    #[error("Backup not found.")]
+    BackupNotFound(#[source] anyhow::Error),
+
+    #[error(transparent)]
+    InvalidSignature(anyhow::Error),
+
+    #[error("Backup not signed (but signing is mandatory per configuration).")]
+    BackupNotSigned,
+
+    #[error(transparent)]
+    InvalidChecksum(anyhow::Error),
+
+    #[error(transparent)]
+    Other(anyhow::Error),
+}
+
+#[derive(Default)]
+pub struct VerificationReport {
+    pub is_signed: bool,
+    pub is_encrypted: bool,
+    pub can_be_restored: bool,
+    pub is_intact: bool,
+    pub signing_keys: Vec<PgpSignatureReport>,
+    pub signature: Option<Vec<u8>>,
+    pub is_encryption_valid: bool,
+}
+
+impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore>
 where
-    S1: ObjectStore,
-    S2: ObjectStore,
+    BackupStore: ObjectStore,
+    CheckStore: ObjectStore,
 {
     /// Reads backup into a temporary file, then runs integrity checks on it.
     ///
@@ -61,16 +96,18 @@ where
         &self,
         backup_name: &crate::BackupFileName,
         created_at: impl Into<std::time::SystemTime>,
-    ) -> Result<(tempfile::TempDir, std::path::PathBuf), anyhow::Error> {
+        report: &mut VerificationReport,
+    ) -> Result<VerificationOutput, VerificationError> {
         use anyhow::{Context as _, anyhow};
         use std::io::Read as _;
 
         // Open local file paths.
         // If permissions are not sufficient, avoids unnecessary network
         // calls (potentially billed).
-        let tmp = tempfile::TempDir::new()
-            .context("Failed creating a temporary directory to download the backup in")?;
-        let backup_path = tmp.path().join(&backup_name);
+        let tmp_dir = tempfile::TempDir::new()
+            .context("Failed creating a temporary directory to download the backup in")
+            .map_err(VerificationError::Other)?;
+        let backup_path = tmp_dir.path().join(&backup_name);
 
         let mut backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.
@@ -83,7 +120,8 @@ where
             // Prose data if the backup is unencrypted (default mode is `644`).
             .mode(0o600)
             .open(&backup_path)
-            .context("Failed opening a file path to download the backup to")?;
+            .context("Failed opening a file path to download the backup to")
+            .map_err(VerificationError::Other)?;
         if cfg!(debug_assertions) {
             let metadata = std::fs::metadata(&backup_path).unwrap();
             debug_assert_eq!(metadata.permissions().mode(), 0o100600);
@@ -92,68 +130,104 @@ where
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
         // unnecessary network calls (potentially billed) and computation.
-        let Some(mut backup_reader) = (self.backup_store)
-            .reader(&backup_name)
-            .await
-            .context("Failed opening backup reader")?
-        else {
-            return Err(anyhow!("Backup not found"));
-        };
+        let mut backup_reader: BackupStore::Reader =
+            match self.backup_store.reader(&backup_name).await {
+                Ok(reader) => reader,
+                Err(ReadObjectError::ObjectNotFound(err)) => {
+                    return Err(VerificationError::BackupNotFound(err));
+                }
+                Err(ReadObjectError::Other(err)) => {
+                    return Err(VerificationError::Other(
+                        err.context("Failed opening backup reader"),
+                    ));
+                }
+            };
 
         // Look for an OpenPGP signature.
-        if let Some(context) = self.verification_context.pgp.as_ref() {
+        'pgp_sig: {
+            let Some(context) = self.verification_context.pgp.as_ref() else {
+                tracing::debug!("OpenPGP signature not checked: Missing configuration.");
+                break 'pgp_sig;
+            };
+
             let check_name = backup_name.with_extension("sig");
 
             let reader = self
                 .check_store
                 .reader_if_not_too_large(&check_name, MAX_PGP_SIGNATURE_LENGTH)
-                .await
+                .await;
+
+            let mut reader: CheckStore::Reader = match reader {
+                Ok(reader) => reader,
+                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                    tracing::debug!(
+                        "OpenPGP signature file `{check_name}` too large. Skipping. (Source: {err:#})"
+                    );
+                    break 'pgp_sig;
+                }
+                Err(ReadSizedObjectError::ReadFailed(err @ ReadObjectError::ObjectNotFound(_))) => {
+                    tracing::debug!(
+                        "OpenPGP signature file `{check_name}` not found. Skipping. (Source: {err:#})"
+                    );
+                    break 'pgp_sig;
+                }
+                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                    return Err(VerificationError::Other(err.context(format!(
+                        "Failed opening OpenPGP signature reader for `{check_name}`"
+                    ))));
+                }
+            };
+            report.is_signed = true;
+
+            // Read signature.
+            let mut signature: Vec<u8> = Vec::new();
+            reader
+                .read_to_end(&mut signature)
+                .context("Failed reading OpenPGP signature")
+                .map_err(VerificationError::Other)?;
+            let signature: &Vec<u8> = &*report.signature.insert(signature);
+
+            // Create the verifier, applying the policy at the
+            // creation date of the backup.
+            // NOTE: Validates the signature, which avoids reading the
+            //   backup entirely if the signature itself is invalid.
+            let mut verifier =
+                pgp::PgpSignatureVerifier::new(context, &signature, created_at.into())
+                    .context(format!("Invalid OpenPGP signature: `{check_name}`"))
+                    .map_err(VerificationError::InvalidSignature)?;
+
+            // Read the backup to a temporary file.
+            std::io::copy(&mut backup_reader, &mut backup_file)
+                .context(format!("Failed reading backup: `{backup_name}`"))
+                .map_err(VerificationError::Other)?;
+
+            // Verify the signature.
+            verifier
+                .verify_reader(&mut backup_file)
                 .context(format!(
-                    "Failed opening integrity check reader for `{check_name}`"
-                ))?;
-
-            if let Some(mut reader) = reader {
-                // Read signature.
-                let mut bytes: Vec<u8> = Vec::new();
-                reader
-                    .read_to_end(&mut bytes)
-                    .context("Failed reading OpenPGP signature")?;
-
-                // Create the verifier, applying the policy at the
-                // creation date of the backup.
-                // NOTE: Validates the signature, which avoids reading the
-                //   backup entirely if the signature itself is invalid.
-                let mut verifier =
-                    pgp::PgpSignatureVerifier::new(context, &bytes, created_at.into())
-                        .context(format!("Invalid OpenPGP signature: `{check_name}`"))?;
-
-                // Read the backup to a temporary file.
-                std::io::copy(&mut backup_reader, &mut backup_file)?;
-
-                // Verify the signature.
-                verifier.verify_reader(&mut backup_file).context(format!(
                     "Invalid OpenPGP signature (verify): `{check_name}`"
-                ))?;
+                ))
+                .map_err(VerificationError::InvalidSignature)?;
+            report.is_intact = true;
 
-                tracing::debug!("OpenPGP signature verified.");
+            let pgp_report = verifier.report();
+            report.signing_keys = pgp_report.signing_keys;
 
-                // Don’t process any other integrity check.
-                return Ok((tmp, backup_path));
-            } else {
-                tracing::info!(
-                    "Found OpenPGP signature file `{check_name}` but cannot read it because of missing configuration. Skipping."
-                )
-            }
+            tracing::debug!("OpenPGP signature verified.");
+
+            // Don’t process any other integrity check.
+            return Ok(VerificationOutput {
+                tmp_dir,
+                backup_path,
+            });
         }
 
         // Ensure backup is signed if configuration enforces it.
         if self.signing_context.is_signing_mandatory {
-            return Err(anyhow!(
-                "Backup not signed (but signing is mandatory per configuration)."
-            ));
+            return Err(VerificationError::BackupNotSigned);
         }
 
-        {
+        'sha256_check: {
             use crate::writer_chain::tee::TeeWriter;
             use sha2::{Digest as _, Sha256};
 
@@ -162,55 +236,84 @@ where
             let reader = self
                 .check_store
                 .reader_if_not_too_large(&check_name, Sha256::output_size() as u64)
-                .await
-                .context(format!(
-                    "Failed opening integrity check reader for `{check_name}`"
-                ))?;
+                .await;
 
-            if let Some(mut reader) = reader {
-                // Read signature.
-                let mut expected_hash: Vec<u8> = Vec::new();
-                reader
-                    .read_to_end(&mut expected_hash)
-                    .context("Failed reading SHA-256 checksum")?;
-
-                // Create the verifier and abort early if the hash is invalid.
-                if expected_hash.len() != Sha256::output_size() {
-                    return Err(anyhow!("Invalid SHA-256 checksum: `{check_name}`"));
+            let mut reader: CheckStore::Reader = match reader {
+                Ok(reader) => reader,
+                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                    tracing::debug!(
+                        "SHA-256 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
+                    );
+                    break 'sha256_check;
                 }
-                let verifier = Sha256::new();
-
-                // Read the backup to a temporary file, but also feed it to the
-                // SHA-256 hasher in parallel.
-                let mut tee_writer = TeeWriter::new(backup_file, verifier);
-                std::io::copy(&mut backup_reader, &mut tee_writer)?;
-
-                let TeeWriter {
-                    // NOTE: It’s okay to drop the file as-is:
-                    //   the OS will flush before closing the file.
-                    w1: _backup_file,
-                    w2: verifier,
-                } = tee_writer;
-
-                // Verify the checksum.
-                if verifier.finalize().as_ref() == expected_hash {
-                    tracing::debug!("SHA-256 checksum verified.");
-
-                    // Don’t process any other integrity check.
-                    return Ok((tmp, backup_path));
-                } else {
-                    return Err(anyhow!("Invalid SHA-256 checksum (verify): `{check_name}`"));
+                Err(err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_))) => {
+                    tracing::debug!(
+                        "SHA-256 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
+                    );
+                    break 'sha256_check;
                 }
+                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                    return Err(VerificationError::Other(err.context(format!(
+                        "Failed opening SHA-256 checksum reader for `{check_name}`"
+                    ))));
+                }
+            };
+
+            // Read signature.
+            let mut expected_hash: Vec<u8> = Vec::new();
+            reader
+                .read_to_end(&mut expected_hash)
+                .context("Failed reading SHA-256 checksum")
+                .map_err(VerificationError::Other)?;
+
+            // Create the verifier and abort early if the hash is invalid.
+            if expected_hash.len() != Sha256::output_size() {
+                return Err(VerificationError::InvalidChecksum(anyhow!(
+                    "Invalid SHA-256 checksum: `{check_name}`."
+                )));
+            }
+            let verifier = Sha256::new();
+
+            // Read the backup to a temporary file, but also feed it to the
+            // SHA-256 hasher in parallel.
+            let mut tee_writer = TeeWriter::new(backup_file, verifier);
+            std::io::copy(&mut backup_reader, &mut tee_writer)
+                .context(format!("Failed reading backup: `{backup_name}`"))
+                .map_err(VerificationError::Other)?;
+
+            let TeeWriter {
+                // NOTE: It’s okay to drop the file as-is:
+                //   the OS will flush before closing the file.
+                w1: _backup_file,
+                w2: verifier,
+            } = tee_writer;
+
+            // Verify the checksum.
+            if verifier.finalize().as_ref() == expected_hash {
+                tracing::debug!("SHA-256 checksum verified.");
+                report.is_intact = true;
+
+                // Don’t process any other integrity check.
+                return Ok(VerificationOutput {
+                    tmp_dir,
+                    backup_path,
+                });
             } else {
-                return Err(anyhow!("Could not check the integrity of the backup."));
+                return Err(VerificationError::InvalidChecksum(anyhow!(
+                    "Invalid SHA-256 checksum (verify): `{check_name}`."
+                )));
             }
         }
+
+        Err(VerificationError::Other(anyhow!(
+            "Could not check the integrity of the backup."
+        )))
     }
 }
 
 pub use self::pgp::*;
 pub mod pgp {
-    use std::{io, time::SystemTime};
+    use std::{io, rc::Rc, time::SystemTime};
 
     use anyhow::anyhow;
     use openpgp::parse::{Parse as _, stream::*};
@@ -227,7 +330,7 @@ pub mod pgp {
             let verifier = DetachedVerifierBuilder::from_bytes(expected)?.with_policy(
                 context.policy.as_ref(),
                 Some(time),
-                context.helper.clone(),
+                context.new_helper(),
             )?;
 
             Ok(Self(verifier))
@@ -239,17 +342,44 @@ pub mod pgp {
         ) -> Result<(), anyhow::Error> {
             self.0.verify_reader(reader)
         }
+
+        pub fn report(self) -> PgpVerificationReport {
+            self.0.into_helper().report
+        }
     }
 
     #[derive(Debug)]
     pub struct PgpVerificationContext {
-        pub helper: PgpVerificationHelper,
+        pub certs: Rc<Vec<openpgp::Cert>>,
         pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
-    #[derive(Debug, Clone)]
+    impl PgpVerificationContext {
+        fn new_helper(&self) -> PgpVerificationHelper {
+            PgpVerificationHelper {
+                certs: Rc::clone(&self.certs),
+                report: PgpVerificationReport::default(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
     pub struct PgpVerificationHelper {
-        pub certs: Vec<openpgp::Cert>,
+        pub certs: Rc<Vec<openpgp::Cert>>,
+        pub report: PgpVerificationReport,
+    }
+
+    #[derive(Debug, Default)]
+    pub struct PgpVerificationReport {
+        pub signing_keys: Vec<PgpSignatureReport>,
+    }
+
+    #[derive(Debug)]
+    pub struct PgpSignatureReport {
+        pub cert_fingerprint: openpgp::Fingerprint,
+        pub subkey_fingerprint: Option<openpgp::Fingerprint>,
+        pub is_trusted: bool,
+        pub is_valid: bool,
     }
 
     impl VerificationHelper for PgpVerificationHelper {
@@ -257,20 +387,85 @@ pub mod pgp {
             &mut self,
             _ids: &[openpgp::KeyHandle],
         ) -> Result<Vec<openpgp::Cert>, anyhow::Error> {
-            Ok(self.certs.clone())
+            Ok(Vec::clone(&self.certs))
         }
 
         fn check(&mut self, structure: MessageStructure) -> Result<(), anyhow::Error> {
             for (i, layer) in structure.into_iter().enumerate() {
                 match layer {
                     MessageLayer::SignatureGroup { results } if i == 0 => {
-                        if !results.iter().any(Result::is_ok) {
+                        let mut errors = Vec::new();
+
+                        for result in results {
+                            match result {
+                                Ok(checksum) => {
+                                    self.report.signing_keys.push(PgpSignatureReport {
+                                        cert_fingerprint: checksum.ka.cert().fingerprint(),
+                                        subkey_fingerprint: Some(checksum.ka.key().fingerprint()),
+                                        is_trusted: true,
+                                        is_valid: true,
+                                    });
+                                }
+
+                                Err(err) => {
+                                    match &err {
+                                        VerificationError::UnboundKey { cert, .. } => {
+                                            self.report.signing_keys.push(PgpSignatureReport {
+                                                cert_fingerprint: cert.fingerprint(),
+                                                subkey_fingerprint: None,
+                                                is_trusted: true,
+                                                is_valid: false,
+                                            });
+                                        }
+
+                                        VerificationError::BadKey { ka, .. }
+                                        | VerificationError::BadSignature { ka, .. } => {
+                                            self.report.signing_keys.push(PgpSignatureReport {
+                                                cert_fingerprint: ka.cert().fingerprint(),
+                                                subkey_fingerprint: Some(ka.key().fingerprint()),
+                                                is_trusted: true,
+                                                is_valid: false,
+                                            });
+                                        }
+
+                                        err @ VerificationError::MissingKey { sig }
+                                        | err @ VerificationError::MalformedSignature {
+                                            sig, ..
+                                        } => {
+                                            let mut fingerprints =
+                                                sig.issuer_fingerprints().peekable();
+                                            if fingerprints.peek().is_none() {
+                                                tracing::warn!(
+                                                    "Signature has no issuer fingerprint. Issuers: {issuers:?}. Error: {err:?}",
+                                                    issuers = sig.get_issuers()
+                                                );
+                                            }
+                                            for fingerprint in fingerprints {
+                                                self.report.signing_keys.push(PgpSignatureReport {
+                                                    cert_fingerprint: fingerprint.clone(),
+                                                    subkey_fingerprint: None,
+                                                    is_trusted: false,
+                                                    is_valid: false,
+                                                });
+                                            }
+                                        }
+
+                                        err => {
+                                            tracing::warn!("{err:?}");
+                                        }
+                                    };
+                                    errors.push(err)
+                                }
+                            }
+                        }
+
+                        if !errors.is_empty() {
                             if cfg!(debug_assertions) {
                                 tracing::debug!(
                                     "SignatureGroup errors: {:#?}",
-                                    results
+                                    errors
                                         .into_iter()
-                                        .map(|res| res.err().unwrap().to_string())
+                                        .map(|err| err.to_string())
                                         .collect::<Vec<_>>()
                                 );
                             }

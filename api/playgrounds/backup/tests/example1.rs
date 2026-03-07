@@ -15,8 +15,8 @@ use std::{
 use anyhow::anyhow;
 use openpgp::{policy::StandardPolicy, types::ReasonForRevocation};
 use prose_backup::{
-    ArchiveBlueprint, BackupService, CreateBackupCommand, CreateBackupOutput, config::*,
-    decryption::PgpDecryptionContext, openpgp,
+    ArchiveBlueprint, BackupService, CreateBackupCommand, CreateBackupOutput, ExtractionSuccess,
+    config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
 };
 use toml::toml;
 
@@ -171,21 +171,35 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     tracing::info!("Backups: {backups:#?}");
 
     print!("\n");
+    let details = service.get_details(&backup_id, &blueprints).await?;
+    tracing::info!("Backup details: {details:#?}");
+
+    print!("\n");
     let download_url = service
         .get_download_url(&backup_id, Duration::from_secs(3))
         .await?;
     tracing::info!("Download URL: <{download_url}>.");
 
     print!("\n");
-    let mut extract_result = service.extract_backup(&backup_id, &blueprints).await?;
+    let ExtractionSuccess {
+        mut extraction_output,
+        extraction_stats,
+        ..
+    } = service.extract_backup(&backup_id, &blueprints).await?;
+    print_stats(
+        &extraction_stats.raw_read_stats,
+        &extraction_stats.decryption_stats,
+        &extraction_stats.decompression_stats,
+        extraction_stats.extracted_bytes_count,
+    );
 
     print!("\n");
     let restore_blueprint = ArchiveBlueprint::from_paths(
         2,
         with_fs_root(".out/restore", &pod_api_scenario_base_paths),
     );
-    extract_result.blueprint = &restore_blueprint;
-    service.restore_backup(extract_result).await?;
+    extraction_output.blueprint = &restore_blueprint;
+    service.restore_backup(extraction_output).await?;
 
     if std::env::var("NO_DELETE").is_err() {
         fs::remove_file(fs_prefix_backups.join(backup_id))?;

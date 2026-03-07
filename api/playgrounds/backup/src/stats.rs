@@ -14,13 +14,15 @@ use std::{
 
 // MARK: Model
 
+#[derive(Debug)]
 pub struct ReadStats {
-    bytes_read: u64,
-    read_calls: u64,
-    duration: std::time::Duration,
+    pub bytes_read: u64,
+    pub read_calls: u64,
+    pub duration: std::time::Duration,
 }
 
 impl ReadStats {
+    #[inline(always)]
     pub fn new() -> Self {
         Self {
             bytes_read: 0,
@@ -28,15 +30,12 @@ impl ReadStats {
             duration: std::time::Duration::ZERO,
         }
     }
+}
 
-    #[allow(unused)]
-    pub fn bytes_read(&self) -> u64 {
-        self.bytes_read
-    }
-
-    #[allow(unused)]
-    pub fn read_calls(&self) -> u64 {
-        self.read_calls
+impl Default for ReadStats {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -75,7 +74,7 @@ impl<'r, R: Read> Read for StatsReader<'r, R> {
 
 // MARK: Print
 
-pub(crate) fn print_stats(
+pub fn print_stats(
     raw_read_stats: &ReadStats,
     decryption_stats: &ReadStats,
     decompression_stats: &ReadStats,
@@ -89,21 +88,21 @@ pub(crate) fn print_stats(
 
     fn size_ratio(read: u64, reference: &ReadStats) -> f64 {
         let read: u32 = read.min(u64::from(u32::MAX)) as u32;
-        let reference: u32 = reference.bytes_read().min(u64::from(u32::MAX)) as u32;
+        let reference: u32 = reference.bytes_read.min(u64::from(u32::MAX)) as u32;
         f64::from(read) / f64::from(reference)
     }
     tracing::info!("Size ratios:");
     tracing::info!(
         "  Raw read:      {:.2}x",
-        size_ratio(raw_read_stats.bytes_read(), &raw_read_stats)
+        size_ratio(raw_read_stats.bytes_read, &raw_read_stats)
     );
     tracing::info!(
         "  Decryption:    {:.2}x",
-        size_ratio(decryption_stats.bytes_read(), &raw_read_stats)
+        size_ratio(decryption_stats.bytes_read, &raw_read_stats)
     );
     tracing::info!(
         "  Decompression: {:.2}x",
-        size_ratio(decompression_stats.bytes_read(), &raw_read_stats)
+        size_ratio(decompression_stats.bytes_read, &raw_read_stats)
     );
     tracing::info!(
         "  Unarchiving:   {:.2}x",

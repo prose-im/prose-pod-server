@@ -22,7 +22,6 @@ Low priority (unordered):
 High priority (ordered):
 
 1. Add S3 end-to-end integration tests.
-1. Nothing returns `BackupMetadataFullDto`s.
 
 Medium priority (unordered):
 
@@ -39,6 +38,7 @@ Medium priority (unordered):
     - If backup size > threshold, remove backup after download. It might cause
       a second download soon after, but it’s what the operator asked for.
 - Only allow one restore at a time.
+- Type errors more granularly.
 
 Low priority (unordered):
 

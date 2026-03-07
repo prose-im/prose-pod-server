@@ -32,13 +32,15 @@ mod hashing;
 mod pgp;
 mod restoration;
 pub mod signing;
-mod stats;
+pub mod stats;
 pub mod stores;
 mod util;
 pub mod verification;
 mod writer_chain;
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use anyhow::Context as _;
 pub use openpgp;
@@ -49,7 +51,7 @@ use crate::stores::{ObjectStore, S3Store};
 
 pub use self::archiving::ArchiveBlueprint;
 pub use self::config::BackupConfig;
-pub use self::restoration::RestorationSuccess;
+pub use self::restore::*;
 
 // MARK: Service
 
@@ -108,7 +110,7 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
     {
         use decryption::PgpDecryptionContext;
         use signing::PgpSigningContext;
-        use verification::{PgpVerificationContext, PgpVerificationHelper};
+        use verification::PgpVerificationContext;
 
         let encryption_context = match config.encryption.mode {
             config::EncryptionMode::Off => None,
@@ -153,9 +155,7 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
             Some(pgp) => {
                 let pgp_cert = get_pgp_cert(&pgp.tsk)?;
                 Some(PgpVerificationContext {
-                    helper: PgpVerificationHelper {
-                        certs: vec![pgp_cert],
-                    },
+                    certs: Rc::new(vec![pgp_cert]),
                     policy: Box::new(pgp_policy()),
                 })
             }
@@ -196,8 +196,10 @@ pub mod dtos {
     //!
     //! [Data Transfer Objects]: https://en.wikipedia.org/wiki/Data_transfer_object "“Data transfer object” on Wikipedia"
 
+    use crate::verification::PgpSignatureReport;
+
     #[derive(Debug)]
-    pub struct BackupDto {
+    pub struct BackupDto<Metadata = BackupMetadataPartialDto> {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
@@ -209,7 +211,7 @@ pub mod dtos {
         pub description: String,
 
         /// Metadata associated with the backup.
-        pub metadata: BackupMetadataPartialDto,
+        pub metadata: Metadata,
     }
 
     #[derive(Debug)]
@@ -269,24 +271,13 @@ pub mod dtos {
         pub is_signed: bool,
 
         /// Fingerprint of the key used to sign the backup, if applicable.
-        pub signing_key: Option<openpgp::Fingerprint>,
-
-        /// Whether or not the backup signature was issued by a trusted entity.
-        ///
-        /// This doesn’t mean the signature is valid, which is indicated by
-        /// [`is_signature_valid`].
-        ///
-        /// [`is_signature_valid`]: Self::is_signature_valid
-        pub is_signature_trusted: Option<bool>,
-
-        /// Whether or not the backup was signed by a trusted issuer.
-        pub is_signature_valid: Option<bool>,
+        pub signing_keys: Vec<SigningKeyReportDto>,
 
         /// Whether or not the backup is encrypted.
         pub is_encrypted: bool,
 
         /// Fingerprint of the key used to encrypt the backup, if applicable.
-        pub encryption_key: Option<openpgp::Fingerprint>,
+        pub encryption_key: Option<String>,
 
         /// Whether or not the backup can be successfully decrypted
         /// (i.e. encrypted with an known private key).
@@ -299,6 +290,41 @@ pub mod dtos {
         /// differ from [`BackupMetadataPartialDto::can_be_restored`] as the
         /// latter doesn’t know if the backup is intact or using trusted keys.
         pub can_be_restored: bool,
+    }
+
+    /// Information about a key used to sign
+    #[derive(Debug)]
+    pub struct SigningKeyReportDto {
+        /// Unique fingerprint of the signing key.
+        ///
+        /// Note that for OpenPGP signatures, this is the certificate’s primary
+        /// key fingerprint.
+        pub fingerprint: String,
+
+        /// Whether or not the backup signature was issued by a trusted entity.
+        ///
+        /// This doesn’t mean the signature is valid, which is indicated by
+        /// [`is_valid`].
+        ///
+        /// [`is_valid`]: Self::is_valid
+        pub is_trusted: bool,
+
+        /// Whether or not the backup signature is valid.
+        ///
+        /// Note that this implies [`is_trusted`].
+        ///
+        /// [`is_trusted`]: Self::is_trusted
+        pub is_valid: bool,
+    }
+
+    impl From<PgpSignatureReport> for SigningKeyReportDto {
+        fn from(value: PgpSignatureReport) -> Self {
+            Self {
+                fingerprint: value.cert_fingerprint.to_spaced_hex(),
+                is_trusted: value.is_trusted,
+                is_valid: value.is_valid,
+            }
+        }
     }
 }
 
@@ -626,6 +652,89 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         Ok(dtos)
     }
 
+    pub async fn get_details<'a>(
+        &self,
+        backup_file_name: &BackupFileName,
+        blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+    ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
+        use crate::archiving::{ExtractionStats, extract};
+        use crate::decryption::DecryptionReport;
+        use crate::verification::VerificationReport;
+
+        let parsed_backup_name = BackupFileNameComponents::parse(&backup_file_name)?;
+
+        let mut verification_report = VerificationReport::default();
+        let verification_result = self
+            .download_backup_and_check_integrity(
+                &backup_file_name,
+                parsed_backup_name.created_at,
+                &mut verification_report,
+            )
+            .await;
+
+        let mut decryption_report = DecryptionReport::default();
+        let mut extraction_stats = ExtractionStats::default();
+        let mut is_encryption_valid: Option<bool> = None;
+        let can_be_restored: bool;
+        match verification_result {
+            Ok(verification_output) => {
+                let extraction_result = extract(
+                    &verification_output,
+                    &parsed_backup_name,
+                    blueprints,
+                    &self.decryption_context,
+                    &mut decryption_report,
+                    &mut extraction_stats,
+                );
+                match extraction_result {
+                    Ok(_) => {
+                        is_encryption_valid = Some(true);
+                        can_be_restored = true;
+                    }
+                    Err(err) => {
+                        tracing::debug!("{err:#}");
+                        is_encryption_valid = Some(false);
+                        can_be_restored = false;
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::debug!("{err:#}");
+                can_be_restored = false;
+            }
+        }
+
+        let metadata = self.backup_store.metadata(&backup_file_name).await?;
+
+        let is_signed = verification_report.is_signed;
+        let is_intact = verification_report.is_intact;
+        let is_encrypted: bool = backup_file_name.ends_with(".pgp");
+
+        let dto = BackupDto {
+            metadata: BackupMetadataFullDto {
+                created_at: parsed_backup_name.created_at,
+                size_bytes: metadata.size_bytes,
+                is_signed,
+                is_encrypted,
+                can_be_restored,
+                is_intact,
+                signing_keys: verification_report
+                    .signing_keys
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                encryption_key: decryption_report
+                    .used_cert_and_subkey
+                    .map(|(cert_fingerprint, _)| cert_fingerprint.to_spaced_hex()),
+                is_encryption_valid,
+            },
+            description: parsed_backup_name.description.into_owned(),
+            id: backup_file_name.to_string(),
+        };
+
+        Ok(dto)
+    }
+
     /// Get a short-lived URL to download a backup.
     pub async fn get_download_url(
         &self,
@@ -644,80 +753,76 @@ impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
 mod restore {
     use std::collections::HashMap;
 
-    use anyhow::Context as _;
-
     use crate::{
         BackupFileName, BackupFileNameComponents, ProseBackupService,
-        archiving::{ArchiveBlueprint, ExtractionSuccess, extract_archive},
-        decryption,
-        restoration::{RestorationSuccess, restore},
-        stats::{ReadStats, StatsReader, print_stats},
+        archiving::{
+            ArchiveBlueprint, ExtractionError, ExtractionOutput, ExtractionStats, extract,
+        },
+        decryption::DecryptionReport,
+        restoration::{RestorationError, RestorationOutput, restore},
         stores::ObjectStore,
-        util::debug_panic,
+        verification::VerificationReport,
     };
+
+    pub struct ExtractionSuccess<'a> {
+        pub verification_report: VerificationReport,
+        pub decryption_report: DecryptionReport,
+        pub extraction_output: ExtractionOutput<'a>,
+        pub extraction_stats: ExtractionStats,
+    }
+
+    #[derive(Debug, serde::Serialize)]
+    pub struct RestorationSuccess;
 
     impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
         pub async fn extract_backup<'a>(
             &self,
             backup_name: &BackupFileName,
             blueprints: &'a HashMap<u8, ArchiveBlueprint>,
-        ) -> Result<ExtractionSuccess<'a>, anyhow::Error> {
+        ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
             // Parse backup name first.
             // Avoids unnecessary I/O if malformed.
             let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
                 BackupFileNameComponents::parse(&backup_name)?;
 
-            let (tmp, backup_path) = self
-                .download_backup_and_check_integrity(&backup_name, created_at.clone())
+            let mut verification_report = VerificationReport::default();
+            let verification_output = self
+                .download_backup_and_check_integrity(
+                    &backup_name,
+                    created_at.clone(),
+                    &mut verification_report,
+                )
                 .await?;
 
-            let backup_file = std::fs::File::open(backup_path)
-                .context("Could not open backup file")
-                .inspect_err(debug_panic)?;
-
-            let mut raw_read_stats = ReadStats::new();
-            let backup_reader = StatsReader::new(backup_file, &mut raw_read_stats);
-
-            // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
-            //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
-            let mut decryption_stats = ReadStats::new();
-            let compressed_archive_reader = decryption::reader(
-                backup_reader,
-                &self.decryption_context,
+            let mut decryption_report = DecryptionReport::default();
+            let mut extraction_stats = ExtractionStats::default();
+            let extraction_output = extract(
+                &verification_output,
                 &parsed_backup_name,
-                &mut decryption_stats,
+                &blueprints,
+                &self.decryption_context,
+                &mut decryption_report,
+                &mut extraction_stats,
             )?;
 
-            let archive_bytes =
-                zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
+            // TODO: Cache?
+            drop(verification_output.tmp_dir);
 
-            let mut decompression_stats = ReadStats::new();
-            let archive_bytes = StatsReader::new(archive_bytes, &mut decompression_stats);
-
-            let extraction_result =
-                extract_archive(archive_bytes, blueprints).context("Backup extraction failed")?;
-            drop(tmp);
-
-            print!("\n");
-            print_stats(
-                &raw_read_stats,
-                &decryption_stats,
-                &decompression_stats,
-                extraction_result.extracted_bytes_count,
-            );
-
-            Ok(extraction_result)
+            Ok(ExtractionSuccess {
+                verification_report,
+                decryption_report,
+                extraction_output,
+                extraction_stats,
+            })
         }
 
         pub async fn restore_backup<'a>(
             &self,
-            ExtractionSuccess {
-                tmp_dir, blueprint, ..
-            }: ExtractionSuccess<'a>,
-        ) -> Result<RestorationSuccess, anyhow::Error> {
-            let restore_result = restore(tmp_dir, blueprint)?;
+            extraction_output: ExtractionOutput<'a>,
+        ) -> Result<RestorationSuccess, RestorationError> {
+            let RestorationOutput = restore(extraction_output)?;
 
-            Ok(restore_result)
+            Ok(RestorationSuccess)
         }
     }
 }

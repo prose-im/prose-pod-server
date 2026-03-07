@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 
 use crate::util::saturating_i64_to_u64;
 
-use super::{ObjectMetadata, ObjectStore};
+use super::{ObjectMetadata, ObjectStore, ReadObjectError};
 
 /// 8MiB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
@@ -35,26 +35,18 @@ impl ObjectStore for S3Store {
         })
     }
 
-    async fn reader(&self, key: &str) -> Result<Option<Self::Reader>, anyhow::Error> {
-        match self.exists(key).await {
-            Ok(true) => Ok(Some(S3Reader::new(self.client.clone(), &self.bucket, key))),
-            Ok(false) => Ok(None),
+    async fn reader(&self, key: &str) -> Result<Self::Reader, ReadObjectError> {
+        match self.exists_(key).await {
+            Ok(_) => Ok(S3Reader::new(self.client.clone(), &self.bucket, key)),
             Err(err) => Err(err),
         }
     }
 
     async fn exists(&self, key: &str) -> Result<bool, anyhow::Error> {
-        match self
-            .client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-        {
+        match self.exists_(key).await {
             Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(e)) if e.err().is_not_found() => Ok(false),
-            Err(e) => Err(e.into()),
+            Err(ReadObjectError::ObjectNotFound(_)) => Ok(false),
+            Err(ReadObjectError::Other(e)) => Err(e),
         }
     }
 
@@ -128,7 +120,7 @@ impl ObjectStore for S3Store {
         Ok(results)
     }
 
-    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, anyhow::Error> {
+    async fn metadata(&self, key: &str) -> Result<ObjectMetadata, ReadObjectError> {
         let meta = self
             .client
             .head_object()
@@ -136,7 +128,8 @@ impl ObjectStore for S3Store {
             .key(key)
             .send()
             .await
-            .context("Failed getting S3 object metadata")?;
+            .context("Failed getting S3 object metadata")
+            .map_err(ReadObjectError::ObjectNotFound)?;
 
         let size: u64 = saturating_i64_to_u64(
             meta.content_length()
@@ -163,6 +156,28 @@ impl ObjectStore for S3Store {
             .await?;
 
         Ok(presigned.uri().to_owned())
+    }
+}
+
+impl S3Store {
+    async fn exists_(
+        &self,
+        key: &str,
+    ) -> Result<s3::operation::head_object::HeadObjectOutput, ReadObjectError> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(output) => Ok(output),
+            Err(SdkError::ServiceError(e)) if e.err().is_not_found() => Err(
+                ReadObjectError::ObjectNotFound(anyhow::Error::from(SdkError::ServiceError(e))),
+            ),
+            Err(err) => Err(ReadObjectError::ObjectNotFound(anyhow::Error::from(err))),
+        }
     }
 }
 

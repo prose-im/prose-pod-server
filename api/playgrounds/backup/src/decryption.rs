@@ -13,21 +13,27 @@ pub struct DecryptionContext {
     pub pgp: Option<PgpDecryptionContext>,
 }
 
-pub(crate) fn reader<'a, R>(
+#[derive(Default)]
+pub struct DecryptionReport {
+    pub used_cert_and_subkey: Option<(openpgp::Fingerprint, openpgp::Fingerprint)>,
+}
+
+pub(crate) fn reader<'ctx: 'report, 'report, R>(
     backup_reader: R,
-    context: &'a DecryptionContext,
+    context: &'ctx DecryptionContext,
     parsed_backup_name @ crate::BackupFileNameComponents {
         extensions,
         ..
     }: &crate::BackupFileNameComponents,
     stats: &mut crate::stats::ReadStats,
+    report: &'report mut DecryptionReport,
 ) -> Result<impl std::io::Read, anyhow::Error>
 where
-    R: std::io::Read + Send + Sync + 'a,
+    R: std::io::Read + Send + Sync + 'ctx + 'report,
 {
     if extensions.ends_with(".pgp") {
         if let Some(context) = context.pgp.as_ref() {
-            let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_name)?;
+            let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_name, report)?;
 
             let decryptor = crate::stats::StatsReader::new(decryptor, stats);
 
@@ -56,6 +62,8 @@ pub mod pgp {
 
     use crate::pgp::lookup_secret_key;
 
+    use super::DecryptionReport;
+
     #[derive(Debug)]
     pub struct PgpDecryptionContext {
         pub tsks: Vec<openpgp::Cert>,
@@ -66,20 +74,23 @@ pub mod pgp {
         tsks: &'a [openpgp::Cert],
         policy: &'a dyn openpgp::policy::Policy,
         time: std::time::SystemTime,
+        report: &'a mut DecryptionReport,
     }
 
-    pub(crate) fn decryptor<'a, R>(
+    pub(crate) fn decryptor<'ctx: 'report, 'report, R>(
         backup_reader: R,
-        context: &'a PgpDecryptionContext,
+        context: &'ctx PgpDecryptionContext,
         crate::BackupFileNameComponents { created_at, .. }: &crate::BackupFileNameComponents,
+        report: &'report mut DecryptionReport,
     ) -> Result<impl std::io::Read, anyhow::Error>
     where
-        R: std::io::Read + Send + Sync + 'a,
+        R: std::io::Read + Send + Sync + 'ctx,
     {
         let helper = PgpDecryptionHelper {
             tsks: context.tsks.as_slice(),
             policy: context.policy.as_ref(),
             time: (*created_at).into(),
+            report,
         };
         let decryptor = DecryptorBuilder::from_reader(backup_reader)
             .context("Failed creating decryptor builder")?
@@ -121,6 +132,8 @@ pub mod pgp {
                             .unwrap_or(false)
                         {
                             tracing::trace!("Found encryption key: `{key}`.");
+                            self.report.used_cert_and_subkey =
+                                Some((cert.fingerprint(), key.fingerprint()));
                             return Ok(Some(cert));
                         }
                     }

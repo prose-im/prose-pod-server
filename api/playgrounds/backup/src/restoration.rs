@@ -7,15 +7,16 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use crate::archiving::ArchiveBlueprint;
+use crate::archiving::ExtractionOutput;
 
 #[derive(Debug)]
-pub struct RestorationSuccess;
+pub struct RestorationOutput;
 
-pub(crate) fn restore(
-    tmp_dir: TempDir,
-    blueprint: &ArchiveBlueprint,
-) -> Result<RestorationSuccess, RestorationError> {
+pub(crate) fn restore<'a>(
+    ExtractionOutput {
+        tmp_dir, blueprint, ..
+    }: ExtractionOutput<'a>,
+) -> Result<RestorationOutput, RestorationError> {
     use crate::util::{PathGuard, safe_replace};
 
     let mut processed: Vec<(PathBuf, PathBuf, Option<PathGuard>)> = Vec::new();
@@ -38,7 +39,7 @@ pub(crate) fn restore(
         };
     }
 
-    Ok(RestorationSuccess)
+    Ok(RestorationOutput)
 }
 
 /// Note that this is best-effort, meaning we’re already doing error recovery
