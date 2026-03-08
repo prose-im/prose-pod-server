@@ -47,10 +47,11 @@ name = "prose_backup"
 
 [features]
 default = ["destination_s3"]
-test = ["destination_fs"]
+test = []
+destination_all = ["destination_fs", "destination_s3"]
 destination_fs = []
 destination_s3 = ["dep:s3"]
 
 [[test]]
 name = "example1"
-required-features = ["test"]
+required-features = ["test", "destination_fs"]

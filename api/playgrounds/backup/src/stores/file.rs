@@ -15,29 +15,13 @@ use super::{ObjectMetadata, ObjectStore, ReadObjectError};
 
 /// Read and write backups on disk.
 pub struct FsStore {
-    directory: PathBuf,
-    overwrite: bool,
-    mode: u32,
-}
-
-impl FsStore {
-    pub fn overwrite(mut self, overwrite: bool) -> Self {
-        self.overwrite = overwrite;
-        self
-    }
-
-    pub fn mode(mut self, mode: u32) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    pub fn directory(mut self, directory: impl AsRef<Path>) -> Self {
-        self.directory = directory.as_ref().to_path_buf();
-        self
-    }
+    pub directory: PathBuf,
+    pub overwrite: bool,
+    pub mode: u32,
 }
 
 impl Default for FsStore {
+    #[inline(always)]
     fn default() -> Self {
         Self {
             directory: PathBuf::new(),
@@ -178,5 +162,45 @@ impl ObjectStore for FsStore {
             Some(str) => Ok(format!("file://{str}")),
             None => Err(anyhow::Error::msg("File path is non-Unicode.")),
         }
+    }
+}
+
+// MARK: Builder
+
+pub struct FsStoreBuilder {
+    res: FsStore,
+}
+
+impl FsStore {
+    #[inline(always)]
+    pub fn builder() -> FsStoreBuilder {
+        FsStoreBuilder {
+            res: Self::default(),
+        }
+    }
+}
+
+impl FsStoreBuilder {
+    #[inline(always)]
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.res.overwrite = overwrite;
+        self
+    }
+
+    #[inline(always)]
+    pub fn mode(mut self, mode: u32) -> Self {
+        self.res.mode = mode;
+        self
+    }
+
+    #[inline(always)]
+    pub fn directory(mut self, directory: impl AsRef<Path>) -> Self {
+        self.res.directory = directory.as_ref().to_path_buf();
+        self
+    }
+
+    #[inline(always)]
+    pub fn build(self) -> FsStore {
+        self.res
     }
 }

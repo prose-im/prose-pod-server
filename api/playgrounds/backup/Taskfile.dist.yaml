@@ -9,7 +9,8 @@ tasks:
 
   test:
     desc: Run all tests.
-    cmd: cargo test -F test
+    cmd: cargo test -F test -F destination_all {{ .CLI_ARGS }}
+    dotenv: [test.env]
 
   dev:doc:
     desc: Rebuild Cargo docs on source file changes.

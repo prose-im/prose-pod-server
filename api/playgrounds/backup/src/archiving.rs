@@ -34,6 +34,20 @@ impl ArchiveBlueprint {
     pub fn from_paths(version: u8, paths: Vec<(String, PathBuf)>) -> Self {
         Self { version, paths }
     }
+
+    pub fn from_iter<Dst, Src, I>(version: u8, iter: I) -> Self
+    where
+        I: Iterator<Item = (Dst, Src)>,
+        Dst: ToString,
+        Src: AsRef<std::path::Path>,
+    {
+        Self {
+            version,
+            paths: iter
+                .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

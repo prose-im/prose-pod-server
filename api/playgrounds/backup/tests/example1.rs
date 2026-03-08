@@ -3,6 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+#[allow(dead_code, unused_imports)]
 mod common;
 
 use std::{
@@ -13,25 +14,22 @@ use std::{
 };
 
 use anyhow::anyhow;
-use openpgp::{policy::StandardPolicy, types::ReasonForRevocation};
+use openpgp::types::ReasonForRevocation;
 use prose_backup::{
-    ArchiveBlueprint, BackupService, CreateBackupCommand, CreateBackupOutput, ExtractionSuccess,
-    config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
+    BackupService, CreateBackupCommand, CreateBackupOutput, ExtractionSuccess, config::*,
+    decryption::PgpDecryptionContext, openpgp, stats::print_stats,
 };
 use toml::toml;
 
-use crate::common::revoke_subkey_simple;
+use crate::common::*;
 
 #[tokio::test]
 async fn test_example1() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt()
-        .compact()
-        .without_time()
-        .with_target(false)
-        .with_max_level(tracing::Level::TRACE)
-        .init();
+    init();
 
     let now = SystemTime::now();
+    let test_id = unique_hex();
+    tracing::info!("Test id: {test_id}");
 
     let backup_config = BackupConfig::try_from(toml! {
         [encryption]
@@ -44,77 +42,25 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     })?;
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    fn with_fs_root(
-        root: impl AsRef<Path>,
-        paths: impl AsRef<[(String, PathBuf)]>,
-    ) -> Vec<(String, PathBuf)> {
-        paths
-            .as_ref()
-            .iter()
-            .map(|(src, dst)| (src.clone(), root.as_ref().join(dst)))
-            .collect()
-    }
+    let blueprints = test_blueprints();
 
-    let pod_api_scenario_base_paths = [
-        ("prosody-data".to_owned(), PathBuf::from("prosody/data")),
-        ("prosody-config".to_owned(), PathBuf::from("prosody/config")),
-    ];
-    let blueprints = HashMap::from_iter(
-        [
-            ArchiveBlueprint::from_paths(
-                1,
-                vec![
-                    (
-                        "prosody-data".to_owned(),
-                        PathBuf::from("./data/var/lib/prosody"),
-                    ),
-                    (
-                        "prosody-config".to_owned(),
-                        PathBuf::from("./data/etc/prosody"),
-                    ),
-                ],
-            ),
-            ArchiveBlueprint::from_paths(
-                2,
-                with_fs_root(
-                    "/Users/prose/prose-pod-api/local-run/scenarios/demo",
-                    &pod_api_scenario_base_paths,
-                ),
-            ),
-        ]
-        .into_iter()
-        .map(|blueprint| (blueprint.version, blueprint)),
-    );
-    let current_blueprint = blueprints.get(&2).unwrap();
+    let prose_pod_api_dir = std::env::var("PROSE_POD_API_DIR")
+        .expect("Environment variable `PROSE_POD_API_DIR` should be defined");
+    let current_blueprint = blueprints
+        .get(&BLUEPRINT_POD_API_DEMO)
+        .unwrap()
+        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
-    let certs: HashMap<PathBuf, openpgp::Cert> = [
-        (
-            Path::new("encrypt.pgp").to_path_buf(),
-            generate_test_cert(now - Duration::from_hours(23))?,
-        ),
-        (
-            Path::new("sign.pgp").to_path_buf(),
-            generate_test_cert(now - Duration::from_hours(23))?,
-        ),
-    ]
-    .into_iter()
-    .collect();
+    let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
+        ("encrypt.pgp", now - Duration::from_hours(23)),
+        ("sign.pgp", now - Duration::from_hours(23)),
+    ])?;
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
-    let fs_prefix = Path::new(".out");
-
-    let fs_prefix_backups = fs_prefix.join("backups");
-    fs::create_dir_all(&fs_prefix_backups)?;
-    let backup_store = prose_backup::stores::Fs::default()
-        .overwrite(true)
-        .directory(&fs_prefix_backups);
-
-    let fs_prefix_integrity_checks = fs_prefix.join("checks");
-    fs::create_dir_all(&fs_prefix_integrity_checks)?;
-    let check_store = prose_backup::stores::Fs::default()
-        .overwrite(true)
-        .directory(&fs_prefix_integrity_checks);
+    let out_dir = Path::new(".out").join(test_id);
+    let backup_store = fs_store(out_dir.join("backups"))?;
+    let check_store = fs_store(out_dir.join("checks"))?;
 
     let encryption_config = backup_config.encryption.clone();
 
@@ -143,10 +89,8 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         };
         service.create_backup(command, &current_blueprint).await?
     };
-    let integrity_check_file_name = digest_ids
-        .first()
-        .expect("At least one digest should have been created");
     tracing::info!("Created backup '{backup_id}'.");
+    tracing::info!("Integrity checks: {digest_ids:#?}");
 
     if encryption_config.mode == EncryptionMode::Pgp {
         if let Some(pgp) = encryption_config.pgp.as_ref() {
@@ -194,60 +138,16 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     );
 
     print!("\n");
-    let restore_blueprint = ArchiveBlueprint::from_paths(
-        2,
-        with_fs_root(".out/restore", &pod_api_scenario_base_paths),
-    );
+    let restore_blueprint = blueprints
+        .get(&BLUEPRINT_POD_API_DEMO)
+        .unwrap()
+        .src_relative_to(out_dir.join("restore"));
     extraction_output.blueprint = &restore_blueprint;
     service.restore_backup(extraction_output).await?;
 
-    if std::env::var("NO_DELETE").is_err() {
-        fs::remove_file(fs_prefix_backups.join(backup_id))?;
-        fs::remove_file(fs_prefix_integrity_checks.join(integrity_check_file_name))?;
+    if std::env::var("e").is_err() {
+        fs::remove_dir_all(out_dir)?;
     }
 
     Ok(())
-}
-
-// MARK: - Helpers
-
-fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::Error> {
-    use openpgp::cert::CertBuilder;
-    use std::time::Duration;
-
-    let validity = Duration::from_hours(24);
-
-    // Build a TSK with user ID + primary key + subkey
-    let (mut tsk, _signature) = CertBuilder::new()
-        .add_userid("Test User <test@example.org>")
-        .set_creation_time(created_at)
-        .set_validity_period(validity)
-        .add_signing_subkey()
-        .add_storage_encryption_subkey()
-        .generate()?;
-    tracing::debug!(
-        "Created TSK `{tsk}` valid from {} to {}.",
-        time::UtcDateTime::from(created_at),
-        time::UtcDateTime::from(created_at + validity)
-    );
-
-    let revoke_encryption_key = false;
-    if revoke_encryption_key {
-        tsk = revoke_subkey_simple(
-            tsk,
-            |keys| keys.for_storage_encryption(),
-            created_at + Duration::from_hours(1),
-            ReasonForRevocation::KeySuperseded,
-        )?;
-
-        assert_eq!(
-            tsk.keys()
-                .with_policy(&StandardPolicy::new(), None)
-                .revoked(true)
-                .count(),
-            1
-        );
-    }
-
-    Ok(tsk)
 }
