@@ -6,12 +6,10 @@
 pub mod before_all;
 pub mod blueprints;
 pub mod pgp;
-pub mod stores;
 
 pub use self::before_all::*;
 pub use self::blueprints::*;
 pub use self::pgp::*;
-pub use self::stores::*;
 
 pub fn unique_hex() -> String {
     let ns = std::time::SystemTime::now()
@@ -21,3 +19,14 @@ pub fn unique_hex() -> String {
 
     format!("{:x}", ns)
 }
+
+macro_rules! env_required {
+    ($name:literal) => {
+        std::env::var($name).expect(concat!(
+            "Environment variable `",
+            $name,
+            "` should be defined"
+        ))
+    };
+}
+pub(crate) use env_required;

@@ -572,10 +572,12 @@ name = "backup"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "aws-sdk-s3",
  "bytes",
  "figment",
  "iso8601-duration",
+ "secrecy",
  "sequoia-openpgp",
  "serde",
  "serde_json",

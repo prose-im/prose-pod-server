@@ -9,7 +9,12 @@ tasks:
 
   test:
     desc: Run all tests.
-    cmd: cargo test -F test -F destination_all {{ .CLI_ARGS }}
+    cmd: cargo test --no-default-features -F test -F destination_all {{ .CLI_ARGS }}
+    dotenv: [test.env]
+
+  ci:
+    desc: Run CI tests (doesn’t test S3).
+    cmd: cargo test --no-default-features -F test -F destination_all -- --skip s3
     dotenv: [test.env]
 
   dev:doc:

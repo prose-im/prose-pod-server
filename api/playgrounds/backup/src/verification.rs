@@ -7,8 +7,8 @@
 
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+use crate::BackupService;
 use crate::stores::{ReadObjectError, ReadSizedObjectError};
-use crate::{ProseBackupService, stores::ObjectStore};
 
 pub use self::VerificationContext as Context;
 
@@ -61,11 +61,7 @@ pub struct VerificationReport {
     pub is_encryption_valid: bool,
 }
 
-impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore>
-where
-    BackupStore: ObjectStore,
-    CheckStore: ObjectStore,
-{
+impl BackupService {
     /// Reads backup into a temporary file, then runs integrity checks on it.
     ///
     /// If the backup is intact and complies with the configured security
@@ -130,18 +126,17 @@ where
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
         // unnecessary network calls (potentially billed) and computation.
-        let mut backup_reader: BackupStore::Reader =
-            match self.backup_store.reader(&backup_name).await {
-                Ok(reader) => reader,
-                Err(ReadObjectError::ObjectNotFound(err)) => {
-                    return Err(VerificationError::BackupNotFound(err));
-                }
-                Err(ReadObjectError::Other(err)) => {
-                    return Err(VerificationError::Other(
-                        err.context("Failed opening backup reader"),
-                    ));
-                }
-            };
+        let mut backup_reader = match self.backup_store.reader(&backup_name).await {
+            Ok(reader) => reader,
+            Err(ReadObjectError::ObjectNotFound(err)) => {
+                return Err(VerificationError::BackupNotFound(err));
+            }
+            Err(ReadObjectError::Other(err)) => {
+                return Err(VerificationError::Other(
+                    err.context("Failed opening backup reader"),
+                ));
+            }
+        };
 
         // Look for an OpenPGP signature.
         'pgp_sig: {
@@ -157,7 +152,7 @@ where
                 .reader_if_not_too_large(&check_name, MAX_PGP_SIGNATURE_LENGTH)
                 .await;
 
-            let mut reader: CheckStore::Reader = match reader {
+            let mut reader = match reader {
                 Ok(reader) => reader,
                 Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
                     tracing::debug!(
@@ -238,7 +233,7 @@ where
                 .reader_if_not_too_large(&check_name, Sha256::output_size() as u64)
                 .await;
 
-            let mut reader: CheckStore::Reader = match reader {
+            let mut reader = match reader {
                 Ok(reader) => reader,
                 Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
                     tracing::debug!(

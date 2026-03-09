@@ -31,21 +31,41 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let test_id = unique_hex();
     tracing::info!("Test id: {test_id}");
 
-    let backup_config = BackupConfig::try_from(toml! {
-        [encryption]
-        mode = "pgp"
-        pgp.tsk = "encrypt.pgp"
+    let out_dir = Path::new(".out").join(test_id);
+    let backup_store_path = out_dir.join("backups");
+    std::fs::create_dir_all(&backup_store_path)?;
+    let check_store_path = out_dir.join("checks");
+    std::fs::create_dir_all(&check_store_path)?;
 
-        [signing]
-        pgp.enabled = true
-        pgp.tsk = "sign.pgp"
-    })?;
+    let backup_config = {
+        let backup_store_path = backup_store_path.display().to_string();
+        let check_store_path = check_store_path.display().to_string();
+
+        let toml = toml! {
+            [encryption]
+            mode = "pgp"
+            pgp.tsk = "encrypt.pgp"
+
+            [signing]
+            pgp.enabled = true
+            pgp.tsk = "sign.pgp"
+
+            [storage.backups]
+            mode = "fs"
+            fs.directory = backup_store_path
+
+            [storage.checks]
+            mode = "fs"
+            fs.directory = check_store_path
+        };
+
+        BackupConfig::try_from(toml)
+    }?;
     tracing::debug!("Parsed config: {backup_config:#?}");
 
     let blueprints = test_blueprints();
 
-    let prose_pod_api_dir = std::env::var("PROSE_POD_API_DIR")
-        .expect("Environment variable `PROSE_POD_API_DIR` should be defined");
+    let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
     let current_blueprint = blueprints
         .get(&BLUEPRINT_POD_API_DEMO)
         .unwrap()
@@ -58,16 +78,10 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
-    let out_dir = Path::new(".out").join(test_id);
-    let backup_store = fs_store(out_dir.join("backups"))?;
-    let check_store = fs_store(out_dir.join("checks"))?;
-
     let encryption_config = backup_config.encryption.clone();
 
     let mut service = BackupService::from_config_custom(
         backup_config,
-        backup_store,
-        check_store,
         |path| {
             certs
                 .get(path)
@@ -145,7 +159,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     extraction_output.blueprint = &restore_blueprint;
     service.restore_backup(extraction_output).await?;
 
-    if std::env::var("e").is_err() {
+    if std::env::var("NO_DELETE").is_err() {
         fs::remove_dir_all(out_dir)?;
     }
 

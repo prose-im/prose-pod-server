@@ -10,21 +10,25 @@ pub mod file;
 #[cfg(feature = "destination_s3")]
 pub mod s3;
 
+mod prelude {
+    pub use super::{ObjectMetadata, ObjectStore, ReadObjectError};
+
+    pub type DynObjectWriter = dyn std::io::Write + Send + Sync;
+    pub type DynObjectReader = dyn std::io::Read + Send + Sync;
+}
+
 #[cfg(feature = "destination_fs")]
 pub use self::file::{FsStore, FsStore as Fs};
+use self::prelude::*;
 #[cfg(feature = "destination_s3")]
 pub use self::s3::{S3Store, S3Store as S3};
 
-#[allow(async_fn_in_trait)]
-pub trait ObjectStore {
-    type Writer: std::io::Write + Send + Sync;
-
-    type Reader: std::io::Read + Send + Sync;
-
-    async fn writer(&self, key: &str) -> Result<Self::Writer, anyhow::Error>;
+#[async_trait::async_trait]
+pub trait ObjectStore: Sync {
+    async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error>;
 
     /// Returns `None` if key does not exist.
-    async fn reader(&self, key: &str) -> Result<Self::Reader, ReadObjectError>;
+    async fn reader(&self, key: &str) -> Result<Box<DynObjectReader>, ReadObjectError>;
 
     /// Returns `None` if key does not exist or object too large.
     #[inline]
@@ -32,7 +36,7 @@ pub trait ObjectStore {
         &self,
         key: &'a str,
         max_size: u64,
-    ) -> Result<Self::Reader, ReadSizedObjectError<'a>> {
+    ) -> Result<Box<DynObjectReader>, ReadSizedObjectError<'a>> {
         let size = self.metadata(key).await?.size_bytes;
 
         if size <= max_size {

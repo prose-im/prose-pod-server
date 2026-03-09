@@ -11,7 +11,9 @@ use std::{
 
 use anyhow::Context;
 
-use super::{ObjectMetadata, ObjectStore, ReadObjectError};
+use crate::config::StorageFsConfig;
+
+use super::prelude::*;
 
 /// Read and write backups on disk.
 pub struct FsStore {
@@ -31,31 +33,92 @@ impl Default for FsStore {
     }
 }
 
-impl ObjectStore for FsStore {
-    type Writer = File;
-    type Reader = File;
+impl FsStore {
+    pub fn try_from_config(
+        config: &StorageFsConfig,
+        min_permissions: u32,
+    ) -> Result<Self, anyhow::Error> {
+        let StorageFsConfig {
+            directory,
+            overwrite,
+            mode,
+        } = config;
 
-    async fn writer(&self, file_name: &str) -> Result<Self::Writer, anyhow::Error> {
+        match validate_mode(mode, &min_permissions) {
+            ModeResult::Ok => {}
+            ModeResult::Warn => tracing::warn!(
+                "Permissions `{mode:#o}` are not all necessary for `{directory}`. \
+                Recommended: `{min_permissions:#o}`. \
+                Make sure you wrote an octal number in the configuration \
+                (e.g. `0o600` and not `600`).",
+                directory = directory.display()
+            ),
+            ModeResult::Err => anyhow::bail!(
+                "Invalid permissions `{mode:#o}` for `{directory}`. \
+                Recommended: `{min_permissions:#o}`. \
+                Make sure you wrote an octal number in the configuration \
+                (e.g. `0o600` and not `600`).",
+                directory = directory.display()
+            ),
+        }
+
+        Ok(Self {
+            directory: PathBuf::clone(directory),
+            overwrite: *overwrite,
+            mode: **mode,
+        })
+    }
+}
+
+enum ModeResult {
+    Ok,
+    Warn,
+    Err,
+}
+
+// TODO: Add tests.
+fn validate_mode(mode: &u32, min_permissions: &u32) -> ModeResult {
+    if mode == min_permissions {
+        // Exit early if exact match.
+        ModeResult::Ok
+    } else if mode & 0o117 != 0 {
+        ModeResult::Err
+    } else if mode & min_permissions != *min_permissions {
+        ModeResult::Err
+    } else if mode ^ min_permissions != 0 {
+        ModeResult::Warn
+    } else {
+        ModeResult::Ok
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for FsStore {
+    async fn writer(&self, file_name: &str) -> Result<Box<DynObjectWriter>, anyhow::Error> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
         );
+        // Safety check: Do not allow unsafe permission bits.
+        assert!(self.mode & 0o117 == 0);
 
         let path = self.directory.join(file_name);
 
         // tracing::debug!("Opening {} (write)…", path.display());
 
-        File::options()
+        let writer = File::options()
             .create(true)
             .create_new(!self.overwrite)
             .write(true)
             .truncate(self.overwrite)
             .mode(self.mode)
             .open(path)
-            .context("Failed opening file (write)")
+            .context("Failed opening file (write)")?;
+
+        Ok(Box::new(writer))
     }
 
-    async fn reader(&self, file_name: &str) -> Result<Self::Reader, ReadObjectError> {
+    async fn reader(&self, file_name: &str) -> Result<Box<DynObjectReader>, ReadObjectError> {
         assert!(
             !file_name.starts_with("/"),
             "File name should not start with a `/`"
@@ -66,7 +129,7 @@ impl ObjectStore for FsStore {
         // tracing::debug!("Opening {} (read)…", path.display());
 
         match File::options().read(true).open(path) {
-            Ok(reader) => Ok(reader),
+            Ok(reader) => Ok(Box::new(reader)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 Err(ReadObjectError::ObjectNotFound(anyhow::Error::from(err)))
             }

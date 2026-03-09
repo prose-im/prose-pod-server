@@ -3,14 +3,16 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{fs, path::Path, process::Command, sync::Once};
+use std::{fs, path::Path, process::Command, sync::Once, time::SystemTime};
+
+use tracing_subscriber::EnvFilter;
 
 static INIT: Once = Once::new();
 
 /// Directory containing a fake filesystem root, to use in tests.
 pub const TEST_DATA_DIR: &'static str = "./data";
 
-pub fn init() {
+pub fn init() -> (String, SystemTime) {
     init_tracing();
 
     INIT.call_once(|| {
@@ -62,13 +64,30 @@ pub fn init() {
                 .unwrap();
         }
     });
+
+    let test_id = super::unique_hex();
+    tracing::info!("Test id: {test_id}");
+
+    return (test_id, SystemTime::now());
 }
 
 fn init_tracing() {
+    macro_rules! current_test_name {
+        () => {{
+            fn f() {}
+            let name = std::any::type_name_of_val(&f);
+            name.trim_end_matches("::common::before_all::f")
+        }};
+    }
+
+    println!("{}", current_test_name!());
     tracing_subscriber::fmt()
         .compact()
         .without_time()
-        .with_target(false)
-        .with_max_level(tracing::Level::TRACE)
+        .with_target(true)
+        .with_env_filter(EnvFilter::new(format!(
+            "{this}=trace,prose_backup=trace,info",
+            this = current_test_name!()
+        )))
         .init();
 }

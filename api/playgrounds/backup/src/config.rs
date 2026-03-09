@@ -63,6 +63,26 @@ use figment::Figment;
 /// # Those SHOULD NOT contain private key material.
 /// pgp.additional_recipients = ["/path/to/other-system.pub.asc"]
 ///
+/// # Where to store backups.
+/// [storage.backups]
+/// mode = "s3"
+/// s3.bucket_name = "prose-backups"
+///
+/// # Where to store backup integrity checks.
+/// [storage.checks]
+/// mode = "s3"
+/// # This bucket SHOULD be append-only (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
+/// s3.bucket_name = "prose-checks"
+///
+/// # Global S3 configuration.
+/// # `storage.backups.s3` and `storage.checks.s3` will fallback to it.
+/// # It is recommended to pass those keys via environment variables.
+/// [s3]
+/// region = "nbg1"
+/// endpoint_url = "https://nbg1.your-objectstorage.com"
+/// access_key = "574LAYIP1TR7PGYPCNV7"
+/// # Pass the secret key via an environment variable.
+///
 /// [download]
 /// # Longest allowed validity for a backup download URL. Default is 5 minutes.
 /// # Uses the [ISO 8601 Duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations).
@@ -78,6 +98,8 @@ pub struct BackupConfig {
     pub signing: SigningConfig,
 
     pub encryption: EncryptionConfig,
+
+    pub storage: StorageConfig,
 
     pub download: DownloadConfig,
 }
@@ -106,6 +128,14 @@ fn default_config_static() -> Figment {
 
         [download]
         url_max_ttl = "PT5M"
+
+        [storage.backups]
+        fs.overwrite = false
+        fs.mode = 0o600
+
+        [storage.checks]
+        fs.overwrite = false
+        fs.mode = 0o600
     }
     .to_string();
 
@@ -140,6 +170,21 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
             "encryption.mode",
             json::Value::String("off".to_owned()),
         ));
+    }
+
+    for mode in ["s3", "fs"] {
+        if let Ok(default) = figment.extract_inner::<figment::value::Value>(mode) {
+            figment = figment
+                .merge(Serialized::default(
+                    &format!("storage.backups.{mode}"),
+                    default.clone(),
+                ))
+                .merge(Serialized::default(
+                    &format!("storage.checks.{mode}"),
+                    default,
+                ))
+                .merge(Serialized::default(mode, json::Value::Null));
+        }
     }
 
     Ok(figment)
@@ -204,6 +249,7 @@ pub struct EncryptionConfig {
 pub enum EncryptionMode {
     #[serde(rename = "off")]
     Off,
+
     #[serde(rename = "pgp", alias = "gpg")]
     Pgp,
 }
@@ -218,6 +264,71 @@ pub struct EncryptionPgpConfig {
 
     #[serde(default)]
     pub additional_recipients: Vec<std::path::PathBuf>,
+}
+
+// MARK: Storage
+
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageConfig {
+    pub backups: StorageSubconfig,
+
+    pub checks: StorageSubconfig,
+}
+
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+#[serde(tag = "mode")]
+pub enum StorageSubconfig {
+    #[cfg(feature = "destination_s3")]
+    #[serde(rename = "s3")]
+    S3 {
+        #[serde(rename = "s3")]
+        config: StorageS3Config,
+    },
+
+    #[cfg(feature = "destination_fs")]
+    #[serde(rename = "fs")]
+    Fs {
+        #[serde(rename = "fs")]
+        config: StorageFsConfig,
+    },
+}
+
+#[cfg(feature = "destination_s3")]
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageS3Config {
+    pub bucket_name: String,
+
+    pub region: String,
+
+    pub endpoint_url: String,
+
+    pub access_key: String,
+
+    pub secret_key: secrecy::SecretString,
+
+    #[serde(default)]
+    pub session_token: Option<secrecy::SecretString>,
+
+    #[serde(default)]
+    pub force_path_style: Option<bool>,
+}
+
+#[cfg(feature = "destination_fs")]
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageFsConfig {
+    pub directory: std::path::PathBuf,
+
+    pub overwrite: bool,
+
+    /// WARN: This must be an octal number between `0o000` and `0o777`.
+    pub mode: crate::util::Octal<3>,
 }
 
 // MARK: Download
@@ -235,14 +346,6 @@ impl BackupConfig {
     #[inline(always)]
     pub fn default_figment() -> Figment {
         default_config_static()
-    }
-}
-
-impl Default for BackupConfig {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::try_from(Self::default_figment())
-            .expect("Default figment should always be valid (enforced by tests)")
     }
 }
 
@@ -276,12 +379,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_contructor() {
-        // NOTE: Ensures this doesn’t panic.
-        _ = BackupConfig::default();
-    }
-
-    #[test]
     fn test_signing_defaults() {
         // NOTE(RemiBardon): I guess I have to explain this. Basically the way
         //   configuration defaults are implemented we might forget to apply a
@@ -310,5 +407,57 @@ mod tests {
         }
 
         assert_none!(pgp);
+    }
+
+    #[test]
+    fn test_storage_errors() {
+        use toml::toml;
+
+        // NOTE: Error message not relevant here,
+        //   there is a default value for `storage`.
+        let res = BackupConfig::try_from(toml::Table::new());
+        assert!(matches!(res, Err(_)));
+
+        // NOTE: Error message not relevant here,
+        //   there is a default value for `storage.backups`.
+        let res = BackupConfig::try_from(toml! {
+            [storage]
+        });
+        assert!(matches!(res, Err(_)));
+
+        let res = BackupConfig::try_from(toml! {
+            [storage.backups]
+        });
+        assert_eq!(
+            res.err().as_ref().map(anyhow::Error::to_string),
+            Some(
+                "missing field `mode` for key \"default.storage.backups\" in TOML source string"
+                    .to_owned()
+            )
+        );
+
+        let res = BackupConfig::try_from(toml! {
+            [storage.backups]
+            mode = "s3"
+        });
+        assert_eq!(
+            res.err().as_ref().map(anyhow::Error::to_string),
+            Some(
+                "missing field `s3` for key \"default.storage.backups\" in TOML source string"
+                    .to_owned()
+            )
+        );
+
+        let res = BackupConfig::try_from(toml! {
+            [storage.backups]
+            mode = "foo"
+        });
+        assert_eq!(
+            res.err().as_ref().map(anyhow::Error::to_string),
+            Some(
+                "unknown variant: found `foo`, expected ``s3` or `fs`` for key \"default.storage.backups.mode\" in TOML source string"
+                    .to_owned()
+            )
+        );
     }
 }

@@ -10,14 +10,10 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), anyhow::Error> {
-//!   let backup_store: prose_backup::stores::S3 = todo!();
-//!   let check_store: prose_backup::stores::S3 = todo!();
+//!   let toml = unimplemented!();
+//!   let backup_config = BackupConfig::try_from(toml)?;
 //!
-//!   let service = BackupService::from_config(
-//!     BackupConfig::default(),
-//!     backup_store,
-//!     check_store,
-//!   )?;
+//!   let service = BackupService::from_config(toml)?;
 //!
 //!   let _backups = service.list_backups().await?;
 //! }
@@ -47,7 +43,11 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
-use crate::stores::{ObjectStore, S3Store};
+#[cfg(feature = "destination_fs")]
+use crate::stores::FsStore;
+use crate::stores::ObjectStore;
+#[cfg(feature = "destination_s3")]
+use crate::stores::S3Store;
 
 pub use self::archiving::ArchiveBlueprint;
 pub use self::config::BackupConfig;
@@ -55,12 +55,8 @@ pub use self::restore::*;
 
 // MARK: Service
 
-/// Convenient alias to [`ProseBackupService`] with sensible defaults.
-pub type BackupService<BackupStore = S3Store, CheckStore = S3Store> =
-    ProseBackupService<BackupStore, CheckStore>;
-
 /// Backup service. Central component of the library.
-pub struct ProseBackupService<BackupStore, CheckStore> {
+pub struct BackupService {
     pub compression_config: config::CompressionConfig,
     pub hashing_config: config::HashingConfig,
     pub encryption_context: Option<encryption::Context>,
@@ -69,21 +65,15 @@ pub struct ProseBackupService<BackupStore, CheckStore> {
     pub decryption_context: decryption::Context,
     pub download_config: config::DownloadConfig,
 
-    pub backup_store: BackupStore,
-    pub check_store: CheckStore,
+    pub backup_store: Box<dyn ObjectStore>,
+    pub check_store: Box<dyn ObjectStore>,
 }
 
-impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
-    pub fn from_config(
-        config: BackupConfig,
-        backup_store: BackupStore,
-        check_store: CheckStore,
-    ) -> Result<Self, anyhow::Error> {
+impl BackupService {
+    pub fn from_config(config: BackupConfig) -> Result<Self, anyhow::Error> {
         // NOTE: This gets inlined in release builds.
         Self::from_config_custom(
             config,
-            backup_store,
-            check_store,
             |path| {
                 use openpgp::parse::Parse as _;
                 openpgp::Cert::from_file(path)
@@ -100,8 +90,6 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
     #[cfg_attr(not(feature = "test"), inline(always))]
     pub fn from_config_custom<P>(
         config: BackupConfig,
-        backup_store: BackupStore,
-        check_store: CheckStore,
         get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
         pgp_policy: impl Fn() -> P,
     ) -> Result<Self, anyhow::Error>
@@ -173,6 +161,23 @@ impl<BackupStore, CheckStore> ProseBackupService<BackupStore, CheckStore> {
                 policy: Box::new(pgp_policy()),
             });
         }
+
+        let backup_store: Box<dyn ObjectStore> = match config.storage.backups {
+            #[cfg(feature = "destination_s3")]
+            config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
+            #[cfg(feature = "destination_fs")]
+            config::StorageSubconfig::Fs { ref config } => {
+                Box::new(FsStore::try_from_config(config, 0o600)?)
+            }
+        };
+        let check_store: Box<dyn ObjectStore> = match config.storage.checks {
+            #[cfg(feature = "destination_s3")]
+            config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
+            #[cfg(feature = "destination_fs")]
+            config::StorageSubconfig::Fs { ref config } => {
+                Box::new(FsStore::try_from_config(config, 0o600)?)
+            }
+        };
 
         Ok(Self {
             compression_config: config.compression,
@@ -365,7 +370,7 @@ pub struct CreateBackupOutput {
     pub signature_ids: Vec<BackupFileName>,
 }
 
-impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+impl BackupService {
     /// Create a new backup and upload it to the store.
     ///
     /// Everything is done in a single stream of the following shape:
@@ -579,7 +584,7 @@ pub enum CreateBackupError {
 
 // MARK: Read
 
-impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+impl BackupService {
     /// List all backups, in alphabetically descending order.
     pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
@@ -754,13 +759,12 @@ mod restore {
     use std::collections::HashMap;
 
     use crate::{
-        BackupFileName, BackupFileNameComponents, ProseBackupService,
+        BackupFileName, BackupFileNameComponents, BackupService,
         archiving::{
             ArchiveBlueprint, ExtractionError, ExtractionOutput, ExtractionStats, extract,
         },
         decryption::DecryptionReport,
         restoration::{RestorationError, RestorationOutput, restore},
-        stores::ObjectStore,
         verification::VerificationReport,
     };
 
@@ -774,7 +778,7 @@ mod restore {
     #[derive(Debug, serde::Serialize)]
     pub struct RestorationSuccess;
 
-    impl<S1: ObjectStore, S2: ObjectStore> ProseBackupService<S1, S2> {
+    impl BackupService {
         pub async fn extract_backup<'a>(
             &self,
             backup_name: &BackupFileName,
@@ -1003,20 +1007,11 @@ impl AsRef<std::path::Path> for BackupFileName {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, thiserror::Error)]
 pub enum BackupFileNameError {
+    #[error("Backup file name has no extension.")]
     NoExtension,
 }
-
-impl std::fmt::Display for BackupFileNameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoExtension => write!(f, "Backup file name has no extension."),
-        }
-    }
-}
-
-impl std::error::Error for BackupFileNameError {}
 
 impl std::str::FromStr for BackupFileName {
     type Err = BackupFileNameError;

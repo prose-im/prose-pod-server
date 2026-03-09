@@ -8,9 +8,9 @@ use bytes::Bytes;
 use s3::{error::SdkError, presigning::PresigningConfig, types::CompletedPart};
 use std::io::{self, Read, Write};
 
-use crate::util::saturating_i64_to_u64;
+use crate::{config::StorageS3Config, util::saturating_i64_to_u64};
 
-use super::{ObjectMetadata, ObjectStore, ReadObjectError};
+use super::prelude::*;
 
 /// 8MiB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
@@ -23,21 +23,70 @@ pub struct S3Store {
     pub bucket: String,
 }
 
-impl ObjectStore for S3Store {
-    type Writer = S3Writer;
-    type Reader = S3Reader;
+impl S3Store {
+    pub fn from_config(config: &StorageS3Config) -> Self {
+        use secrecy::ExposeSecret as _;
 
-    async fn writer(&self, key: &str) -> Result<S3Writer, anyhow::Error> {
-        tokio::task::block_in_place(move || {
+        let StorageS3Config {
+            bucket_name,
+            region,
+            endpoint_url,
+            access_key,
+            secret_key,
+            session_token,
+            force_path_style,
+        } = config;
+
+        let creds = s3::config::Credentials::new(
+            String::clone(access_key),
+            secret_key.expose_secret(),
+            session_token
+                .as_ref()
+                .map(|secret| secret.expose_secret().to_owned()),
+            None,
+            "config",
+        );
+
+        let s3_config = {
+            let mut builder = s3::Config::builder()
+                .region(s3::config::Region::new(String::clone(region)))
+                .endpoint_url(endpoint_url)
+                .credentials_provider(creds)
+                .behavior_version_latest();
+
+            if let Some(force_path_style) = force_path_style {
+                builder = builder.force_path_style(*force_path_style);
+            }
+
+            builder.build()
+        };
+
+        let client = s3::Client::from_conf(s3_config);
+
+        Self {
+            client,
+            bucket: String::clone(bucket_name),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for S3Store {
+    async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error> {
+        let writer = tokio::task::block_in_place(move || {
             tokio::runtime::Handle::current().block_on(async move {
                 S3Writer::new(self.client.clone(), &self.bucket, key).await
             })
-        })
+        })?;
+        Ok(Box::new(writer))
     }
 
-    async fn reader(&self, key: &str) -> Result<Self::Reader, ReadObjectError> {
+    async fn reader(&self, key: &str) -> Result<Box<DynObjectReader>, ReadObjectError> {
         match self.exists_(key).await {
-            Ok(_) => Ok(S3Reader::new(self.client.clone(), &self.bucket, key)),
+            Ok(_) => {
+                let reader = S3Reader::new(self.client.clone(), &self.bucket, key);
+                Ok(Box::new(reader))
+            }
             Err(err) => Err(err),
         }
     }
