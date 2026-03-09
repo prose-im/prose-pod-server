@@ -15,7 +15,7 @@ use toml::toml;
 use crate::common::*;
 
 #[tokio::test]
-async fn test_s3() -> Result<(), anyhow::Error> {
+async fn s3() -> Result<(), anyhow::Error> {
     let (_test_id, now) = init();
 
     let region = env_required!("S3_REGION");

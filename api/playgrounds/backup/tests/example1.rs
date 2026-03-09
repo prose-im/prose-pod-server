@@ -24,12 +24,8 @@ use toml::toml;
 use crate::common::*;
 
 #[tokio::test]
-async fn test_example1() -> Result<(), anyhow::Error> {
-    init();
-
-    let now = SystemTime::now();
-    let test_id = unique_hex();
-    tracing::info!("Test id: {test_id}");
+async fn example1() -> Result<(), anyhow::Error> {
+    let (test_id, now) = init();
 
     let out_dir = Path::new(".out").join(test_id);
     let backup_store_path = out_dir.join("backups");

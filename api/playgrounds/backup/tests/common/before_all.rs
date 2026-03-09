@@ -72,22 +72,13 @@ pub fn init() -> (String, SystemTime) {
 }
 
 fn init_tracing() {
-    macro_rules! current_test_name {
-        () => {{
-            fn f() {}
-            let name = std::any::type_name_of_val(&f);
-            name.trim_end_matches("::common::before_all::f")
-        }};
-    }
-
-    println!("{}", current_test_name!());
     tracing_subscriber::fmt()
         .compact()
         .without_time()
         .with_target(true)
         .with_env_filter(EnvFilter::new(format!(
             "{this}=trace,prose_backup=trace,info",
-            this = current_test_name!()
+            this = env!("CARGO_CRATE_NAME")
         )))
         .init();
 }
