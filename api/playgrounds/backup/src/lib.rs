@@ -100,15 +100,9 @@ impl BackupService {
         use signing::PgpSigningContext;
         use verification::PgpVerificationContext;
 
-        let encryption_context = match config.encryption.mode {
-            config::EncryptionMode::Off => None,
-            config::EncryptionMode::Pgp => {
-                let Some(pgp) = config.encryption.pgp.as_ref() else {
-                    return Err(anyhow::Error::msg(
-                        "`encryption.mode` is `\"pgp\"` but `encryption.pgp` is missing.",
-                    ));
-                };
-
+        let encryption_context = match &config.encryption {
+            config::EncryptionConfig::Off => None,
+            config::EncryptionConfig::Pgp { config: pgp } => {
                 let mut recipients = Vec::with_capacity(pgp.additional_recipients.len() + 1);
 
                 recipients.push(get_pgp_cert(&pgp.tsk)?);
@@ -154,7 +148,7 @@ impl BackupService {
         };
 
         let mut decryption_context = decryption::Context::default();
-        if let Some(pgp) = config.encryption.pgp.as_ref() {
+        if let config::EncryptionConfig::Pgp { config: pgp } = &config.encryption {
             let pgp_cert = get_pgp_cert(&pgp.tsk)?;
             decryption_context.pgp = Some(PgpDecryptionContext {
                 tsks: vec![pgp_cert],

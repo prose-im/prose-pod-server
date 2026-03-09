@@ -106,22 +106,20 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     tracing::info!("Created backup '{backup_id}'.");
     tracing::info!("Integrity checks: {digest_ids:#?}");
 
-    if encryption_config.mode == EncryptionMode::Pgp {
-        if let Some(pgp) = encryption_config.pgp.as_ref() {
-            let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
+    if let EncryptionConfig::Pgp { config: pgp } = &encryption_config {
+        let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
 
-            pgp_cert = revoke_subkey_simple(
-                pgp_cert,
-                |keys| keys.for_storage_encryption(),
-                SystemTime::now() - Duration::from_mins(10),
-                ReasonForRevocation::KeySuperseded,
-            )?;
+        pgp_cert = revoke_subkey_simple(
+            pgp_cert,
+            |keys| keys.for_storage_encryption(),
+            SystemTime::now() - Duration::from_mins(10),
+            ReasonForRevocation::KeySuperseded,
+        )?;
 
-            service.decryption_context.pgp = Some(PgpDecryptionContext {
-                tsks: vec![pgp_cert],
-                policy: Box::new(pgp_policy.clone()),
-            });
-        }
+        service.decryption_context.pgp = Some(PgpDecryptionContext {
+            tsks: vec![pgp_cert],
+            policy: Box::new(pgp_policy.clone()),
+        });
     }
 
     print!("\n");

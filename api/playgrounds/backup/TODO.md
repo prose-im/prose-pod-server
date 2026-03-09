@@ -49,3 +49,4 @@ Low priority (unordered):
 - Return all layer sizes when getting backup details (?).
 - Return stats after restore (?).
 - Stream stats when restoring.
+- Use `CARGO_TARGET_TMPDIR` in tests (e.g. to store OpenPGP TSKs).

@@ -237,21 +237,16 @@ pub struct SigningPgpConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
-pub struct EncryptionConfig {
-    pub mode: EncryptionMode,
-
-    #[serde(default, alias = "gpg")]
-    pub pgp: Option<EncryptionPgpConfig>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(serde::Deserialize)]
-pub enum EncryptionMode {
+#[serde(tag = "mode")]
+pub enum EncryptionConfig {
     #[serde(rename = "off")]
     Off,
 
     #[serde(rename = "pgp", alias = "gpg")]
-    Pgp,
+    Pgp {
+        #[serde(rename = "pgp", alias = "gpg")]
+        config: EncryptionPgpConfig,
+    },
 }
 
 #[derive(Debug, Clone)]
