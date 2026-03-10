@@ -8,8 +8,7 @@ mod common;
 
 use std::{
     collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, SystemTime},
 };
 
@@ -25,12 +24,16 @@ use crate::common::*;
 
 #[tokio::test]
 async fn example1() -> Result<(), anyhow::Error> {
-    let (test_id, now) = init();
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
 
-    let out_dir = Path::new(".out").join(test_id);
-    let backup_store_path = out_dir.join("backups");
+    let backup_store_path = test_data_path.join("backups");
     std::fs::create_dir_all(&backup_store_path)?;
-    let check_store_path = out_dir.join("checks");
+    let check_store_path = test_data_path.join("checks");
     std::fs::create_dir_all(&check_store_path)?;
 
     let backup_config = {
@@ -149,13 +152,9 @@ async fn example1() -> Result<(), anyhow::Error> {
     let restore_blueprint = blueprints
         .get(&BLUEPRINT_POD_API_DEMO)
         .unwrap()
-        .src_relative_to(out_dir.join("restore"));
+        .src_relative_to(test_data_path.join("restore"));
     extraction_output.blueprint = &restore_blueprint;
     service.restore_backup(extraction_output).await?;
-
-    if std::env::var("NO_DELETE").is_err() {
-        fs::remove_dir_all(out_dir)?;
-    }
 
     Ok(())
 }

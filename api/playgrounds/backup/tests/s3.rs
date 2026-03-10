@@ -16,7 +16,8 @@ use crate::common::*;
 
 #[tokio::test]
 async fn s3() -> Result<(), anyhow::Error> {
-    let (_test_id, now) = init();
+    let context = init();
+    let TestContext { now, .. } = context;
 
     let region = env_required!("S3_REGION");
     let endpoint_url = env_required!("S3_ENDPOINT_URL");

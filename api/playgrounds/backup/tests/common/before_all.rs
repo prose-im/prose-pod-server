@@ -3,16 +3,28 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{fs, path::Path, process::Command, sync::Once, time::SystemTime};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Once,
+    time::SystemTime,
+};
 
 use tracing_subscriber::EnvFilter;
 
 static INIT: Once = Once::new();
 
 /// Directory containing a fake filesystem root, to use in tests.
-pub const TEST_DATA_DIR: &'static str = "./data";
+pub const TEST_DATA_DIR: &'static str = concat!(env!("CARGO_TARGET_TMPDIR"), "/data");
 
-pub fn init() -> (String, SystemTime) {
+pub struct TestContext {
+    pub now: SystemTime,
+    pub test_id: String,
+    pub test_data_path: PathBuf,
+}
+
+pub fn init() -> TestContext {
     init_tracing();
 
     INIT.call_once(|| {
@@ -65,10 +77,43 @@ pub fn init() -> (String, SystemTime) {
         }
     });
 
-    let test_id = super::unique_hex();
-    tracing::info!("Test id: {test_id}");
+    let test_id = format!("test-{id}", id = super::unique_hex());
+    tracing::debug!("Test id: {test_id}");
 
-    return (test_id, SystemTime::now());
+    let test_data_path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(&test_id);
+    tracing::debug!("Will save test data in `{}`.", test_data_path.display());
+
+    TestContext {
+        now: SystemTime::now(),
+        test_data_path,
+        test_id,
+    }
+}
+
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        let test_failed = std::thread::panicking();
+
+        // Do not cleanup on test failures.
+        if test_failed || std::env::var("NO_CLEANUP").is_ok() {
+            tracing::info!(
+                "Test data can be found in `{test_data_path}` (not cleaning up).",
+                test_data_path = self.test_data_path.display()
+            );
+            return;
+        }
+
+        tracing::info!(
+            "Cleaning up test data in `{test_data_path}` (set `NO_CLEANUP` to avoid this)…",
+            test_data_path = self.test_data_path.display()
+        );
+
+        fn log_error<E: std::fmt::Display>(error: E) {
+            tracing::error!("{error:#}");
+        }
+
+        fs::remove_dir_all(&self.test_data_path).unwrap_or_else(log_error);
+    }
 }
 
 fn init_tracing() {
