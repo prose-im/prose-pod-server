@@ -42,7 +42,7 @@ s3 = { optional = true, version = "1", default-features = false, package = "aws-
 ] }
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "env-filter"] }
 
 [lib]
 name = "prose_backup"

@@ -11,8 +11,6 @@ use std::{
     time::SystemTime,
 };
 
-use tracing_subscriber::EnvFilter;
-
 static INIT: Once = Once::new();
 
 /// Directory containing a fake filesystem root, to use in tests.
@@ -28,7 +26,7 @@ pub fn init() -> TestContext {
     init_tracing();
 
     INIT.call_once(|| {
-        tracing::warn!("Creating test data in `{TEST_DATA_DIR}`…");
+        tracing::info!("Creating shared test data in `{TEST_DATA_DIR}`…");
 
         fn exists(path: impl AsRef<Path>) -> bool {
             fs::exists(Path::new(TEST_DATA_DIR).join(path)).unwrap()
@@ -117,10 +115,13 @@ impl Drop for TestContext {
 }
 
 fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+
     tracing_subscriber::fmt()
+        .with_test_writer()
         .compact()
         .without_time()
-        .with_target(true)
+        .with_target(false)
         .with_env_filter(EnvFilter::new(format!(
             "{this}=trace,prose_backup=trace,info",
             this = env!("CARGO_CRATE_NAME")

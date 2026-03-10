@@ -26,6 +26,7 @@ async fn s3() -> Result<(), anyhow::Error> {
     let bucket_name_backups = env_required!("S3_BUCKET_NAME_BACKUPS");
     let bucket_name_checks = env_required!("S3_BUCKET_NAME_CHECKS");
 
+    print!("\n");
     let backup_config = BackupConfig::try_from(toml! {
         [encryption]
         mode = "pgp"
@@ -49,8 +50,9 @@ async fn s3() -> Result<(), anyhow::Error> {
         access_key = access_key
         secret_key = secret_key
     })?;
-    tracing::debug!("Parsed config: {backup_config:#?}");
+    tracing::info!("Parsed config: {backup_config:#?}");
 
+    print!("\n");
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
@@ -58,6 +60,7 @@ async fn s3() -> Result<(), anyhow::Error> {
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
+    print!("\n");
     let service = BackupService::from_config_custom(
         backup_config,
         |path| {
@@ -69,6 +72,7 @@ async fn s3() -> Result<(), anyhow::Error> {
         || pgp_policy.clone(),
     )?;
 
+    print!("\n");
     service.list_backups().await?;
 
     todo!()

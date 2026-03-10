@@ -36,6 +36,7 @@ async fn example1() -> Result<(), anyhow::Error> {
     let check_store_path = test_data_path.join("checks");
     std::fs::create_dir_all(&check_store_path)?;
 
+    print!("\n");
     let backup_config = {
         let backup_store_path = backup_store_path.display().to_string();
         let check_store_path = check_store_path.display().to_string();
@@ -60,7 +61,7 @@ async fn example1() -> Result<(), anyhow::Error> {
 
         BackupConfig::try_from(toml)
     }?;
-    tracing::debug!("Parsed config: {backup_config:#?}");
+    tracing::info!("Parsed config: {backup_config:#?}");
 
     let blueprints = test_blueprints();
 
@@ -70,6 +71,7 @@ async fn example1() -> Result<(), anyhow::Error> {
         .unwrap()
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
+    print!("\n");
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
@@ -90,6 +92,7 @@ async fn example1() -> Result<(), anyhow::Error> {
         || pgp_policy.clone(),
     )?;
 
+    print!("\n");
     let CreateBackupOutput {
         backup_id,
         digest_ids,
@@ -105,6 +108,7 @@ async fn example1() -> Result<(), anyhow::Error> {
     tracing::info!("Created backup '{backup_id}'.");
     tracing::info!("Integrity checks: {digest_ids:#?}");
 
+    print!("\n");
     if let EncryptionConfig::Pgp { config: pgp } = &encryption_config {
         let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
 
