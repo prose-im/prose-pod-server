@@ -921,6 +921,21 @@ mod restore {
     }
 }
 
+// MARK: Restore
+
+mod delete {
+    use crate::{BackupFileName, BackupService};
+
+    impl BackupService {
+        pub async fn delete_backup<'a>(
+            &self,
+            backup_name: &BackupFileName,
+        ) -> Result<(), anyhow::Error> {
+            self.backup_store.delete(&backup_name).await
+        }
+    }
+}
+
 // MARK: File name serialization and deserialization
 
 #[derive(Debug)]

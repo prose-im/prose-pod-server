@@ -21,7 +21,7 @@ Low priority (unordered):
 
 High priority (ordered):
 
-1. Backup deletion.
+None.
 
 Medium priority (unordered):
 

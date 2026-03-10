@@ -138,5 +138,8 @@ async fn s3() -> Result<(), anyhow::Error> {
         extraction_stats.extracted_bytes_count,
     );
 
+    print!("\n");
+    () = service.delete_backup(&created_backup_id).await?;
+
     Ok(())
 }

@@ -163,5 +163,8 @@ async fn example1() -> Result<(), anyhow::Error> {
     extraction_output.blueprint = &restore_blueprint;
     service.restore_extracted_backup(extraction_output).await?;
 
+    print!("\n");
+    () = service.delete_backup(&backup_id).await?;
+
     Ok(())
 }

@@ -199,6 +199,17 @@ impl ObjectStore for S3Store {
 
         Ok(presigned.uri().to_owned())
     }
+
+    async fn delete(&self, key: &str) -> Result<(), anyhow::Error> {
+        let _ = self
+            .client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+        Ok(())
+    }
 }
 
 impl S3Store {

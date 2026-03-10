@@ -67,6 +67,8 @@ pub trait ObjectStore: Sync {
         key: &str,
         ttl: &std::time::Duration,
     ) -> Result<String, anyhow::Error>;
+
+    async fn delete(&self, key: &str) -> Result<(), anyhow::Error>;
 }
 
 pub struct ObjectMetadata {

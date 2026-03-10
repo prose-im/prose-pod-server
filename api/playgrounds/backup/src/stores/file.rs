@@ -226,6 +226,13 @@ impl ObjectStore for FsStore {
             None => Err(anyhow::Error::msg("File path is non-Unicode.")),
         }
     }
+
+    async fn delete(&self, file_name: &str) -> Result<(), anyhow::Error> {
+        match std::fs::remove_file(self.directory.join(file_name)) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::from(err)),
+        }
+    }
 }
 
 impl super::Finalizable for File {
