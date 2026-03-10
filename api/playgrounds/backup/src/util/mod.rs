@@ -159,6 +159,21 @@ pub fn debug_panic<E: std::fmt::Debug>(error: &E) {
     }
 }
 
+/// While waiting for <https://github.com/rust-lang/rust/commit/e1424588bd6c0865d1b3425e8f67c93554733d4e>
+/// to make it to a stable release.
+pub fn get_or_try_insert<T, E>(
+    opt: &mut Option<T>,
+    f: impl FnOnce() -> Result<T, E>,
+) -> Result<&mut T, E> {
+    if let None = opt {
+        *opt = Some(f()?);
+    }
+
+    // SAFETY: A `None` variant for `opt` would have been replaced by a `Some`
+    // variant in the code above.
+    Ok(opt.as_mut().unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

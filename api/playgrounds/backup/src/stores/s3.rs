@@ -15,9 +15,6 @@ use super::prelude::*;
 /// 8MiB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
 
-/// 8MiB.
-const READ_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
-
 pub struct S3Store {
     pub client: s3::Client,
     pub bucket: String,
@@ -73,11 +70,7 @@ impl S3Store {
 #[async_trait::async_trait]
 impl ObjectStore for S3Store {
     async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error> {
-        let writer = tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(async move {
-                S3Writer::new(self.client.clone(), &self.bucket, key).await
-            })
-        })?;
+        let writer = S3Writer::new(self.client.clone(), &self.bucket, key).await?;
         Ok(Box::new(writer))
     }
 
@@ -271,7 +264,13 @@ impl S3Writer {
     }
 
     async fn flush_part(&mut self) -> Result<(), anyhow::Error> {
+        tracing::trace!(key = self.key, "S3Writer::flush_part");
+
         if self.buf.is_empty() {
+            tracing::trace!(
+                key = self.key,
+                "S3 upload part flush skipped: Buffer is empty."
+            );
             return Ok(());
         }
 
@@ -298,6 +297,9 @@ impl S3Writer {
 
         self.part_number += 1;
         self.buf.clear();
+
+        tracing::trace!(key = self.key, "S3 upload part flush completed.");
+
         Ok(())
     }
 
@@ -318,6 +320,8 @@ impl S3Writer {
             .await
             .context("S3 multipart upload complete failed")?;
 
+        tracing::trace!(key = self.key, "S3 multipart upload completed.");
+
         Ok(())
     }
 }
@@ -327,19 +331,38 @@ impl Write for S3Writer {
         self.buf.extend_from_slice(buf);
 
         if self.buf.len() >= UPLOAD_PART_SIZE {
-            // blocking shim; caller expected to be in async context
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.flush_part())
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(self.flush_part())
+            })
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        } else {
+            tracing::trace!(
+                key = self.key,
+                "S3 upload part flush skipped: Buffer not full ({size_before} + {written} = {size} < {UPLOAD_PART_SIZE}).",
+                size_before = self.buf.len() - buf.len(),
+                written = buf.len(),
+                size = self.buf.len()
+            );
         }
 
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        tracing::trace!(key = self.key, "S3Writer::flush");
         Ok(())
     }
 }
+
+impl super::Finalizable for S3Writer {
+    fn finalize(self: Box<Self>) -> Result<(), anyhow::Error> {
+        tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(self.complete())
+        })
+    }
+}
+
+impl super::ObjectWriter for S3Writer {}
 
 // MARK: Reader
 
@@ -347,10 +370,8 @@ pub struct S3Reader {
     client: s3::Client,
     bucket: String,
     key: String,
+    stream: Option<s3::primitives::ByteStream>,
     buf: Bytes,
-    pos: usize,
-    offset: u64,
-    eof: bool,
 }
 
 impl S3Reader {
@@ -359,62 +380,58 @@ impl S3Reader {
             client,
             bucket: bucket.into(),
             key: key.into(),
+            stream: None,
             buf: Bytes::new(),
-            pos: 0,
-            offset: 0,
-            eof: false,
         }
     }
+}
 
-    async fn refill(&mut self) -> anyhow::Result<()> {
-        if self.eof {
-            return Ok(());
-        }
-
-        let range = format!(
-            "bytes={}-{}",
-            self.offset,
-            self.offset + READ_CHUNK_SIZE - 1
-        );
-
-        let resp = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&self.key)
-            .range(range)
-            .send()
-            .await?;
-
-        let data = resp.body.collect().await?.into_bytes();
-
-        if data.is_empty() {
-            self.eof = true;
-        } else {
-            self.offset += data.len() as u64;
-            self.buf = data;
-            self.pos = 0;
-        }
-
-        Ok(())
+impl S3Reader {
+    fn ensure_stream(&mut self) -> Result<&mut s3::primitives::ByteStream, io::Error> {
+        crate::util::get_or_try_insert(&mut self.stream, || {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    self.client
+                        .get_object()
+                        .bucket(&self.bucket)
+                        .key(&self.key)
+                        .send()
+                        .await
+                        .map(|resp| resp.body)
+                        .context("Failed to open S3 object for reading")
+                })
+            })
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        })
     }
 }
 
 impl Read for S3Reader {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if self.pos == self.buf.len() && !self.eof {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.refill())
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    fn read(&mut self, out: &mut [u8]) -> Result<usize, io::Error> {
+        // Drain current buffer first.
+        if !self.buf.is_empty() {
+            let n = std::cmp::min(out.len(), self.buf.len());
+            out[..n].copy_from_slice(&self.buf[..n]);
+            self.buf = self.buf.slice(n..);
+            return Ok(n);
         }
 
-        if self.pos == self.buf.len() {
-            return Ok(0);
-        }
+        let stream = self.ensure_stream()?;
 
-        let n = std::cmp::min(out.len(), self.buf.len() - self.pos);
-        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
-        self.pos += n;
-        Ok(n)
+        // Fetch next chunk from stream.
+        let chunk = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(stream.next())
+        });
+
+        match chunk {
+            None => Ok(0), // EOF
+            Some(Err(e)) => Err(io::Error::new(io::ErrorKind::Other, e)),
+            Some(Ok(chunk)) => {
+                let n = std::cmp::min(out.len(), chunk.len());
+                out[..n].copy_from_slice(&chunk[..n]);
+                self.buf = chunk.slice(n..);
+                Ok(n)
+            }
+        }
     }
 }

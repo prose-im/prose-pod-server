@@ -195,14 +195,14 @@ pub mod dtos {
     //!
     //! [Data Transfer Objects]: https://en.wikipedia.org/wiki/Data_transfer_object "“Data transfer object” on Wikipedia"
 
-    use crate::verification::PgpSignatureReport;
+    use crate::{BackupFileName, verification::PgpSignatureReport};
 
     #[derive(Debug)]
     pub struct BackupDto<Metadata = BackupMetadataPartialDto> {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-        pub id: String,
+        pub id: BackupFileName,
 
         /// Description of the backup.
         ///
@@ -364,6 +364,18 @@ pub struct CreateBackupOutput {
     pub signature_ids: Vec<BackupFileName>,
 }
 
+#[derive(Debug)]
+pub struct CreateBackupStats {
+    pub backup_upload_duration: std::time::Duration,
+    pub check_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
+}
+
+#[derive(Debug)]
+pub struct CreateBackupSuccess {
+    pub creation_output: CreateBackupOutput,
+    pub creation_stats: CreateBackupStats,
+}
+
 impl BackupService {
     /// Create a new backup and upload it to the store.
     ///
@@ -417,8 +429,9 @@ impl BackupService {
             created_at,
         }: CreateBackupCommand<'_>,
         archiving_blueprint: &ArchiveBlueprint,
-    ) -> Result<CreateBackupOutput, CreateBackupError> {
+    ) -> Result<CreateBackupSuccess, CreateBackupError> {
         use crate::hashing::{DigestWriter, Sha256DigestWriter};
+        use std::time::SystemTime;
 
         archiving::check_archiving_will_succeed(&archiving_blueprint)?;
 
@@ -434,7 +447,7 @@ impl BackupService {
             None => backup_name.with_extension("tar.zst"),
         };
 
-        let upload_backup = self
+        let mut upload_backup = self
             .backup_store
             .writer(&backup_file_name)
             .await
@@ -471,14 +484,17 @@ impl BackupService {
             .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
             .tee(&mut digest_writer)
             .opt_tee(pgp_signature_writer.as_mut())
-            .build(upload_backup)?;
+            .build(&mut upload_backup)?;
 
         () = finalize_backup(writer)?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
+        let mut check_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
 
         // SHA-256 digest.
         {
+            let start = SystemTime::now();
+
             let digest = digest_writer
                 .finalize()
                 .map_err(CreateBackupError::HashingFailed)?;
@@ -493,8 +509,18 @@ impl BackupService {
 
             let mut cursor = std::io::Cursor::new(digest);
             std::io::copy(&mut cursor, &mut uploader)
+                .context("`std::io::copy` failed")
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
+            uploader
+                .finalize()
+                .context("`finalize` failed")
+                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+
+            check_upload_durations.push((
+                file_name.clone(),
+                SystemTime::now().duration_since(start).unwrap(),
+            ));
             digest_ids.push(file_name);
         }
 
@@ -502,6 +528,8 @@ impl BackupService {
 
         // OpenPGP signature.
         if pgp_signature_writer.is_some() {
+            let start = SystemTime::now();
+
             // NOTE(RemiBardon): Don’t ask me why, but the borrow checker
             //   doesn’t accept opening the optional with a `match` statement.
             //   It makes no sense to me why, but I guess we’ll unwrap then…
@@ -524,15 +552,45 @@ impl BackupService {
 
             let mut cursor = std::io::Cursor::new(pgp_signature);
             std::io::copy(&mut cursor, &mut uploader)
+                .context("`std::io::copy` failed")
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
+            uploader
+                .finalize()
+                .context("`finalize` failed")
+                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+
+            check_upload_durations.push((
+                file_name.clone(),
+                SystemTime::now().duration_since(start).unwrap(),
+            ));
             signature_ids.push(file_name);
         }
 
-        Ok(CreateBackupOutput {
-            backup_id: backup_file_name,
-            digest_ids,
-            signature_ids,
+        // Upload backup.
+        let backup_upload_duration;
+        {
+            let start = SystemTime::now();
+
+            // TODO: Contribute upstream to `sequoia_openpgp` to add a `into_inner`
+            //   on `Message` so we can compose it.
+            () = upload_backup
+                .finalize()
+                .map_err(CreateBackupError::UploadFailed)?;
+
+            backup_upload_duration = SystemTime::now().duration_since(start).unwrap();
+        }
+
+        Ok(CreateBackupSuccess {
+            creation_output: CreateBackupOutput {
+                backup_id: backup_file_name,
+                digest_ids,
+                signature_ids,
+            },
+            creation_stats: CreateBackupStats {
+                backup_upload_duration,
+                check_upload_durations,
+            },
         })
     }
 }
@@ -569,8 +627,11 @@ pub enum CreateBackupError {
     #[error("Backup signing failed")]
     SigningFailed(#[source] anyhow::Error),
 
+    #[error("Failed uploading backup")]
+    UploadFailed(#[source] anyhow::Error),
+
     #[error("Failed uploading backup integrity check")]
-    IntegrityCheckUploadFailed(#[source] std::io::Error),
+    IntegrityCheckUploadFailed(#[source] anyhow::Error),
 
     #[error(transparent)]
     Other(anyhow::Error),
@@ -593,6 +654,8 @@ impl BackupService {
         //   created daily and deleted using tiered retention, but even then it
         //   would still take years to reach the 1000 objects per request limit
         //   causing a second page fetch.
+
+        use std::str::FromStr as _;
 
         let backups = self.backup_store.list_all().await?;
 
@@ -623,6 +686,14 @@ impl BackupService {
 
             let can_be_restored = (!signing_is_mandatory) || is_signed;
 
+            let backup_file_name = match BackupFileName::from_str(&backup_file_name) {
+                Ok(name) => name,
+                Err(err) => {
+                    tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
+                    continue;
+                }
+            };
+
             let BackupFileNameComponents {
                 created_at,
                 description,
@@ -644,7 +715,7 @@ impl BackupService {
                     can_be_restored,
                 },
                 description: description.into_owned(),
-                id: backup_file_name,
+                id: BackupFileName::from(backup_file_name),
             });
         }
 
@@ -728,7 +799,7 @@ impl BackupService {
                 is_encryption_valid,
             },
             description: parsed_backup_name.description.into_owned(),
-            id: backup_file_name.to_string(),
+            id: backup_file_name.to_owned(),
         };
 
         Ok(dto)
@@ -762,6 +833,7 @@ mod restore {
         verification::VerificationReport,
     };
 
+    #[derive(Debug)]
     pub struct ExtractionSuccess<'a> {
         pub verification_report: VerificationReport,
         pub decryption_report: DecryptionReport,
@@ -769,10 +841,36 @@ mod restore {
         pub extraction_stats: ExtractionStats,
     }
 
-    #[derive(Debug, serde::Serialize)]
-    pub struct RestorationSuccess;
+    pub struct ExtractAndRestoreSuccess {
+        pub verification_report: VerificationReport,
+        pub decryption_report: DecryptionReport,
+        pub extraction_stats: ExtractionStats,
+        pub restoration_output: RestorationOutput,
+    }
 
     impl BackupService {
+        pub async fn restore_backup<'a>(
+            &self,
+            backup_name: &BackupFileName,
+            blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+        ) -> Result<ExtractAndRestoreSuccess, RestorationError> {
+            let ExtractionSuccess {
+                verification_report,
+                decryption_report,
+                extraction_output,
+                extraction_stats,
+            } = self.extract_backup(backup_name, blueprints).await?;
+
+            let restoration_output = self.restore_extracted_backup(extraction_output).await?;
+
+            Ok(ExtractAndRestoreSuccess {
+                verification_report,
+                decryption_report,
+                extraction_stats,
+                restoration_output,
+            })
+        }
+
         pub async fn extract_backup<'a>(
             &self,
             backup_name: &BackupFileName,
@@ -814,13 +912,11 @@ mod restore {
             })
         }
 
-        pub async fn restore_backup<'a>(
+        pub async fn restore_extracted_backup<'a>(
             &self,
             extraction_output: ExtractionOutput<'a>,
-        ) -> Result<RestorationSuccess, RestorationError> {
-            let RestorationOutput = restore(extraction_output)?;
-
-            Ok(RestorationSuccess)
+        ) -> Result<RestorationOutput, RestorationError> {
+            restore(extraction_output)
         }
     }
 }
@@ -998,6 +1094,12 @@ impl AsRef<std::path::Path> for BackupFileName {
     #[inline]
     fn as_ref(&self) -> &std::path::Path {
         self.value.as_ref()
+    }
+}
+
+impl std::cmp::PartialEq for BackupFileName {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
     }
 }
 

@@ -228,6 +228,14 @@ impl ObjectStore for FsStore {
     }
 }
 
+impl super::Finalizable for File {
+    fn finalize(self: Box<Self>) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+}
+
+impl super::ObjectWriter for File {}
+
 // MARK: Builder
 
 pub struct FsStoreBuilder {

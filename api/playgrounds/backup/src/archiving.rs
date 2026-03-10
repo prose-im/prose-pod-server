@@ -166,6 +166,7 @@ fn add_metadata_file<W: std::io::Write>(
 
 // MARK: - Extraction (unarchiving)
 
+#[derive(Debug)]
 pub struct ExtractionOutput<'a> {
     /// Backup archives are unpacked in a temporary directory, that gets
     /// deleted when this is dropped. Drop when done processing data.

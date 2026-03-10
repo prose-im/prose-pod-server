@@ -13,7 +13,7 @@ pub mod s3;
 mod prelude {
     pub use super::{ObjectMetadata, ObjectStore, ReadObjectError};
 
-    pub type DynObjectWriter = dyn std::io::Write + Send + Sync;
+    pub type DynObjectWriter = dyn super::ObjectWriter;
     pub type DynObjectReader = dyn std::io::Read + Send + Sync;
 }
 
@@ -95,3 +95,9 @@ pub enum ReadSizedObjectError<'a> {
         max_size: u64,
     },
 }
+
+pub trait Finalizable {
+    fn finalize(self: Box<Self>) -> Result<(), anyhow::Error>;
+}
+
+pub trait ObjectWriter: std::io::Write + Finalizable + Send + Sync {}

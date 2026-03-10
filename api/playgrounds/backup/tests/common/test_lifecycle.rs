@@ -101,16 +101,18 @@ impl Drop for TestContext {
             return;
         }
 
-        tracing::info!(
-            "Cleaning up test data in `{test_data_path}` (set `NO_CLEANUP` to avoid this)…",
-            test_data_path = self.test_data_path.display()
-        );
-
         fn log_error<E: std::fmt::Display>(error: E) {
             tracing::error!("{error:#}");
         }
 
-        fs::remove_dir_all(&self.test_data_path).unwrap_or_else(log_error);
+        if self.test_data_path.exists() {
+            tracing::info!(
+                "Cleaning up test data in `{test_data_path}` (set `NO_CLEANUP` to avoid this)…",
+                test_data_path = self.test_data_path.display()
+            );
+
+            fs::remove_dir_all(&self.test_data_path).unwrap_or_else(log_error);
+        }
     }
 }
 

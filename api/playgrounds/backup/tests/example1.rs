@@ -15,8 +15,8 @@ use std::{
 use anyhow::anyhow;
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
-    BackupService, CreateBackupCommand, CreateBackupOutput, ExtractionSuccess, config::*,
-    decryption::PgpDecryptionContext, openpgp, stats::print_stats,
+    BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
+    config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
 };
 use toml::toml;
 
@@ -93,10 +93,8 @@ async fn example1() -> Result<(), anyhow::Error> {
     )?;
 
     print!("\n");
-    let CreateBackupOutput {
-        backup_id,
-        digest_ids,
-        ..
+    let CreateBackupSuccess {
+        creation_output, ..
     } = {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
@@ -105,6 +103,11 @@ async fn example1() -> Result<(), anyhow::Error> {
         };
         service.create_backup(command, &current_blueprint).await?
     };
+    let CreateBackupOutput {
+        backup_id,
+        digest_ids,
+        ..
+    } = creation_output;
     tracing::info!("Created backup '{backup_id}'.");
     tracing::info!("Integrity checks: {digest_ids:#?}");
 
@@ -158,7 +161,7 @@ async fn example1() -> Result<(), anyhow::Error> {
         .unwrap()
         .src_relative_to(test_data_path.join("restore"));
     extraction_output.blueprint = &restore_blueprint;
-    service.restore_backup(extraction_output).await?;
+    service.restore_extracted_backup(extraction_output).await?;
 
     Ok(())
 }

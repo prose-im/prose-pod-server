@@ -13,7 +13,7 @@ pub struct DecryptionContext {
     pub pgp: Option<PgpDecryptionContext>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct DecryptionReport {
     pub used_cert_and_subkey: Option<(openpgp::Fingerprint, openpgp::Fingerprint)>,
 }

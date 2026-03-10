@@ -21,10 +21,11 @@ Low priority (unordered):
 
 High priority (ordered):
 
-1. Add S3 end-to-end integration tests.
+1. Backup deletion.
 
 Medium priority (unordered):
 
+- Test integrity checks cannot be deleted via S3.
 - Overridable archiving blueprints (with non-overridable packaged ones).
 - Cache S3 requests.
   - Also cache metadata when listing objects (it should already be present).
@@ -39,6 +40,7 @@ Medium priority (unordered):
       a second download soon after, but it’s what the operator asked for.
 - Only allow one restore at a time.
 - Type errors more granularly.
+- Migrate writers to `tokio::io::AsyncWrite` to get rid of blocking operations.
 
 Low priority (unordered):
 

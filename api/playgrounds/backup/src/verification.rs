@@ -50,7 +50,7 @@ pub enum VerificationError {
     Other(anyhow::Error),
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct VerificationReport {
     pub is_signed: bool,
     pub is_encrypted: bool,

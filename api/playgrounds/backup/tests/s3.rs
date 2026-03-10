@@ -6,19 +6,31 @@
 #[allow(dead_code, unused_imports)]
 mod common;
 
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::anyhow;
-use prose_backup::{BackupConfig, BackupService};
+use prose_backup::{
+    BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
+    ExtractAndRestoreSuccess, stats::print_stats,
+};
 use toml::toml;
 
 use crate::common::*;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn s3() -> Result<(), anyhow::Error> {
     let context = init();
-    let TestContext { now, .. } = context;
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
 
+    let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
     let region = env_required!("S3_REGION");
     let endpoint_url = env_required!("S3_ENDPOINT_URL");
     let access_key = env_required!("S3_ACCESS_KEY");
@@ -72,8 +84,59 @@ async fn s3() -> Result<(), anyhow::Error> {
         || pgp_policy.clone(),
     )?;
 
-    print!("\n");
-    service.list_backups().await?;
+    let mut blueprints = test_blueprints();
+    let pod_api_demo_blueprint = blueprints.get(&BLUEPRINT_POD_API_DEMO).unwrap();
+    let blueprint = pod_api_demo_blueprint
+        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
-    todo!()
+    print!("\n");
+    let CreateBackupSuccess {
+        creation_output,
+        creation_stats,
+    } = service
+        .create_backup(
+            CreateBackupCommand {
+                prefix: "test-backup",
+                description: "Test backup",
+                created_at: SystemTime::now(),
+            },
+            &blueprint,
+        )
+        .await?;
+    let created_backup_id = creation_output.backup_id;
+    tracing::info!("Upload stats: {creation_stats:#?}");
+
+    print!("\n");
+    let backups = service.list_backups().await?;
+    tracing::info!("Backups: {backups:#?}");
+    assert!(backups.iter().any(|backup| backup.id == created_backup_id));
+
+    print!("\n");
+    let details = service.get_details(&created_backup_id, &blueprints).await?;
+    tracing::info!("Backup details: {details:#?}");
+
+    print!("\n");
+    let download_url = service
+        .get_download_url(&created_backup_id, Duration::from_secs(3))
+        .await?;
+    tracing::info!("Download URL: <{download_url}>.");
+
+    print!("\n");
+    blueprints.insert(
+        BLUEPRINT_POD_API_DEMO,
+        pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore")),
+    );
+    let ExtractAndRestoreSuccess {
+        extraction_stats, ..
+    } = service
+        .restore_backup(&created_backup_id, &blueprints)
+        .await?;
+    print_stats(
+        &extraction_stats.raw_read_stats,
+        &extraction_stats.decryption_stats,
+        &extraction_stats.decompression_stats,
+        extraction_stats.extracted_bytes_count,
+    );
+
+    Ok(())
 }
