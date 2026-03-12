@@ -22,3 +22,63 @@ pub mod iso8601_duration {
         ))
     }
 }
+
+pub mod s3 {
+    use super::*;
+
+    pub mod object_lock_retention_mode {
+        use ::s3::types::ObjectLockRetentionMode;
+
+        use super::*;
+
+        #[inline]
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<ObjectLockRetentionMode, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(deserializer)?;
+            match value.as_str() {
+                "compliance" => Ok(ObjectLockRetentionMode::Compliance),
+                "governance" => Ok(ObjectLockRetentionMode::Governance),
+                _ => Err(serde::de::Error::custom(
+                    "Unknown ObjectLockRetentionMode `{value}`. Allowed values: `\"compliance\"`, `\"governance\"`.",
+                )),
+            }
+        }
+    }
+
+    pub mod object_lock_legal_hold_status {
+        use ::s3::types::ObjectLockLegalHoldStatus;
+
+        use super::*;
+
+        #[inline]
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<ObjectLockLegalHoldStatus, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(deserializer)?;
+            match value.as_str() {
+                "on" => Ok(ObjectLockLegalHoldStatus::On),
+                "off" => Ok(ObjectLockLegalHoldStatus::Off),
+                _ => Err(serde::de::Error::custom(
+                    "Unknown ObjectLockLegalHoldStatus `{value}`. Allowed values: `\"on\"`, `\"off\"`.",
+                )),
+            }
+        }
+
+        pub mod option {
+            use super::*;
+
+            #[inline]
+            pub fn deserialize<'de, D>(
+                deserializer: D,
+            ) -> Result<Option<ObjectLockLegalHoldStatus>, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                super::deserialize(deserializer).map(Some)
+            }
+        }
+    }
+}

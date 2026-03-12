@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 
 use crate::config::StorageFsConfig;
 
@@ -144,7 +144,10 @@ impl ObjectStore for FsStore {
     }
 
     async fn find(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
-        let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
+        let files = fs::read_dir(&self.directory).context(format!(
+            "Failed reading directory `{}`",
+            self.directory.display()
+        ))?;
 
         let mut results: Vec<ObjectMetadata> = Vec::new();
         for entry in files.into_iter() {
@@ -174,7 +177,10 @@ impl ObjectStore for FsStore {
     }
 
     async fn list_all_after(&self, prefix: &str) -> Result<Vec<ObjectMetadata>, anyhow::Error> {
-        let files = fs::read_dir(&self.directory).context("Failed reading directory")?;
+        let files = fs::read_dir(&self.directory).context(format!(
+            "Failed reading directory `{}`",
+            self.directory.display()
+        ))?;
 
         let mut results: Vec<ObjectMetadata> = Vec::new();
         for entry in files.into_iter() {
@@ -227,11 +233,46 @@ impl ObjectStore for FsStore {
         }
     }
 
-    async fn delete(&self, file_name: &str) -> Result<(), anyhow::Error> {
+    async fn delete(&self, file_name: &str) -> Result<DeletedState, anyhow::Error> {
         match std::fs::remove_file(self.directory.join(file_name)) {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(DeletedState::Deleted),
             Err(err) => Err(anyhow::Error::from(err)),
         }
+    }
+
+    async fn delete_all(&self, prefix: &str) -> Result<BulkDeleteOutput, anyhow::Error> {
+        let files = fs::read_dir(&self.directory).context(format!(
+            "Failed reading directory `{}`",
+            self.directory.display()
+        ))?;
+
+        let mut output = BulkDeleteOutput::default();
+        for entry in files.into_iter() {
+            match entry {
+                Ok(entry) => {
+                    let file_name = entry
+                        .file_name()
+                        .into_string()
+                        .expect("File names should only contain Unicode data");
+
+                    if file_name.as_str() > prefix {
+                        match self.delete(&file_name).await {
+                            Ok(_) => output.deleted.push(file_name),
+                            Err(err) => output.errors.push(
+                                anyhow::Error::from(err)
+                                    .context(format!("File `{file_name}` not deleted")),
+                            ),
+                        }
+                    }
+                }
+                Err(err) => output.errors.push(anyhow::Error::from(err).context(format!(
+                    "Invalid entry in directory `{}`",
+                    self.directory.display()
+                ))),
+            }
+        }
+
+        Ok(output)
     }
 }
 

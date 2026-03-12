@@ -20,10 +20,10 @@ use prose_backup::{
 };
 use toml::toml;
 
-use crate::common::*;
+use crate::common::prelude::*;
 
-#[tokio::test]
-async fn example1() -> Result<(), anyhow::Error> {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_example1() -> Result<(), anyhow::Error> {
     let context = init();
     let TestContext {
         now,

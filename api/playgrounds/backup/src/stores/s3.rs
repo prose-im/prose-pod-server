@@ -3,10 +3,17 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use bytes::Bytes;
-use s3::{error::SdkError, presigning::PresigningConfig, types::CompletedPart};
-use std::io::{self, Read, Write};
+use s3::{
+    error::SdkError,
+    presigning::PresigningConfig,
+    types::{CompletedPart, ObjectLockLegalHoldStatus},
+};
+use std::{
+    io::{self, Read, Write},
+    time::SystemTime,
+};
 
 use crate::{config::StorageS3Config, util::saturating_i64_to_u64};
 
@@ -15,9 +22,12 @@ use super::prelude::*;
 /// 8MiB.
 const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
 
+#[cfg_attr(feature = "test", derive(Clone))]
 pub struct S3Store {
     pub client: s3::Client,
     pub bucket: String,
+    pub object_lock: Option<crate::config::S3ObjectLockConfig>,
+    pub object_lock_legal_hold_status: Option<s3::types::ObjectLockLegalHoldStatus>,
 }
 
 impl S3Store {
@@ -32,6 +42,8 @@ impl S3Store {
             secret_key,
             session_token,
             force_path_style,
+            object_lock,
+            object_lock_legal_hold_status,
         } = config;
 
         let creds = s3::config::Credentials::new(
@@ -63,6 +75,8 @@ impl S3Store {
         Self {
             client,
             bucket: String::clone(bucket_name),
+            object_lock: object_lock.clone(),
+            object_lock_legal_hold_status: object_lock_legal_hold_status.clone(),
         }
     }
 }
@@ -70,7 +84,14 @@ impl S3Store {
 #[async_trait::async_trait]
 impl ObjectStore for S3Store {
     async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error> {
-        let writer = S3Writer::new(self.client.clone(), &self.bucket, key).await?;
+        let writer = S3Writer::new(
+            self.client.clone(),
+            &self.bucket,
+            key,
+            self.object_lock.as_ref(),
+            self.object_lock_legal_hold_status.as_ref(),
+        )
+        .await?;
         Ok(Box::new(writer))
     }
 
@@ -200,15 +221,105 @@ impl ObjectStore for S3Store {
         Ok(presigned.uri().to_owned())
     }
 
-    async fn delete(&self, key: &str) -> Result<(), anyhow::Error> {
-        let _ = self
+    async fn delete(&self, key: &str) -> Result<DeletedState, anyhow::Error> {
+        let output = self
             .client
             .delete_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
+            .await
+            .context("Failed deleting S3 object")?;
+
+        // FIXME: Doesn’t seem to work with Ceph (hence, with Hetzner).
+        //   It’s annoying to make a separate request just to check that,
+        //   so we’ll pretend the object was deleted. If one is using
+        //   Object Locking or versioning, they are aware of this and
+        //   likely have some cleanup configuration in place.
+        if output.delete_marker() == Some(true) {
+            Ok(DeletedState::MarkedForDeletion)
+        } else {
+            Ok(DeletedState::Deleted)
+        }
+    }
+
+    async fn delete_all(&self, prefix: &str) -> Result<BulkDeleteOutput, anyhow::Error> {
+        use s3::types::{Delete, ObjectIdentifier};
+
+        let mut output = BulkDeleteOutput::default();
+
+        // Find all objects matching prefix.
+        // NOTE: If object versioning is enabled —which is always the case when
+        //   object lock is enabled—, deleting an object without specifying an
+        //   object ID only results in the creation of a delete marker
+        //   (a.k.a. “tombstone”). To really delete an object, one must delete
+        //   all of its existing versions.
+        let objects = self
+            .client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .send()
             .await?;
-        Ok(())
+
+        let identifiers: Vec<ObjectIdentifier> = objects
+            .contents()
+            .into_iter()
+            .filter_map(|object| match object.key() {
+                Some(object_key) => Some(
+                    ObjectIdentifier::builder()
+                        .key(object_key)
+                        .build()
+                        // SAFETY: `key` is set.
+                        .unwrap(),
+                ),
+                None => None,
+            })
+            .collect();
+
+        // Abort if no match found.
+        if identifiers.is_empty() {
+            tracing::debug!("Objects prefixed with `{prefix}` cannot be deleted: No match found.");
+            return Ok(output);
+        }
+
+        // Bulk delete all objects.
+        let results = self
+            .client
+            .delete_objects()
+            .bucket(&self.bucket)
+            .delete(
+                Delete::builder()
+                    .set_objects(Some(identifiers))
+                    .build()
+                    // SAFETY: `objects` is set.
+                    .unwrap(),
+            )
+            .send()
+            .await?;
+
+        for object in results.deleted.unwrap_or_default() {
+            let key = object.key().map_or(String::new(), str::to_owned);
+
+            // FIXME: Doesn’t seem to work with Ceph (hence, with Hetzner).
+            //   It’s annoying to make a separate request just to check that,
+            //   so we’ll pretend the object was deleted. If one is using
+            //   Object Locking or versioning, they are aware of this and
+            //   likely have some cleanup configuration in place.
+            if object.delete_marker() == Some(true) {
+                output.marked_for_deletion.push(key);
+            } else {
+                output.deleted.push(key);
+            }
+        }
+
+        for error in results.errors.unwrap_or_default() {
+            let key = error.key().unwrap_or_default();
+            let error = anyhow!("{error:?}").context(format!("Object `{key}` not deleted"));
+            output.errors.push(error);
+        }
+
+        Ok(output)
     }
 }
 
@@ -244,6 +355,10 @@ pub struct S3Writer {
     buf: Vec<u8>,
     parts: Vec<CompletedPart>,
     part_number: i32,
+    put_object_retention:
+        Option<s3::operation::put_object_retention::builders::PutObjectRetentionFluentBuilder>,
+    put_object_legal_hold:
+        Option<s3::operation::put_object_legal_hold::builders::PutObjectLegalHoldFluentBuilder>,
 }
 
 impl S3Writer {
@@ -251,11 +366,13 @@ impl S3Writer {
         client: s3::Client,
         bucket: impl Into<String>,
         key: impl Into<String>,
+        object_lock: Option<&crate::config::S3ObjectLockConfig>,
+        object_lock_legal_hold_status: Option<&ObjectLockLegalHoldStatus>,
     ) -> Result<Self, anyhow::Error> {
         let bucket = bucket.into();
         let key = key.into();
 
-        let resp = client
+        let response = client
             .create_multipart_upload()
             .bucket(&bucket)
             .key(&key)
@@ -263,14 +380,41 @@ impl S3Writer {
             .await
             .context("Failed creating S3 multipart upload")?;
 
+        let put_object_retention = object_lock.map(|object_lock| {
+            client
+                .put_object_retention()
+                .bucket(&bucket)
+                .key(&key)
+                .retention(
+                    s3::types::ObjectLockRetention::builder()
+                        .mode(object_lock.mode.clone())
+                        .retain_until_date((SystemTime::now() + object_lock.duration).into())
+                        .build(),
+                )
+        });
+        let put_object_legal_hold =
+            object_lock_legal_hold_status.map(|object_lock_legal_hold_status| {
+                client
+                    .put_object_legal_hold()
+                    .bucket(&bucket)
+                    .key(&key)
+                    .legal_hold(
+                        s3::types::ObjectLockLegalHold::builder()
+                            .status(object_lock_legal_hold_status.to_owned())
+                            .build(),
+                    )
+            });
+
         Ok(Self {
             client,
             bucket,
             key,
-            upload_id: resp.upload_id().unwrap().to_string(),
+            upload_id: response.upload_id().unwrap().to_string(),
             buf: Vec::with_capacity(UPLOAD_PART_SIZE),
             parts: Vec::new(),
             part_number: 1,
+            put_object_retention,
+            put_object_legal_hold,
         })
     }
 
@@ -332,6 +476,23 @@ impl S3Writer {
             .context("S3 multipart upload complete failed")?;
 
         tracing::trace!(key = self.key, "S3 multipart upload completed.");
+
+        // NOTE: With Hetzner, which uses Ceph, manual testing showed setting
+        //   object retention or legal hold during a multipart upload silently
+        //   gets ignored. To work around it, we set it in separate requests.
+        //   It’s unfortunate we have to make three requests instead of one.
+        if let Some(put_object_retention) = self.put_object_retention {
+            put_object_retention
+                .send()
+                .await
+                .context("Failed adding S3 object retention metadata")?;
+        }
+        if let Some(put_object_legal_hold) = self.put_object_legal_hold {
+            put_object_legal_hold
+                .send()
+                .await
+                .context("Failed adding S3 object legal hold metadata")?;
+        }
 
         Ok(())
     }

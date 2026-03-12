@@ -5,11 +5,16 @@
 
 pub mod blueprints;
 pub mod pgp;
+pub mod s3;
 pub mod test_lifecycle;
 
-pub use self::blueprints::*;
-pub use self::pgp::*;
-pub use self::test_lifecycle::*;
+pub mod prelude {
+    pub use super::blueprints::*;
+    pub(crate) use super::env_required;
+    pub use super::pgp::*;
+    pub use super::test_lifecycle::*;
+    pub use super::unique_hex;
+}
 
 pub fn unique_hex() -> String {
     let ns = std::time::SystemTime::now()
@@ -30,3 +35,11 @@ macro_rules! env_required {
     };
 }
 pub(crate) use env_required;
+
+macro_rules! log_error {
+    () => {
+        #[inline]
+        |error| tracing::error!("{:#}", error)
+    };
+}
+pub(crate) use log_error;

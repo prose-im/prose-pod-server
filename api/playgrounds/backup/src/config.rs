@@ -71,7 +71,12 @@ use figment::Figment;
 /// # Where to store backup integrity checks.
 /// [storage.checks]
 /// mode = "s3"
-/// # This bucket SHOULD be append-only (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
+/// # This bucket SHOULD have Object Lock enabled (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
+/// # If using Object Lock, you should also enable some bucket-level
+/// # configuration to automatically cleanup objects and delete markers
+/// # once the retention period ends (this library won’t do it). Because of
+/// # mandatory versioning, this library can only mark objects as deleted but
+/// # the underlying data will still exist (and be billed by your provider!).
 /// s3.bucket_name = "prose-checks"
 ///
 /// # Global S3 configuration.
@@ -311,6 +316,27 @@ pub struct StorageS3Config {
 
     #[serde(default)]
     pub force_path_style: Option<bool>,
+
+    #[serde(default, flatten)]
+    pub object_lock: Option<S3ObjectLockConfig>,
+
+    #[serde(default)]
+    #[serde(with = "crate::util::serde::s3::object_lock_legal_hold_status::option")]
+    pub object_lock_legal_hold_status: Option<s3::types::ObjectLockLegalHoldStatus>,
+}
+
+#[cfg(feature = "destination_s3")]
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct S3ObjectLockConfig {
+    #[serde(rename = "object_lock_mode")]
+    #[serde(with = "crate::util::serde::s3::object_lock_retention_mode")]
+    pub mode: s3::types::ObjectLockRetentionMode,
+
+    #[serde(rename = "object_lock_duration")]
+    #[serde(with = "crate::util::serde::iso8601_duration")]
+    pub duration: std::time::Duration,
 }
 
 #[cfg(feature = "destination_fs")]

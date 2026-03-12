@@ -11,6 +11,8 @@ use std::{
     time::SystemTime,
 };
 
+use crate::common::log_error;
+
 static INIT: Once = Once::new();
 
 /// Directory containing a fake filesystem root, to use in tests.
@@ -20,12 +22,13 @@ pub struct TestContext {
     pub now: SystemTime,
     pub test_id: String,
     pub test_data_path: PathBuf,
+    pub cleanup_functions: Vec<std::pin::Pin<Box<dyn Future<Output = ()> + Send>>>,
 }
 
 pub fn init() -> TestContext {
-    init_tracing();
-
     INIT.call_once(|| {
+        init_tracing();
+
         tracing::info!("Creating shared test data in `{TEST_DATA_DIR}`…");
 
         fn exists(path: impl AsRef<Path>) -> bool {
@@ -85,11 +88,22 @@ pub fn init() -> TestContext {
         now: SystemTime::now(),
         test_data_path,
         test_id,
+        cleanup_functions: Vec::new(),
     }
 }
 
 impl Drop for TestContext {
     fn drop(&mut self) {
+        // Run cleanup functions in reverse order.
+        let cleanup_functions = std::mem::take(&mut self.cleanup_functions);
+        tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                for func in cleanup_functions.into_iter().rev() {
+                    func.await
+                }
+            })
+        });
+
         let test_failed = std::thread::panicking();
 
         // Do not cleanup on test failures.
@@ -101,17 +115,13 @@ impl Drop for TestContext {
             return;
         }
 
-        fn log_error<E: std::fmt::Display>(error: E) {
-            tracing::error!("{error:#}");
-        }
-
         if self.test_data_path.exists() {
             tracing::info!(
                 "Cleaning up test data in `{test_data_path}` (set `NO_CLEANUP` to avoid this)…",
                 test_data_path = self.test_data_path.display()
             );
 
-            fs::remove_dir_all(&self.test_data_path).unwrap_or_else(log_error);
+            fs::remove_dir_all(&self.test_data_path).unwrap_or_else(log_error!());
         }
     }
 }

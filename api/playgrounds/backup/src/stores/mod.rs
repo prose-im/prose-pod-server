@@ -11,7 +11,7 @@ pub mod file;
 pub mod s3;
 
 mod prelude {
-    pub use super::{ObjectMetadata, ObjectStore, ReadObjectError};
+    pub use super::{BulkDeleteOutput, DeletedState, ObjectMetadata, ObjectStore, ReadObjectError};
 
     pub type DynObjectWriter = dyn super::ObjectWriter;
     pub type DynObjectReader = dyn std::io::Read + Send + Sync;
@@ -68,12 +68,29 @@ pub trait ObjectStore: Sync {
         ttl: &std::time::Duration,
     ) -> Result<String, anyhow::Error>;
 
-    async fn delete(&self, key: &str) -> Result<(), anyhow::Error>;
+    #[must_use]
+    async fn delete(&self, key: &str) -> Result<DeletedState, anyhow::Error>;
+
+    #[must_use]
+    async fn delete_all(&self, prefix: &str) -> Result<BulkDeleteOutput, anyhow::Error>;
 }
 
 pub struct ObjectMetadata {
     pub file_name: String,
     pub size_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeletedState {
+    Deleted,
+    MarkedForDeletion,
+}
+
+#[derive(Debug, Default)]
+pub struct BulkDeleteOutput {
+    pub deleted: Vec<String>,
+    pub marked_for_deletion: Vec<String>,
+    pub errors: Vec<anyhow::Error>,
 }
 
 #[derive(Debug, thiserror::Error)]

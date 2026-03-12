@@ -924,14 +924,53 @@ mod restore {
 // MARK: Restore
 
 mod delete {
-    use crate::{BackupFileName, BackupService};
+    use crate::{BackupFileName, BackupService, stores::BulkDeleteOutput};
 
     impl BackupService {
+        // NOTE: If using Object Lock, this method exits successfully and
+        //   backups / integrity checks remain stored until locks are removed.
         pub async fn delete_backup<'a>(
             &self,
             backup_name: &BackupFileName,
         ) -> Result<(), anyhow::Error> {
-            self.backup_store.delete(&backup_name).await
+            // Delete the backup object.
+            let deleted_state = self.backup_store.delete(&backup_name).await?;
+            match deleted_state {
+                crate::stores::DeletedState::Deleted => {}
+                crate::stores::DeletedState::MarkedForDeletion => tracing::warn!(
+                    "Backup `{backup_name}` not deleted, but marked for deletion \
+                    once object locks are removed."
+                ),
+            }
+
+            // Delete all associated integrity checks.
+            {
+                let BulkDeleteOutput {
+                    deleted,
+                    marked_for_deletion,
+                    errors,
+                } = self.check_store.delete_all(&backup_name).await?;
+
+                // Log successes.
+                for key in deleted {
+                    tracing::info!("Object `{key}` deleted.");
+                }
+
+                // Warn if a deletion only yielded a marker.
+                for key in marked_for_deletion {
+                    tracing::warn!(
+                        "Object `{key}` not deleted, but marked for deletion \
+                        once object locks are removed."
+                    );
+                }
+
+                // Log errors.
+                for error in errors {
+                    tracing::warn!("{error:#}");
+                }
+            }
+
+            Ok(())
         }
     }
 }

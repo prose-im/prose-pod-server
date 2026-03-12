@@ -10,7 +10,7 @@ use std::{
 
 use prose_backup::ArchiveBlueprint;
 
-use crate::common::TEST_DATA_DIR;
+use crate::common::prelude::*;
 
 pub const BLUEPRINT_LOCAL_DATA: u8 = 1;
 pub const BLUEPRINT_POD_API_DEMO: u8 = 2;
