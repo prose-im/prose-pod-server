@@ -475,19 +475,22 @@ impl FigmentExt for Figment {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone, Copy, Default)]
 #[repr(transparent)]
-pub struct AlwaysNone(Option<Impossible>);
+pub struct AlwaysNone(());
 
-#[derive(Debug, Clone, Copy)]
-enum Impossible {}
+impl std::fmt::Debug for AlwaysNone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("/* irrelevant */")
+    }
+}
 
 impl<'de> serde::Deserialize<'de> for AlwaysNone {
     fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::de::Deserializer<'de>,
     {
-        Ok(Self(None))
+        Ok(Self(()))
     }
 }
 
