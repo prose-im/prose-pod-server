@@ -157,9 +157,7 @@ fn default_config_static() -> Figment {
         fs.mode = 0o600
     });
 
-    let static_defaults = static_defaults.to_string();
-
-    Figment::from(Toml::string(&static_defaults))
+    Figment::from(Serialized::defaults(static_defaults))
 }
 
 fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
@@ -410,13 +408,27 @@ impl TryFrom<Figment> for BackupConfig {
     }
 }
 
+#[cfg(feature = "test")]
 impl TryFrom<toml::Table> for BackupConfig {
     type Error = anyhow::Error;
 
     fn try_from(toml: toml::Table) -> Result<Self, Self::Error> {
         use figment::providers::*;
 
-        let figment = Self::default_figment().merge(Toml::string(toml.to_string().as_str()));
+        let figment = Self::default_figment().merge(Serialized::defaults(toml));
+
+        Self::try_from(figment)
+    }
+}
+
+#[cfg(feature = "test")]
+impl TryFrom<figment::providers::Data<figment::providers::Toml>> for BackupConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        provider: figment::providers::Data<figment::providers::Toml>,
+    ) -> Result<Self, Self::Error> {
+        let figment = Self::default_figment().merge(provider);
 
         Self::try_from(figment)
     }
@@ -491,7 +503,31 @@ mod tests {
 
     #[test]
     fn test_storage_errors() {
+        use figment::providers::*;
         use toml::toml;
+
+        // NOTE: In tests we need to serialize then re-parse the TOML otherwise
+        //   we get errors with unpredictable output like
+        //   “in playgrounds/backup/src/config.rs:417:53 toml::map::Map<alloc::string::String, toml::value::Value>”
+        //   instead of “in TOML source string”. Users should never see those
+        //   anyway, as configuration will come from a TOML file (not a value).
+        macro_rules! backup_config {
+            ($toml:tt) => {
+                BackupConfig::try_from(Toml::string(&toml! $toml.to_string()))
+            };
+        }
+        macro_rules! assert_error {
+            ($res:expr, $msg:literal) => {
+                assert_eq!(
+                    $res.err().as_ref().map(anyhow::Error::to_string),
+                    Some($msg.to_owned())
+                )
+            };
+            (toml: $toml:tt, $msg:literal) => {
+                let res = backup_config!($toml);
+                assert_error!(res, $msg)
+            };
+        }
 
         // NOTE: Error message not relevant here,
         //   there is a default value for `storage`.
@@ -500,44 +536,30 @@ mod tests {
 
         // NOTE: Error message not relevant here,
         //   there is a default value for `storage.backups`.
-        let res = BackupConfig::try_from(toml! {
-            [storage]
-        });
+        let res = backup_config!({ [storage] });
         assert!(matches!(res, Err(_)));
 
-        let res = BackupConfig::try_from(toml! {
-            [storage.backups]
-        });
-        assert_eq!(
-            res.err().as_ref().map(anyhow::Error::to_string),
-            Some(
-                "missing field `mode` for key \"default.storage.backups\" in TOML source string"
-                    .to_owned()
-            )
+        assert_error!(
+            toml: {
+                [storage.backups]
+            },
+            "missing field `mode` for key \"default.storage.backups\" in TOML source string"
         );
 
-        let res = BackupConfig::try_from(toml! {
-            [storage.backups]
-            mode = "s3"
-        });
-        assert_eq!(
-            res.err().as_ref().map(anyhow::Error::to_string),
-            Some(
-                "missing field `s3` for key \"default.storage.backups\" in TOML source string"
-                    .to_owned()
-            )
+        assert_error!(
+            toml: {
+                [storage.backups]
+                mode = "s3"
+            },
+            "missing field `s3` for key \"default.storage.backups\" in TOML source string"
         );
 
-        let res = BackupConfig::try_from(toml! {
-            [storage.backups]
-            mode = "foo"
-        });
-        assert_eq!(
-            res.err().as_ref().map(anyhow::Error::to_string),
-            Some(
-                "unknown variant: found `foo`, expected ``s3` or `fs`` for key \"default.storage.backups.mode\" in TOML source string"
-                    .to_owned()
-            )
+        assert_error!(
+            toml: {
+                [storage.backups]
+                mode = "foo"
+            },
+            "unknown variant: found `foo`, expected ``s3` or `fs`` for key \"default.storage.backups.mode\" in TOML source string"
         );
     }
 }
