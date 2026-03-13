@@ -350,6 +350,9 @@ pub struct CreateBackupCommand<'a> {
 
     pub blueprint: &'a archiving::ArchiveBlueprint,
 
+    // TODO: Get rid of this, and move it to somewhere else so it doesn’t
+    //   pollute examples because of `rust-analyzer`. For example, store a
+    //   time dependency in `BackupService` that can be overriden individually.
     /// Timestamp which should be associated with the backup.
     ///
     /// This is only useful in tests, as we have no way to read data as it was
@@ -1196,6 +1199,10 @@ impl std::str::FromStr for BackupFileName {
 }
 
 impl BackupFileName {
+    pub fn try_from(str: impl AsRef<str>) -> Result<Self, <Self as std::str::FromStr>::Err> {
+        std::str::FromStr::from_str(str.as_ref())
+    }
+
     /// Get the file base name.
     ///
     /// ```
