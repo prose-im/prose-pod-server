@@ -550,10 +550,10 @@ mod tests {
                     Some($msg.to_owned())
                 )
             };
-            (toml: $toml:tt, $msg:literal) => {
+            (toml: $toml:tt, $msg:literal) => {{
                 let res = backup_config!($toml);
                 assert_error!(res, $msg)
-            };
+            }};
         }
 
         // NOTE: Error message not relevant here,
