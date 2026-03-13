@@ -39,7 +39,6 @@ Medium priority (unordered):
       a second download soon after, but it’s what the operator asked for.
 - Only allow one restore at a time.
 - Type errors more granularly.
-- Migrate writers to `tokio::io::AsyncWrite` to get rid of blocking operations.
 
 Low priority (unordered):
 
