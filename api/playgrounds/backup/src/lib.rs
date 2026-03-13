@@ -958,6 +958,7 @@ mod delete {
                     once object locks are removed."
                 ),
             }
+            tracing::info!("Object `{backup_name}` deleted.");
 
             // Delete all associated integrity checks.
             {

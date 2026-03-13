@@ -66,7 +66,7 @@ where
             // Ensure object fits in cache.
             if size > max_size {
                 tracing::debug!(
-                    "Object `{key}` larger than allowed cache size ({size} > {max_size}), not caching."
+                    "Object `{key}` is larger than allowed cache size ({size} > {max_size}), not caching."
                 );
                 return;
             }
@@ -87,12 +87,12 @@ where
                 };
 
                 tracing::debug!(
-                    "Purging `{cached_key}` from cache to make space for `{key}`.",
+                    "Object `{cached_key}` purged from cache, to make space for `{key}`.",
                     cached_key = entry.key
                 );
-                cache.total_size = cache.total_size.wrapping_sub(entry.size);
+                cache.total_size = cache.total_size.saturating_sub(entry.size);
 
-                // NOTE: The entry’s temporary directory will be removed when
+                // NOTE: The entry’s temporary directory will be deleted when
                 //   `entry` is dropped (i.e. now).
             }
         }
@@ -101,6 +101,27 @@ where
         cache.entries.push_back(CacheEntry { key, tmp_dir, size });
         // SAFETY: We’ll never reach 18 446 744 TB.
         cache.total_size += size;
+    }
+
+    /// Remove a cached entry.
+    pub async fn remove(&self, key: &str) {
+        let mut cache = self.cache.write().await;
+
+        let mut indices: Vec<(usize, u64)> = Vec::with_capacity(1);
+        for (index, entry) in cache.entries.iter().enumerate() {
+            if entry.key == key {
+                indices.push((index, entry.size));
+            }
+        }
+
+        for (index, size) in indices {
+            // NOTE: The entry’s temporary directory will be deleted when
+            //   the entry value is dropped (i.e. right after `.remove`).
+            cache.entries.remove(index);
+            cache.total_size = cache.total_size.saturating_sub(size);
+        }
+
+        tracing::debug!("Object `{key}` removed from cache, as requested.");
     }
 }
 
@@ -118,7 +139,8 @@ where
     #[inline]
     async fn reader(&self, key: &str) -> Result<Box<DynObjectReader>, ReadObjectError> {
         let cache = self.cache.read().await;
-        for entry in self.cache.read().await.entries.iter() {
+
+        for entry in cache.entries.iter() {
             if entry.key == key {
                 let path = entry.tmp_dir.path().join(&entry.key);
                 match File::open(&path) {
@@ -178,7 +200,12 @@ where
 
     #[inline]
     async fn delete(&self, key: &str) -> Result<DeletedState, anyhow::Error> {
-        self.store.delete(key).await
+        let deleted_state = self.store.delete(key).await?;
+
+        // Purge cache entry.
+        self.remove(key).await;
+
+        Ok(deleted_state)
     }
 
     #[inline]
