@@ -21,7 +21,7 @@ use toml::toml;
 use crate::common::{log_error, prelude::*};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_s3_basic() -> Result<(), anyhow::Error> {
+async fn s3_basic() -> Result<(), anyhow::Error> {
     let mut context = init();
     let TestContext {
         now,
@@ -174,7 +174,7 @@ async fn test_s3_basic() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_s3_object_locking() -> Result<(), anyhow::Error> {
+async fn s3_object_locking() -> Result<(), anyhow::Error> {
     use s3::types::{
         ObjectLockConfiguration, ObjectLockEnabled, ObjectLockLegalHold, ObjectLockRetention,
     };
@@ -360,7 +360,7 @@ async fn test_s3_object_locking() -> Result<(), anyhow::Error> {
 /// TL;DR: When using Ceph, Object Lock modes and Legal Hold statuses are
 ///   respected when sending “Put Object” requests.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_object_lock_oneshot() -> Result<(), anyhow::Error> {
+async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
     use s3::types::{
         ObjectLockLegalHold, ObjectLockLegalHoldStatus, ObjectLockMode, ObjectLockRetention,
         ObjectLockRetentionMode,
@@ -454,7 +454,7 @@ async fn test_object_lock_oneshot() -> Result<(), anyhow::Error> {
 ///   respected when sending “Multipart Upload” requests. One needs to apply
 ///   this metadata afterwards.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_object_lock_multipart() -> Result<(), anyhow::Error> {
+async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
     use s3::error::SdkError;
     use s3::types::{
         CompletedMultipartUpload, CompletedPart, ObjectLockLegalHold, ObjectLockLegalHoldStatus,

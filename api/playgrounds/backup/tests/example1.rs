@@ -23,7 +23,7 @@ use toml::toml;
 use crate::common::prelude::*;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_example1() -> Result<(), anyhow::Error> {
+async fn example1() -> Result<(), anyhow::Error> {
     let context = init();
     let TestContext {
         now,
