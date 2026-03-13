@@ -3,9 +3,11 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod measurements;
 mod octal;
 pub mod serde;
 
+pub use measurements::BytesAmount;
 pub use octal::Octal;
 
 /// Casting with `as` can yield incorrect values and similar issues
@@ -158,6 +160,18 @@ pub fn debug_panic<E: std::fmt::Debug>(error: &E) {
         panic!("{error:?}")
     }
 }
+
+/// [`panic!`] in debug mode, [`tracing::error!`] in release.
+macro_rules! debug_panic_or_log_error {
+    ($($args:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!("[debug_only] {}", format!($($args)*));
+        } else {
+            tracing::error!($($args)*);
+        }
+    };
+}
+pub(crate) use debug_panic_or_log_error;
 
 /// While waiting for <https://github.com/rust-lang/rust/commit/e1424588bd6c0865d1b3425e8f67c93554733d4e>
 /// to make it to a stable release.

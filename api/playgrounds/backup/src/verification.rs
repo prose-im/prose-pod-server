@@ -6,9 +6,10 @@
 //! Verification logic.
 
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::sync::Arc;
 
 use crate::BackupService;
-use crate::stores::{ReadObjectError, ReadSizedObjectError};
+use crate::stores::{ObjectStore as _, ReadObjectError, ReadSizedObjectError};
 
 pub use self::VerificationContext as Context;
 
@@ -28,7 +29,7 @@ pub struct VerificationContext {
 }
 
 pub struct VerificationOutput {
-    pub tmp_dir: tempfile::TempDir,
+    pub tmp_dir: Arc<tempfile::TempDir>,
     pub backup_path: std::path::PathBuf,
 }
 
@@ -103,6 +104,7 @@ impl BackupService {
         let tmp_dir = tempfile::TempDir::new()
             .context("Failed creating a temporary directory to download the backup in")
             .map_err(VerificationError::Other)?;
+        let tmp_dir = Arc::new(tmp_dir);
         let backup_path = tmp_dir.path().join(&backup_name);
 
         let mut backup_file = std::fs::File::options()
@@ -205,10 +207,14 @@ impl BackupService {
                 .map_err(VerificationError::InvalidSignature)?;
             report.is_intact = true;
 
+            tracing::debug!("OpenPGP signature verified.");
+
             let pgp_report = verifier.report();
             report.signing_keys = pgp_report.signing_keys;
 
-            tracing::debug!("OpenPGP signature verified.");
+            self.backup_store
+                .cache(backup_name.to_string(), Arc::clone(&tmp_dir))
+                .await;
 
             // Don’t process any other integrity check.
             return Ok(VerificationOutput {
@@ -284,20 +290,24 @@ impl BackupService {
             } = tee_writer;
 
             // Verify the checksum.
-            if verifier.finalize().as_ref() == expected_hash {
-                tracing::debug!("SHA-256 checksum verified.");
-                report.is_intact = true;
-
-                // Don’t process any other integrity check.
-                return Ok(VerificationOutput {
-                    tmp_dir,
-                    backup_path,
-                });
-            } else {
+            if verifier.finalize().as_ref() != expected_hash {
                 return Err(VerificationError::InvalidChecksum(anyhow!(
                     "Invalid SHA-256 checksum (verify): `{check_name}`."
                 )));
             }
+
+            tracing::debug!("SHA-256 checksum verified.");
+            report.is_intact = true;
+
+            self.backup_store
+                .cache(backup_name.to_string(), Arc::clone(&tmp_dir))
+                .await;
+
+            // Don’t process any other integrity check.
+            return Ok(VerificationOutput {
+                tmp_dir,
+                backup_path,
+            });
         }
 
         Err(VerificationError::Other(anyhow!(

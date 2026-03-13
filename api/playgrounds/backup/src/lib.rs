@@ -38,6 +38,7 @@ mod writer_chain;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 pub use openpgp;
@@ -46,9 +47,9 @@ pub use toml;
 
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
-use crate::stores::ObjectStore;
 #[cfg(feature = "destination_s3")]
 use crate::stores::S3Store;
+use crate::stores::{CachedStore, ObjectStore};
 
 pub use self::config::BackupConfig;
 pub use self::restore::*;
@@ -66,7 +67,7 @@ pub struct BackupService {
     pub decryption_context: decryption::Context,
     pub download_config: config::DownloadConfig,
 
-    pub backup_store: Box<dyn ObjectStore>,
+    pub backup_store: CachedStore<Box<dyn ObjectStore>>,
     pub check_store: Box<dyn ObjectStore>,
 }
 
@@ -187,8 +188,8 @@ impl BackupService {
             signing_context,
             verification_context,
             decryption_context,
-            backup_store,
-            check_store,
+            backup_store: CachedStore::new(backup_store, Arc::default(), &config.caching),
+            check_store: check_store,
             download_config: config.download,
         })
     }
@@ -936,7 +937,10 @@ mod restore {
 // MARK: Restore
 
 mod delete {
-    use crate::{BackupFileName, BackupService, stores::BulkDeleteOutput};
+    use crate::{
+        BackupFileName, BackupService,
+        stores::{BulkDeleteOutput, ObjectStore as _},
+    };
 
     impl BackupService {
         // NOTE: If using Object Lock, this method exits successfully and

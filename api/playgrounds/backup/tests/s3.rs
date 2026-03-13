@@ -97,7 +97,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     )?;
 
     // Store some values for later use.
-    let backup_store = as_s3_store(&service.backup_store);
+    let backup_store = as_s3_store(&service.backup_store.inner());
     let check_store = as_s3_store(&service.check_store);
 
     print!("\n");
@@ -240,7 +240,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     let service = BackupService::from_config(backup_config, blueprints)?;
 
     // Store some values for later use.
-    let backup_store = as_s3_store(&service.backup_store);
+    let backup_store = as_s3_store(&service.backup_store.inner());
     let check_store = as_s3_store(&service.check_store);
     let ref s3_client = check_store.client;
 
@@ -653,8 +653,5 @@ fn test_s3_store(
 }
 
 fn as_s3_store<'a>(object_store: &'a Box<dyn ObjectStore>) -> &'static S3Store {
-    unsafe {
-        &*(object_store.as_ref() as *const dyn prose_backup::stores::ObjectStore
-            as *const prose_backup::stores::S3)
-    }
+    unsafe { &*(object_store.as_ref() as *const dyn ObjectStore as *const S3Store) }
 }

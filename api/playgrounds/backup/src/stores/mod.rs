@@ -5,6 +5,7 @@
 
 //! Data stores.
 
+mod cache;
 #[cfg(feature = "destination_fs")]
 pub mod file;
 #[cfg(feature = "destination_s3")]
@@ -17,11 +18,12 @@ mod prelude {
     pub type DynObjectReader = dyn std::io::Read + Send + Sync;
 }
 
+pub use self::cache::CachedStore;
 #[cfg(feature = "destination_fs")]
-pub use self::file::{FsStore, FsStore as Fs};
+pub use self::file::FsStore;
 use self::prelude::*;
 #[cfg(feature = "destination_s3")]
-pub use self::s3::{S3Store, S3Store as S3};
+pub use self::s3::S3Store;
 
 #[async_trait::async_trait]
 pub trait ObjectStore: Sync {

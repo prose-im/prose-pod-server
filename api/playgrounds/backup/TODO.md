@@ -29,14 +29,6 @@ Medium priority (unordered):
 - Cache S3 requests.
   - Also cache metadata when listing objects (it should already be present).
     - Or always return metadata directly; actually that would be better.
-- Keep backup cached for some time after checking integrity.
-  - One might open the details modal, then click “Restore”. It’s unfortunate we
-    download the backup twice.
-  - Keep a max size of backups cached, do not purge after some time.
-    - If threshold would be passed when adding next backup, purge oldest cache
-      entries until threshold is respected.
-    - If backup size > threshold, remove backup after download. It might cause
-      a second download soon after, but it’s what the operator asked for.
 - Only allow one restore at a time.
 - Type errors more granularly.
 

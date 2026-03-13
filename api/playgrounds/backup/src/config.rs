@@ -119,6 +119,9 @@ pub struct BackupConfig {
 
     pub download: DownloadConfig,
 
+    #[serde(default)]
+    pub caching: CachingConfig,
+
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
     #[cfg(feature = "destination_s3")]
@@ -400,6 +403,16 @@ pub struct StorageFsConfig {
 pub struct DownloadConfig {
     #[serde(with = "crate::util::serde::iso8601_duration")]
     pub url_max_ttl: std::time::Duration,
+}
+
+// MARK: Caching
+
+#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CachingConfig {
+    #[serde(default)]
+    pub max_backup_cache_size: Option<crate::util::BytesAmount>,
 }
 
 // MARK: Constructors
