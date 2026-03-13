@@ -270,10 +270,11 @@ pub mod dtos {
         ///
         /// This doesn’t mean anything regarding whether or not the signature
         /// was issued by a trusted entity nor if it’s valid. Such information
-        /// is in [`is_signature_trusted`] and [`is_signature_valid`].
+        /// is in [`signing_keys`], then [`is_trusted`] and [`is_valid`].
         ///
-        /// [`is_signature_trusted`]: Self::is_signature_trusted
-        /// [`is_signature_valid`]: Self::is_signature_valid
+        /// [`signing_keys`]: Self::signing_keys
+        /// [`is_trusted`]: SigningKeyReportDto::is_trusted
+        /// [`is_valid`]: SigningKeyReportDto::is_valid
         pub is_signed: bool,
 
         /// Fingerprint of the key used to sign the backup, if applicable.

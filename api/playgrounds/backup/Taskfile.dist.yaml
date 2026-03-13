@@ -5,7 +5,7 @@ version: "3"
 tasks:
   doc:open:
     desc: Build and open Cargo docs.
-    cmd: cargo doc --no-deps --lib --open
+    cmd: cargo doc --no-deps -F destination_all --lib --open
 
   test:
     desc: Run all tests.
@@ -26,4 +26,4 @@ tasks:
         msg: "Install `cargo-watch` using `cargo install cargo-watch`."
     cmds:
       - task: doc:open
-      - cmd: cargo watch -x 'doc --no-deps --lib'
+      - cmd: cargo watch -x 'doc --no-deps -F destination_all --lib'

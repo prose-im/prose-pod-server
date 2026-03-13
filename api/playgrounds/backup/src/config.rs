@@ -13,85 +13,95 @@ use figment::Figment;
 ///
 /// Example full configuration (all keys have default values):
 ///
-/// ```toml
+/// ```
+/// # use prose_backup::BackupConfig;
+/// # use toml::toml;
+/// #
+/// # let toml = toml! {
 /// [compression]
-/// # Zstd compression level (see <https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html>).
-/// # This value is transparently passed to the `zstd` library for forward
-/// # compatibility, meaning any negative or positive value can be used
-/// # although `zstd` only supports `<= 22` at the moment.
-/// # The special value `0` means `zstd`’s default (currently `3`).
-/// # Default is `3`.
+/// // Zstd compression level (see <https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html>).
+/// // This value is transparently passed to the `zstd` library for forward
+/// // compatibility, meaning any negative or positive value can be used
+/// // although `zstd` only supports `<= 22` at the moment.
+/// // The special value `0` means `zstd`’s default (currently `3`).
+/// // Default is `3`.
 /// zstd_compression_level = 3
 ///
 /// [hashing]
-/// # The algorithm to use when computing backup checksums.
-/// # Note that only SHA-256 is supported at the moment, and we don’t plan on
-/// # supporting more algorithms. This configuration key is mostly there for
-/// # future-proofing.
+/// // The algorithm to use when computing backup checksums.
+/// // Note that only SHA-256 is supported at the moment, and we don’t plan on
+/// // supporting more algorithms. This configuration key is mostly there for
+/// // future-proofing.
 /// algorithm = "SHA-256"
 ///
-/// # By default, backups are not signed as it requires a secret signing key
-/// # to be configured and accessible. This is where it is done.
+/// // By default, backups are not signed as it requires a secret signing key
+/// // to be configured and accessible. This is where it is done.
 /// [signing]
-/// # `true` makes it impossible to restore a non-signed backup.
-/// # Default is `true` (opt-out) as soon as you enabled a signing method.
+/// // `true` makes it impossible to restore a non-signed backup.
+/// // Default is `true` (opt-out) as soon as you enabled a signing method.
 /// mandatory = true
-/// # Default is `false` (opt-in).
+/// // Default is `false` (opt-in).
 /// pgp.enabled = true
-/// # Path to the Transferable Secret Key to use when signing new backups.
-/// # This TSK MUST contain private key material suitable for signing.
+/// // Path to the Transferable Secret Key to use when signing new backups.
+/// // This TSK MUST contain private key material suitable for signing.
 /// pgp.tsk = "/path/to/prose-backup.asc"
-/// # Optional. Use if you changed the primary key instead of rotating subkeys.
-/// # Those SHOULD NOT contain private key material.
+/// // Optional. Use if you changed the primary key instead of rotating subkeys.
+/// // Those SHOULD NOT contain private key material.
 /// pgp.additional_trusted_issuers = ["/path/to/prose-backup-old.pub.asc"]
 ///
-/// # By default, backups are not encrypted as it requires a secret
-/// # encryption key to be configured. This is where it is done.
+/// // By default, backups are not encrypted as it requires a secret
+/// // encryption key to be configured. This is where it is done.
 /// [encryption]
-/// # Encryption mode. Allowed values: `"off"` (default), `"pgp"`.
-/// # Also configure `encryption.<mode>` when you enable encryption.
+/// // Encryption mode. Allowed values: `"off"` (default), `"pgp"`.
+/// // Also configure `encryption.<mode>` when you enable encryption.
 /// mode = "pgp"
-/// # Path to the Transferable Secret Key to use when encrypting new backups.
-/// # This TSK MUST contain private key material suitable for storage
-/// # encryption (as it’s the one used when decrypting).
+/// // Path to the Transferable Secret Key to use when encrypting new backups.
+/// // This TSK MUST contain private key material suitable for storage
+/// // encryption (as it’s the one used when decrypting).
 /// pgp.tsk = "/path/to/prose-backup.asc"
-/// # Optional. Use if you changed the primary key instead of rotating subkeys.
-/// # Those MUST contain private key material.
+/// // Optional. Use if you changed the primary key instead of rotating subkeys.
+/// // Those MUST contain private key material.
 /// pgp.additional_decryption_keys = ["/path/to/prose-backup-old.asc"]
-/// # Optional. Use if you want to decrypt using private keys not present
-/// # on the server (e.g. in a separate environment for forensic analysis).
-/// # Those SHOULD NOT contain private key material.
+/// // Optional. Use if you want to decrypt using private keys not present
+/// // on the server (e.g. in a separate environment for forensic analysis).
+/// // Those SHOULD NOT contain private key material.
 /// pgp.additional_recipients = ["/path/to/other-system.pub.asc"]
 ///
-/// # Where to store backups.
+/// // Where to store backups.
 /// [storage.backups]
 /// mode = "s3"
 /// s3.bucket_name = "prose-backups"
 ///
-/// # Where to store backup integrity checks.
+/// // Where to store backup integrity checks.
 /// [storage.checks]
 /// mode = "s3"
-/// # This bucket SHOULD have Object Lock enabled (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
-/// # If using Object Lock, you should also enable some bucket-level
-/// # configuration to automatically cleanup objects and delete markers
-/// # once the retention period ends (this library won’t do it). Because of
-/// # mandatory versioning, this library can only mark objects as deleted but
-/// # the underlying data will still exist (and be billed by your provider!).
+/// // This bucket SHOULD have Object Lock enabled (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
+/// // If using Object Lock, you should also enable some bucket-level
+/// // configuration to automatically cleanup objects and delete markers
+/// // once the retention period ends (this library won’t do it). Because of
+/// // mandatory versioning, this library can only mark objects as deleted but
+/// // the underlying data will still exist (and be billed by your provider!).
 /// s3.bucket_name = "prose-checks"
 ///
-/// # Global S3 configuration.
-/// # `storage.backups.s3` and `storage.checks.s3` will fallback to it.
-/// # It is recommended to pass those keys via environment variables.
+/// // Global S3 configuration.
+/// // `storage.backups.s3` and `storage.checks.s3` will fallback to it.
+/// // It is recommended to pass those keys via environment variables.
 /// [s3]
 /// region = "nbg1"
 /// endpoint_url = "https://nbg1.your-objectstorage.com"
 /// access_key = "574LAYIP1TR7PGYPCNV7"
-/// # Pass the secret key via an environment variable.
+/// // Pass the secret key via an environment variable.
+/// # secret_key = "example"
 ///
 /// [download]
-/// # Longest allowed validity for a backup download URL. Default is 5 minutes.
-/// # Uses the [ISO 8601 Duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations).
+/// // Longest allowed validity for a backup download URL. Default is 5 minutes.
+/// // Uses the [ISO 8601 Duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations).
 /// url_max_ttl = "PT5M"
+/// # };
+/// #
+/// # let _backup_config = BackupConfig::try_from(toml)?;
+/// #
+/// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
@@ -112,11 +122,13 @@ pub struct BackupConfig {
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
     #[cfg(feature = "destination_s3")]
+    #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
     #[cfg(feature = "destination_fs")]
+    #[doc(hidden)]
     pub fs: AlwaysNone,
 }
 
@@ -256,6 +268,7 @@ pub struct SigningPgpConfig {
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
+    #[doc(hidden)]
     pub enabled: AlwaysNone,
 }
 
@@ -289,6 +302,7 @@ pub struct EncryptionPgpConfig {
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
+    #[doc(hidden)]
     pub enabled: AlwaysNone,
 }
 

@@ -170,15 +170,13 @@ fn add_metadata_file<W: std::io::Write>(
 pub struct ExtractionOutput<'a> {
     /// Backup archives are unpacked in a temporary directory, that gets
     /// deleted when this is dropped. Drop when done processing data.
-    ///
-    /// [`prose_pod_api_data`]: ExtractionSuccess::prose_pod_api_data
     pub tmp_dir: tempfile::TempDir,
 
     /// Blueprint of the extracted backup.
     ///
     /// Its paths are guaranteed to exist in [`tmp_dir`].
     ///
-    /// [`tmp_dir`]: ExtractionSuccess::tmp_dir
+    /// [`tmp_dir`]: ExtractionOutput::tmp_dir
     pub blueprint: &'a ArchiveBlueprint,
 }
 
