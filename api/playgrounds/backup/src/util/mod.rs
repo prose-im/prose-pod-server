@@ -4,10 +4,12 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod measurements;
+#[cfg(feature = "destination_fs")]
 mod octal;
 pub mod serde;
 
 pub use measurements::BytesAmount;
+#[cfg(feature = "destination_fs")]
 pub use octal::Octal;
 
 /// Casting with `as` can yield incorrect values and similar issues

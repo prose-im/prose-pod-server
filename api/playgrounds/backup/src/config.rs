@@ -141,6 +141,7 @@ fn default_config_static() -> Figment {
     use figment::providers::*;
     use toml::toml;
 
+    #[allow(unused_mut)]
     let mut static_defaults = toml! {
         [compression]
         zstd_compression_level = 3

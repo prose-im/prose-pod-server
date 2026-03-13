@@ -997,6 +997,7 @@ mod delete {
 #[derive(Debug)]
 #[cfg_attr(feature = "test", derive(PartialEq, Eq))]
 pub(crate) struct BackupFileNameComponents<'a> {
+    #[allow(dead_code)]
     pub prefix: Cow<'a, str>,
 
     pub created_at: time::UtcDateTime,
