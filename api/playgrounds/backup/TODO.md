@@ -42,7 +42,6 @@ Medium priority (unordered):
 
 Low priority (unordered):
 
-- Add `#[serde(deny_unknown_fields)]` to config structs.
 - Add tests for all features and supported edge cases.
 
 ## Feature ideas (unordered)

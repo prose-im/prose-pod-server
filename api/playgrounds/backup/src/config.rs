@@ -95,6 +95,7 @@ use figment::Figment;
 /// ```
 #[derive(Debug)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BackupConfig {
     pub compression: CompressionConfig,
 
@@ -107,6 +108,16 @@ pub struct BackupConfig {
     pub storage: StorageConfig,
 
     pub download: DownloadConfig,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    #[cfg(feature = "destination_s3")]
+    pub s3: AlwaysNone,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    #[cfg(feature = "destination_fs")]
+    pub fs: AlwaysNone,
 }
 
 // MARK: Parsing
@@ -115,7 +126,7 @@ fn default_config_static() -> Figment {
     use figment::providers::*;
     use toml::toml;
 
-    let static_defaults = toml! {
+    let mut static_defaults = toml! {
         [compression]
         zstd_compression_level = 3
 
@@ -133,7 +144,10 @@ fn default_config_static() -> Figment {
 
         [download]
         url_max_ttl = "PT5M"
+    };
 
+    #[cfg(feature = "destination_fs")]
+    static_defaults.extend(toml! {
         [storage.backups]
         fs.overwrite = false
         fs.mode = 0o600
@@ -141,8 +155,9 @@ fn default_config_static() -> Figment {
         [storage.checks]
         fs.overwrite = false
         fs.mode = 0o600
-    }
-    .to_string();
+    });
+
+    let static_defaults = static_defaults.to_string();
 
     Figment::from(Toml::string(&static_defaults))
 }
@@ -152,9 +167,13 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
 
     let signing_enabled_opt = figment.extract_inner::<bool>("signing.enabled").ok();
     if signing_enabled_opt == Some(false) {
-        figment = figment.merge(Serialized::default("signing", json::Value::Null));
+        figment = figment.remove("signing");
     } else {
         let signing_pgp_enabled = figment.extract_inner::<bool>("signing.pgp.enabled")?;
+
+        if !signing_pgp_enabled {
+            figment = figment.remove("signing.pgp");
+        }
 
         let signing_should_be_mandatory =
             signing_enabled_opt.unwrap_or(false) || signing_pgp_enabled;
@@ -163,10 +182,6 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
             "signing.mandatory",
             &signing_should_be_mandatory,
         ));
-
-        if !signing_pgp_enabled {
-            figment = figment.merge(Serialized::default("signing.pgp", json::Value::Null));
-        }
     }
 
     let encryption_enabled = figment.extract_inner::<bool>("encryption.enabled").ok();
@@ -188,7 +203,7 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
                     &format!("storage.checks.{mode}"),
                     default,
                 ))
-                .merge(Serialized::default(mode, json::Value::Null));
+                .remove(mode);
         }
     }
 
@@ -199,6 +214,7 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompressionConfig {
     pub zstd_compression_level: i32,
 }
@@ -207,6 +223,7 @@ pub struct CompressionConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HashingConfig {
     pub algorithm: HashingAlgorithm,
 }
@@ -222,6 +239,7 @@ pub enum HashingAlgorithm {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SigningConfig {
     pub mandatory: bool,
 
@@ -231,11 +249,16 @@ pub struct SigningConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SigningPgpConfig {
     pub tsk: std::path::PathBuf,
 
     #[serde(default)]
     pub additional_trusted_issuers: Vec<std::path::PathBuf>,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    pub enabled: AlwaysNone,
 }
 
 // MARK: Encryption
@@ -256,6 +279,7 @@ pub enum EncryptionConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EncryptionPgpConfig {
     pub tsk: std::path::PathBuf,
 
@@ -264,6 +288,10 @@ pub struct EncryptionPgpConfig {
 
     #[serde(default)]
     pub additional_recipients: Vec<std::path::PathBuf>,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    pub enabled: AlwaysNone,
 }
 
 // MARK: Storage
@@ -356,6 +384,7 @@ pub struct StorageFsConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DownloadConfig {
     #[serde(with = "crate::util::serde::iso8601_duration")]
     pub url_max_ttl: std::time::Duration,
@@ -390,6 +419,36 @@ impl TryFrom<toml::Table> for BackupConfig {
         let figment = Self::default_figment().merge(Toml::string(toml.to_string().as_str()));
 
         Self::try_from(figment)
+    }
+}
+
+// MARK: Helpers
+
+trait FigmentExt {
+    fn remove(self, key: &'static str) -> Self;
+}
+
+impl FigmentExt for Figment {
+    fn remove(self, key: &'static str) -> Self {
+        use figment::providers::Serialized;
+
+        self.merge(Serialized::default(key, json::Value::Null))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(transparent)]
+pub struct AlwaysNone(Option<Impossible>);
+
+#[derive(Debug, Clone, Copy)]
+enum Impossible {}
+
+impl<'de> serde::Deserialize<'de> for AlwaysNone {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        Ok(Self(None))
     }
 }
 
