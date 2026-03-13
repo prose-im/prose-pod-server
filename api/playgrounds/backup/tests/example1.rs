@@ -16,7 +16,7 @@ use anyhow::anyhow;
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
-    config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
+    archiving, config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
 };
 use toml::toml;
 
@@ -66,10 +66,11 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     let blueprints = test_blueprints();
 
     let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
-    let current_blueprint = blueprints
-        .get(&BLUEPRINT_POD_API_DEMO)
-        .unwrap()
+    let archive_version = BLUEPRINT_POD_API_DEMO;
+    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
+    let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
+    let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
 
     print!("\n");
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
@@ -83,6 +84,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     let mut service = BackupService::from_config_custom(
         backup_config,
+        archiving::Context { blueprints },
         |path| {
             certs
                 .get(path)
@@ -99,9 +101,11 @@ async fn test_example1() -> Result<(), anyhow::Error> {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
+            version: archive_version,
+            blueprint: &blueprint,
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command, &current_blueprint).await?
+        service.create_backup(command).await?
     };
     let CreateBackupOutput {
         backup_id,
@@ -133,7 +137,7 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     tracing::info!("Backups: {backups:#?}");
 
     print!("\n");
-    let details = service.get_details(&backup_id, &blueprints).await?;
+    let details = service.get_details(&backup_id).await?;
     tracing::info!("Backup details: {details:#?}");
 
     print!("\n");
@@ -144,10 +148,10 @@ async fn test_example1() -> Result<(), anyhow::Error> {
 
     print!("\n");
     let ExtractionSuccess {
-        mut extraction_output,
+        extraction_output,
         extraction_stats,
         ..
-    } = service.extract_backup(&backup_id, &blueprints).await?;
+    } = service.extract_backup(&backup_id).await?;
     print_stats(
         &extraction_stats.raw_read_stats,
         &extraction_stats.decryption_stats,
@@ -156,12 +160,9 @@ async fn test_example1() -> Result<(), anyhow::Error> {
     );
 
     print!("\n");
-    let restore_blueprint = blueprints
-        .get(&BLUEPRINT_POD_API_DEMO)
-        .unwrap()
-        .src_relative_to(test_data_path.join("restore"));
-    extraction_output.blueprint = &restore_blueprint;
-    service.restore_extracted_backup(extraction_output).await?;
+    service
+        .restore_extracted_backup(extraction_output, &restore_blueprint)
+        .await?;
 
     print!("\n");
     () = service.delete_backup(&backup_id).await?;

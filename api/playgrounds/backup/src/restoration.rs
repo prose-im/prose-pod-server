@@ -7,15 +7,14 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use crate::archiving::ExtractionOutput;
+use crate::archiving::{ArchiveBlueprint, ExtractionOutput};
 
 #[derive(Debug)]
 pub struct RestorationOutput;
 
 pub(crate) fn restore<'a>(
-    ExtractionOutput {
-        tmp_dir, blueprint, ..
-    }: ExtractionOutput<'a>,
+    ExtractionOutput { tmp_dir, .. }: ExtractionOutput<'a>,
+    blueprint: &ArchiveBlueprint,
 ) -> Result<RestorationOutput, RestorationError> {
     use crate::util::{PathGuard, safe_replace};
 

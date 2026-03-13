@@ -13,13 +13,14 @@
 //!   let toml = unimplemented!();
 //!   let backup_config = BackupConfig::try_from(toml)?;
 //!
-//!   let service = BackupService::from_config(toml)?;
+//!   let blueprints = unimplemented!();
+//!   let service = BackupService::from_config(toml, blueprints)?;
 //!
 //!   let _backups = service.list_backups().await?;
 //! }
 //! ```
 
-mod archiving;
+pub mod archiving;
 mod compression;
 pub mod config;
 pub mod decryption;
@@ -49,7 +50,6 @@ use crate::stores::ObjectStore;
 #[cfg(feature = "destination_s3")]
 use crate::stores::S3Store;
 
-pub use self::archiving::ArchiveBlueprint;
 pub use self::config::BackupConfig;
 pub use self::restore::*;
 
@@ -57,6 +57,7 @@ pub use self::restore::*;
 
 /// Backup service. Central component of the library.
 pub struct BackupService {
+    pub archiving_context: archiving::Context,
     pub compression_config: config::CompressionConfig,
     pub hashing_config: config::HashingConfig,
     pub encryption_context: Option<encryption::Context>,
@@ -70,10 +71,14 @@ pub struct BackupService {
 }
 
 impl BackupService {
-    pub fn from_config(config: BackupConfig) -> Result<Self, anyhow::Error> {
+    pub fn from_config(
+        config: BackupConfig,
+        blueprints: HashMap<u8, archiving::ArchiveBlueprint>,
+    ) -> Result<Self, anyhow::Error> {
         // NOTE: This gets inlined in release builds.
         Self::from_config_custom(
             config,
+            archiving::Context { blueprints },
             |path| {
                 use openpgp::parse::Parse as _;
                 openpgp::Cert::from_file(path)
@@ -90,6 +95,7 @@ impl BackupService {
     #[cfg_attr(not(feature = "test"), inline(always))]
     pub fn from_config_custom<P>(
         config: BackupConfig,
+        archiving_context: archiving::Context,
         get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
         pgp_policy: impl Fn() -> P,
     ) -> Result<Self, anyhow::Error>
@@ -174,6 +180,7 @@ impl BackupService {
         };
 
         Ok(Self {
+            archiving_context,
             compression_config: config.compression,
             hashing_config: config.hashing,
             encryption_context,
@@ -337,6 +344,10 @@ pub struct CreateBackupCommand<'a> {
     /// Desired backup description (e.g. “Automatic backup”).
     pub description: &'a str,
 
+    pub version: u8,
+
+    pub blueprint: &'a archiving::ArchiveBlueprint,
+
     /// Timestamp which should be associated with the backup.
     ///
     /// This is only useful in tests, as we have no way to read data as it was
@@ -425,15 +436,16 @@ impl BackupService {
         CreateBackupCommand {
             prefix,
             description,
+            version,
+            blueprint,
             #[cfg(feature = "test")]
             created_at,
         }: CreateBackupCommand<'_>,
-        archiving_blueprint: &ArchiveBlueprint,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
         use crate::hashing::{DigestWriter, Sha256DigestWriter};
         use std::time::SystemTime;
 
-        archiving::check_archiving_will_succeed(&archiving_blueprint)?;
+        archiving::check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
@@ -479,7 +491,7 @@ impl BackupService {
         };
 
         let (writer, finalize_backup) = writer_chain::builder()
-            .archive(&archiving_blueprint)
+            .archive(&blueprint, version)
             .compress(&self.compression_config)
             .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
             .tee(&mut digest_writer)
@@ -725,7 +737,6 @@ impl BackupService {
     pub async fn get_details<'a>(
         &self,
         backup_file_name: &BackupFileName,
-        blueprints: &'a HashMap<u8, ArchiveBlueprint>,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
         use crate::archiving::{ExtractionStats, extract};
         use crate::decryption::DecryptionReport;
@@ -751,7 +762,7 @@ impl BackupService {
                 let extraction_result = extract(
                     &verification_output,
                     &parsed_backup_name,
-                    blueprints,
+                    &self.archiving_context.blueprints,
                     &self.decryption_context,
                     &mut decryption_report,
                     &mut extraction_stats,
@@ -821,8 +832,6 @@ impl BackupService {
 // MARK: Restore
 
 mod restore {
-    use std::collections::HashMap;
-
     use crate::{
         BackupFileName, BackupFileNameComponents, BackupService,
         archiving::{
@@ -849,19 +858,21 @@ mod restore {
     }
 
     impl BackupService {
-        pub async fn restore_backup<'a>(
+        pub async fn restore_backup(
             &self,
             backup_name: &BackupFileName,
-            blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+            blueprint: &ArchiveBlueprint,
         ) -> Result<ExtractAndRestoreSuccess, RestorationError> {
             let ExtractionSuccess {
                 verification_report,
                 decryption_report,
                 extraction_output,
                 extraction_stats,
-            } = self.extract_backup(backup_name, blueprints).await?;
+            } = self.extract_backup(backup_name).await?;
 
-            let restoration_output = self.restore_extracted_backup(extraction_output).await?;
+            let restoration_output = self
+                .restore_extracted_backup(extraction_output, blueprint)
+                .await?;
 
             Ok(ExtractAndRestoreSuccess {
                 verification_report,
@@ -872,9 +883,8 @@ mod restore {
         }
 
         pub async fn extract_backup<'a>(
-            &self,
+            &'a self,
             backup_name: &BackupFileName,
-            blueprints: &'a HashMap<u8, ArchiveBlueprint>,
         ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
             // Parse backup name first.
             // Avoids unnecessary I/O if malformed.
@@ -895,7 +905,7 @@ mod restore {
             let extraction_output = extract(
                 &verification_output,
                 &parsed_backup_name,
-                &blueprints,
+                &self.archiving_context.blueprints,
                 &self.decryption_context,
                 &mut decryption_report,
                 &mut extraction_stats,
@@ -915,8 +925,9 @@ mod restore {
         pub async fn restore_extracted_backup<'a>(
             &self,
             extraction_output: ExtractionOutput<'a>,
+            blueprint: &ArchiveBlueprint,
         ) -> Result<RestorationOutput, RestorationError> {
-            restore(extraction_output)
+            restore(extraction_output, blueprint)
         }
     }
 }

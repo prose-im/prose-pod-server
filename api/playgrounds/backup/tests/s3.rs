@@ -11,7 +11,7 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::{Context as _, anyhow};
 use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
-    ExtractAndRestoreSuccess,
+    ExtractAndRestoreSuccess, archiving,
     config::{S3ObjectLockConfig, StorageS3Config},
     stats::print_stats,
     stores::{ObjectStore, S3Store},
@@ -72,12 +72,21 @@ async fn test_s3_basic() -> Result<(), anyhow::Error> {
         ("sign.pgp", now - Duration::from_hours(23)),
     ])?;
 
+    // Create blueprints.
+    let blueprints = test_blueprints();
+    let archive_version = BLUEPRINT_POD_API_DEMO;
+    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
+    let blueprint = pod_api_demo_blueprint
+        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
+    let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
+
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
     print!("\n");
     tracing::info!("Create service");
     let service = BackupService::from_config_custom(
         backup_config,
+        archiving::Context { blueprints },
         |path| {
             certs
                 .get(path)
@@ -91,26 +100,19 @@ async fn test_s3_basic() -> Result<(), anyhow::Error> {
     let backup_store = as_s3_store(&service.backup_store);
     let check_store = as_s3_store(&service.check_store);
 
-    // Create blueprints.
-    let mut blueprints = test_blueprints();
-    let pod_api_demo_blueprint = blueprints.get(&BLUEPRINT_POD_API_DEMO).unwrap();
-    let blueprint = pod_api_demo_blueprint
-        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
-
     print!("\n");
     tracing::info!("Create backup");
     let CreateBackupSuccess {
         creation_output,
         creation_stats,
     } = service
-        .create_backup(
-            CreateBackupCommand {
-                prefix: &test_id,
-                description: "Test backup",
-                created_at: now,
-            },
-            &blueprint,
-        )
+        .create_backup(CreateBackupCommand {
+            prefix: &test_id,
+            description: "Test backup",
+            version: archive_version,
+            blueprint: &blueprint,
+            created_at: now,
+        })
         .await?;
     let created_backup_id = creation_output.backup_id;
     tracing::info!("Upload stats: {creation_stats:#?}");
@@ -140,7 +142,7 @@ async fn test_s3_basic() -> Result<(), anyhow::Error> {
 
     print!("\n");
     tracing::info!("Get backup details");
-    let details = service.get_details(&created_backup_id, &blueprints).await?;
+    let details = service.get_details(&created_backup_id).await?;
     tracing::debug!("Backup details: {details:#?}");
 
     print!("\n");
@@ -152,14 +154,10 @@ async fn test_s3_basic() -> Result<(), anyhow::Error> {
 
     print!("\n");
     tracing::info!("Restore backup");
-    blueprints.insert(
-        BLUEPRINT_POD_API_DEMO,
-        pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore")),
-    );
     let ExtractAndRestoreSuccess {
         extraction_stats, ..
     } = service
-        .restore_backup(&created_backup_id, &blueprints)
+        .restore_backup(&created_backup_id, &restore_blueprint)
         .await?;
     print_stats(
         &extraction_stats.raw_read_stats,
@@ -230,20 +228,21 @@ async fn test_s3_object_locking() -> Result<(), anyhow::Error> {
         prose_backup::config::StorageSubconfig::Fs { .. } => unreachable!(),
     };
 
+    // Create blueprints.
+    let blueprints = test_blueprints();
+    let archive_version = BLUEPRINT_POD_API_DEMO;
+    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
+    let blueprint = pod_api_demo_blueprint
+        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
+
     print!("\n");
     tracing::info!("Create service");
-    let service = BackupService::from_config(backup_config)?;
+    let service = BackupService::from_config(backup_config, blueprints)?;
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store);
     let check_store = as_s3_store(&service.check_store);
     let ref s3_client = check_store.client;
-
-    // Create blueprints.
-    let blueprints = test_blueprints();
-    let pod_api_demo_blueprint = blueprints.get(&BLUEPRINT_POD_API_DEMO).unwrap();
-    let blueprint = pod_api_demo_blueprint
-        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
     print!("\n");
     tracing::info!("Create backup");
@@ -251,14 +250,13 @@ async fn test_s3_object_locking() -> Result<(), anyhow::Error> {
         creation_output,
         creation_stats,
     } = service
-        .create_backup(
-            CreateBackupCommand {
-                prefix: &test_id,
-                description: "Test backup",
-                created_at: now,
-            },
-            &blueprint,
-        )
+        .create_backup(CreateBackupCommand {
+            prefix: &test_id,
+            description: "Test backup",
+            version: archive_version,
+            blueprint: &blueprint,
+            created_at: now,
+        })
         .await?;
     let created_backup_id = creation_output.backup_id;
     tracing::info!("Upload stats: {creation_stats:#?}");

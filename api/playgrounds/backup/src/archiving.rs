@@ -17,13 +17,18 @@ use crate::verification::VerificationOutput;
 use crate::writer_chain::WriterChainBuilder;
 use crate::{BackupFileNameComponents, CreateBackupError};
 
+pub use self::ArchivingContext as Context;
+
 // WARN: Do not change as doing so would break backward compatibility.
 const METADATA_FILE_NAME: &'static str = "metadata.json";
+
+pub struct ArchivingContext {
+    pub blueprints: HashMap<u8, ArchiveBlueprint>,
+}
 
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct ArchiveBlueprint {
-    pub version: u8,
     pub paths: Vec<(String, PathBuf)>,
 }
 
@@ -31,18 +36,17 @@ impl ArchiveBlueprint {
     // NOTE: The reason why we have this trivial constructor is so we can later
     //   add non-breaking support for in-memory reads instead of forcing one
     //   to store files.
-    pub fn from_paths(version: u8, paths: Vec<(String, PathBuf)>) -> Self {
-        Self { version, paths }
+    pub fn from_paths(paths: Vec<(String, PathBuf)>) -> Self {
+        Self { paths }
     }
 
-    pub fn from_iter<Dst, Src, I>(version: u8, iter: I) -> Self
+    pub fn from_iter<Dst, Src, I>(iter: I) -> Self
     where
         I: Iterator<Item = (Dst, Src)>,
         Dst: ToString,
         Src: AsRef<std::path::Path>,
     {
         Self {
-            version,
             paths: iter
                 .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
                 .collect(),
@@ -101,6 +105,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     pub(crate) fn archive<InnerWriter, OuterWriter>(
         self,
         blueprint: &ArchiveBlueprint,
+        version: u8,
     ) -> WriterChainBuilder<
         impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
         impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
@@ -116,13 +121,8 @@ impl<M, F> WriterChainBuilder<M, F> {
             make: move |writer: InnerWriter| {
                 let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
-                add_metadata_file(
-                    &BackupInternalMetadata {
-                        version: blueprint.version,
-                    },
-                    &mut builder,
-                )
-                .map_err(CreateBackupError::CannotArchive)?;
+                add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
+                    .map_err(CreateBackupError::CannotArchive)?;
 
                 archive_writer(&mut builder, blueprint)
                     .map_err(CreateBackupError::CannotArchive)?;
@@ -309,8 +309,6 @@ where
     let Some(blueprint) = blueprints.get(&metadata.version) else {
         return Err(ExtractionError::UnknownBackupVersion(metadata.version));
     };
-    // Soundness check.
-    assert_eq!(blueprint.version, metadata.version);
 
     // Extract into temporary directory.
     let tmp_dir = tempfile::TempDir::new()

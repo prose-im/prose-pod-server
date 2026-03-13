@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use prose_backup::ArchiveBlueprint;
+use prose_backup::archiving::ArchiveBlueprint;
 
 use crate::common::prelude::*;
 
@@ -58,7 +58,6 @@ pub trait ArchiveBlueprintExt {
 impl ArchiveBlueprintExt for ArchiveBlueprint {
     fn src_relative_to(&self, origin: impl AsRef<Path>) -> Self {
         Self::from_iter(
-            self.version,
             self.paths
                 .iter()
                 .map(|(dst, src)| (dst.to_owned(), origin.as_ref().join(src))),
@@ -83,8 +82,7 @@ impl BlueprintsBuilder {
         Dst: ToString,
         Src: AsRef<Path>,
     {
-        self.res
-            .insert(version, ArchiveBlueprint::from_iter(version, paths));
+        self.res.insert(version, ArchiveBlueprint::from_iter(paths));
         self
     }
 
