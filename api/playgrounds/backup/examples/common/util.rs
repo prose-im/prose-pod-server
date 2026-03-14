@@ -4,11 +4,10 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 macro_rules! env_required {
-    ($name:literal) => {
-        std::env::var($name).expect(concat!(
-            "Environment variable `",
-            $name,
-            "` should be defined"
+    ($name:expr) => {
+        std::env::var($name).expect(&format!(
+            "Environment variable `{}` should be defined",
+            $name
         ))
     };
 }

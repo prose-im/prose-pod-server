@@ -37,7 +37,6 @@ mod writer_chain;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -50,6 +49,7 @@ use crate::stores::FsStore;
 #[cfg(feature = "destination_s3")]
 use crate::stores::S3Store;
 use crate::stores::{CachedStore, ObjectStore};
+use crate::util::assert_impl;
 
 pub use self::config::BackupConfig;
 pub use self::restore::*;
@@ -70,6 +70,8 @@ pub struct BackupService {
     pub backup_store: CachedStore<Box<dyn ObjectStore>>,
     pub check_store: Box<dyn ObjectStore>,
 }
+assert_impl!(BackupService: Send);
+assert_impl!(BackupService: Sync);
 
 impl BackupService {
     pub fn from_config(
@@ -144,7 +146,7 @@ impl BackupService {
             Some(pgp) => {
                 let pgp_cert = get_pgp_cert(&pgp.tsk)?;
                 Some(PgpVerificationContext {
-                    certs: Rc::new(vec![pgp_cert]),
+                    certs: Arc::new(vec![pgp_cert]),
                     policy: Box::new(pgp_policy()),
                 })
             }

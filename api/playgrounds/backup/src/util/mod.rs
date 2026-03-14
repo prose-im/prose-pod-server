@@ -175,6 +175,16 @@ macro_rules! debug_panic_or_log_error {
 }
 pub(crate) use debug_panic_or_log_error;
 
+macro_rules! assert_impl {
+    ($ty:ty : $trait:path) => {
+        const _: fn() = || {
+            fn assert_impl<T: $trait>() {}
+            assert_impl::<$ty>();
+        };
+    };
+}
+pub(crate) use assert_impl;
+
 /// While waiting for <https://github.com/rust-lang/rust/commit/e1424588bd6c0865d1b3425e8f67c93554733d4e>
 /// to make it to a stable release.
 pub fn get_or_try_insert<T, E>(

@@ -318,7 +318,7 @@ impl BackupService {
 
 pub use self::pgp::*;
 pub mod pgp {
-    use std::{io, rc::Rc, time::SystemTime};
+    use std::{io, sync::Arc, time::SystemTime};
 
     use anyhow::anyhow;
     use openpgp::parse::{Parse as _, stream::*};
@@ -355,14 +355,14 @@ pub mod pgp {
 
     #[derive(Debug)]
     pub struct PgpVerificationContext {
-        pub certs: Rc<Vec<openpgp::Cert>>,
+        pub certs: Arc<Vec<openpgp::Cert>>,
         pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
     impl PgpVerificationContext {
         fn new_helper(&self) -> PgpVerificationHelper {
             PgpVerificationHelper {
-                certs: Rc::clone(&self.certs),
+                certs: Arc::clone(&self.certs),
                 report: PgpVerificationReport::default(),
             }
         }
@@ -370,7 +370,7 @@ pub mod pgp {
 
     #[derive(Debug)]
     pub struct PgpVerificationHelper {
-        pub certs: Rc<Vec<openpgp::Cert>>,
+        pub certs: Arc<Vec<openpgp::Cert>>,
         pub report: PgpVerificationReport,
     }
 

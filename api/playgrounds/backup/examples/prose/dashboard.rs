@@ -11,18 +11,18 @@ use anyhow::anyhow;
 use time::UtcDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-use crate::prose::api::Api;
+use crate::prose::api::ProsePodApi;
 
 pub struct Dashboard {
-    api: Arc<RwLock<Option<Api>>>,
+    api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>>,
 }
 
 impl Dashboard {
-    pub fn new(api: Arc<RwLock<Option<Api>>>) -> Self {
+    pub fn new(api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>>) -> Self {
         Self { api }
     }
 
-    async fn api(&self) -> Result<RwLockReadGuard<'_, Api>, anyhow::Error> {
+    async fn api(&self) -> Result<RwLockReadGuard<'_, Box<dyn ProsePodApi>>, anyhow::Error> {
         let guard = self.api.read().await;
         RwLockReadGuard::try_map(guard, |opt| opt.as_ref())
             .map_err(|_| anyhow!("API is restarting"))

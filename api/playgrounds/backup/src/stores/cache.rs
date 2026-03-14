@@ -128,7 +128,7 @@ where
 #[async_trait::async_trait]
 impl<S> ObjectStore for CachedStore<S>
 where
-    S: std::ops::Deref + Sync,
+    S: std::ops::Deref + Send + Sync,
     S::Target: ObjectStore,
 {
     #[inline]

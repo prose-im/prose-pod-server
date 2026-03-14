@@ -12,17 +12,18 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::prose::api::Api;
+use crate::prose::api::ProsePodApi;
 use crate::prose::dashboard::Dashboard;
 
 /// Happy path of running the Prose Pod Dashboard to create, read and delete
 /// backups.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    common::lifecycle::init();
+    let context = common::lifecycle::init()?;
+    prose::api::v2::init_fake_fs_root(&context)?;
 
-    let api = Api::start_v1()?;
-    let api = Arc::new(RwLock::new(Some(api)));
+    let api = prose::api::start_v2()?;
+    let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
 
     let dashboard = Dashboard::new(Arc::clone(&api));
 

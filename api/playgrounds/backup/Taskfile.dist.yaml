@@ -7,6 +7,11 @@ tasks:
     desc: Build and open Cargo docs.
     cmd: cargo doc --no-deps -F destination_all --lib --open
 
+  example:*:
+    desc: Run an example.
+    cmd: cargo run --example {{ index .MATCH 0 }}
+    dotenv: [test.env]
+
   test:
     desc: Run all tests.
     cmds:

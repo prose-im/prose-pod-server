@@ -26,7 +26,7 @@ use self::prelude::*;
 pub use self::s3::S3Store;
 
 #[async_trait::async_trait]
-pub trait ObjectStore: Sync {
+pub trait ObjectStore: Send + Sync {
     async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error>;
 
     /// Returns `None` if key does not exist.
