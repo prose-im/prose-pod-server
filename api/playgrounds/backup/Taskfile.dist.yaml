@@ -21,7 +21,9 @@ tasks:
 
   ci:
     desc: Run CI tests (doesn’t test S3).
-    cmd: cargo test --no-default-features -F test -F destination_all -- --skip s3
+    cmds:
+      - cargo test --no-default-features -F test -F destination_all -- --skip s3
+      - cargo check --release --lib
     dotenv: [test.env]
 
   dev:doc:

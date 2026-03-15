@@ -16,11 +16,11 @@ use anyhow::anyhow;
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
-    archiving, config::*, decryption::PgpDecryptionContext, openpgp, stats::print_stats,
+    archiving, config::*, decryption::PgpDecryptionContext, openpgp,
 };
 use toml::toml;
 
-use crate::common::prelude::*;
+use crate::common::{prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn example1() -> Result<(), anyhow::Error> {
@@ -96,7 +96,8 @@ async fn example1() -> Result<(), anyhow::Error> {
 
     print!("\n");
     let CreateBackupSuccess {
-        creation_output, ..
+        output: creation_output,
+        ..
     } = {
         let command = CreateBackupCommand {
             prefix: "prose-backup",

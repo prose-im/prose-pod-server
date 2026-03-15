@@ -7,124 +7,183 @@
 //!
 //! It measures things like the number of bytes read and the time spent reading.
 
-use std::{
-    io::{self, Read},
-    time::SystemTime,
-};
+use std::io::{self, Read, Write};
 
 // MARK: Model
 
-#[derive(Debug)]
-pub struct ReadStats {
-    pub bytes_read: u64,
-    pub read_calls: u64,
-    pub duration: std::time::Duration,
+pub trait StreamStats {
+    fn record_chunk(&mut self, len: usize);
+
+    // NOTE: Do not record active time in release builds, it would just add
+    //   unnecessary overhead.
+    #[cfg(debug_assertions)]
+    fn record_duration(&mut self, duration: &std::time::Duration);
 }
 
-impl ReadStats {
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self {
-            bytes_read: 0,
-            read_calls: 0,
-            duration: std::time::Duration::ZERO,
-        }
-    }
-}
-
-impl Default for ReadStats {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::new()
-    }
+pub trait WriterStats: StreamStats {
+    fn record_flush(&mut self);
 }
 
 // MARK: Reader
 
-/// A `Read` wrapper that stores stats (e.g. bytes read, number of `read`
-/// calls…).
-pub struct StatsReader<'r, R> {
-    inner: R,
-    stats: &'r mut ReadStats,
+/// A `Read`/`Write` wrapper that stores stats (e.g. bytes read/written,
+/// number of `read`/`write` calls…).
+pub struct MeteredStream<'r, Stream, Stats: StreamStats> {
+    inner: Stream,
+    stats: &'r mut Stats,
 }
 
-impl<'r, R: Read> StatsReader<'r, R> {
-    pub fn new(inner: R, stats: &'r mut ReadStats) -> Self {
+impl<'r, Stream, Stats: StreamStats> MeteredStream<'r, Stream, Stats> {
+    pub fn new(inner: Stream, stats: &'r mut Stats) -> Self {
         Self { inner, stats }
+    }
+
+    pub fn into_inner(self) -> Stream {
+        self.inner
     }
 }
 
-impl<'r, R: Read> Read for StatsReader<'r, R> {
+impl<'r, Stream, Stats: StreamStats> Read for MeteredStream<'r, Stream, Stats>
+where
+    Stream: Read,
+{
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let start = SystemTime::now();
+        #[cfg(debug_assertions)]
+        let start = std::time::SystemTime::now();
 
         let n = self.inner.read(buf)?;
 
-        self.stats.bytes_read += n as u64;
-        self.stats.read_calls += 1;
-
-        let end = SystemTime::now();
-        if let Ok(duration) = end.duration_since(start) {
-            self.stats.duration += duration;
+        #[cfg(debug_assertions)]
+        {
+            let end = std::time::SystemTime::now();
+            if let Ok(duration) = end.duration_since(start) {
+                self.stats.record_duration(&duration);
+            }
         }
+
+        self.stats.record_chunk(n);
 
         Ok(n)
     }
 }
 
-// MARK: Print
+impl<'r, Stream, Stats: StreamStats> Write for MeteredStream<'r, Stream, Stats>
+where
+    Stream: Write,
+    Stats: WriterStats,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        #[cfg(debug_assertions)]
+        let start = std::time::SystemTime::now();
 
-pub fn print_stats(
-    raw_read_stats: &ReadStats,
-    decryption_stats: &ReadStats,
-    decompression_stats: &ReadStats,
-    unarchived_size: u64,
-) {
-    tracing::info!("Stats:");
-    tracing::info!("  Read:         {raw_read_stats}");
-    tracing::info!("  Decrypted:    {decryption_stats}");
-    tracing::info!("  Decompressed: {decompression_stats}");
-    tracing::info!("  Unarchived:   {unarchived_size}B");
+        let n = self.inner.write(buf)?;
 
-    fn size_ratio(read: u64, reference: &ReadStats) -> f64 {
-        let read: u32 = read.min(u64::from(u32::MAX)) as u32;
-        let reference: u32 = reference.bytes_read.min(u64::from(u32::MAX)) as u32;
-        f64::from(read) / f64::from(reference)
+        #[cfg(debug_assertions)]
+        {
+            let end = std::time::SystemTime::now();
+            if let Ok(duration) = end.duration_since(start) {
+                self.stats.record_duration(&duration);
+            }
+        }
+
+        self.stats.record_chunk(n);
+
+        Ok(n)
     }
-    tracing::info!("Size ratios:");
-    tracing::info!(
-        "  Raw read:      {:.2}x",
-        size_ratio(raw_read_stats.bytes_read, &raw_read_stats)
-    );
-    tracing::info!(
-        "  Decryption:    {:.2}x",
-        size_ratio(decryption_stats.bytes_read, &raw_read_stats)
-    );
-    tracing::info!(
-        "  Decompression: {:.2}x",
-        size_ratio(decompression_stats.bytes_read, &raw_read_stats)
-    );
-    tracing::info!(
-        "  Unarchiving:   {:.2}x",
-        size_ratio(unarchived_size, &raw_read_stats)
-    );
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
-impl std::fmt::Display for ReadStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{bytes}B", bytes = self.bytes_read)?;
+// MARK: DTOs
 
-        write!(f, " in {}ms", self.duration.as_secs_f32() * 1000.)?;
+macro_rules! gen_stats_dto {
+    ($t:ident {
+        $bytes_count:ident,
+        $chunks_count:ident,
+        $active_duration:ident
+        $(, $field:ident: $field_type:ty)*
+        $(,)?
+    }) => {
+        #[derive(Debug)]
+        pub struct $t {
+            pub $bytes_count: u64,
+            pub $chunks_count: u64,
+            #[cfg(debug_assertions)]
+            pub $active_duration: std::time::Duration,
+            $(pub $field: $field_type,)*
+        }
 
-        write!(
-            f,
-            " ({calls} {chunks_str})",
-            calls = self.read_calls,
-            chunks_str = if self.read_calls < 2 {
-                "chunk"
-            } else {
-                "chunks"
+        impl $t {
+            #[inline(always)]
+            pub fn new() -> Self {
+                Self {
+                    $bytes_count: 0,
+                    $chunks_count: 0,
+                    #[cfg(debug_assertions)]
+                    $active_duration: std::time::Duration::ZERO,
+                    $($field: Default::default(),)*
+                }
             }
-        )
+        }
+
+        impl Default for $t {
+            #[inline(always)]
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl StreamStats for $t {
+            fn record_chunk(&mut self, len: usize) {
+                self.$bytes_count += len as u64;
+                self.$chunks_count += 1;
+            }
+
+            #[cfg(debug_assertions)]
+            fn record_duration(&mut self, duration: &std::time::Duration) {
+                self.$active_duration += *duration;
+            }
+        }
+
+        impl std::fmt::Display for $t {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{bytes}B", bytes = self.$bytes_count)?;
+
+                #[cfg(debug_assertions)]
+                write!(f, " in {}ms", self.$active_duration.as_secs_f32() * 1000.)?;
+
+                write!(
+                    f,
+                    " ({calls} {chunks_str})",
+                    calls = self.$chunks_count,
+                    chunks_str = if self.$chunks_count < 2 {
+                        "chunk"
+                    } else {
+                        "chunks"
+                    }
+                )
+            }
+        }
+    };
+}
+
+gen_stats_dto!(ReadStats {
+    bytes_read,
+    chunks_read,
+    active_read_duration,
+});
+
+gen_stats_dto!(WriteStats {
+    bytes_written,
+    chunks_written,
+    active_write_duration,
+    flush_count: u32,
+});
+
+impl WriterStats for WriteStats {
+    fn record_flush(&mut self) {
+        self.flush_count += 1;
     }
 }

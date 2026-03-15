@@ -13,12 +13,11 @@ use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
     ExtractAndRestoreSuccess, archiving,
     config::{S3ObjectLockConfig, StorageS3Config},
-    stats::print_stats,
     stores::{ObjectStore, S3Store},
 };
 use toml::toml;
 
-use crate::common::{log_error, prelude::*};
+use crate::common::{log_error, prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_basic() -> Result<(), anyhow::Error> {
@@ -103,8 +102,9 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     print!("\n");
     tracing::info!("Create backup");
     let CreateBackupSuccess {
-        creation_output,
-        creation_stats,
+        output: creation_output,
+        stats: creation_stats,
+        ..
     } = service
         .create_backup(CreateBackupCommand {
             prefix: &test_id,
@@ -247,8 +247,9 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     print!("\n");
     tracing::info!("Create backup");
     let CreateBackupSuccess {
-        creation_output,
-        creation_stats,
+        output: creation_output,
+        stats: creation_stats,
+        ..
     } = service
         .create_backup(CreateBackupCommand {
             prefix: &test_id,

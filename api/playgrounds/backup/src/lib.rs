@@ -44,6 +44,7 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
+use crate::stats::{MeteredStream, WriteStats};
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
 #[cfg(feature = "destination_s3")]
@@ -208,7 +209,7 @@ pub mod dtos {
     use crate::{BackupFileName, verification::PgpSignatureReport};
 
     #[derive(Debug)]
-    pub struct BackupDto<Metadata = BackupMetadataPartialDto> {
+    pub struct BackupDto<Metadata> {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
@@ -385,13 +386,14 @@ pub struct CreateBackupOutput {
 #[derive(Debug)]
 pub struct CreateBackupStats {
     pub backup_upload_duration: std::time::Duration,
-    pub check_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
+    pub checks_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
 }
 
 #[derive(Debug)]
 pub struct CreateBackupSuccess {
-    pub creation_output: CreateBackupOutput,
-    pub creation_stats: CreateBackupStats,
+    pub backup: BackupDto<BackupMetadataPartialDto>,
+    pub output: CreateBackupOutput,
+    pub stats: CreateBackupStats,
 }
 
 impl BackupService {
@@ -466,11 +468,15 @@ impl BackupService {
             None => backup_name.with_extension("tar.zst"),
         };
 
-        let mut upload_backup = self
+        let upload_backup = self
             .backup_store
             .writer(&backup_file_name)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
+
+        // Record stats so we can know the final size of the backup.
+        let mut backup_stats = WriteStats::new();
+        let mut upload_backup = MeteredStream::new(upload_backup, &mut backup_stats);
 
         // NOTE: We create only one writer in the form of an enum because:
         //   1. It does not make much sense to create multiple digests
@@ -496,6 +502,7 @@ impl BackupService {
             }
             None => None,
         };
+        let is_signed = pgp_signature_writer.is_some();
 
         let (writer, finalize_backup) = writer_chain::builder()
             .archive(&blueprint, version)
@@ -508,7 +515,7 @@ impl BackupService {
         () = finalize_backup(writer)?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
-        let mut check_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
+        let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
 
         // SHA-256 digest.
         {
@@ -536,7 +543,7 @@ impl BackupService {
                 .context("`finalize` failed")
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-            check_upload_durations.push((
+            checks_upload_durations.push((
                 file_name.clone(),
                 SystemTime::now().duration_since(start).unwrap(),
             ));
@@ -579,7 +586,7 @@ impl BackupService {
                 .context("`finalize` failed")
                 .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-            check_upload_durations.push((
+            checks_upload_durations.push((
                 file_name.clone(),
                 SystemTime::now().duration_since(start).unwrap(),
             ));
@@ -594,6 +601,7 @@ impl BackupService {
             // TODO: Contribute upstream to `sequoia_openpgp` to add a `into_inner`
             //   on `Message` so we can compose it.
             () = upload_backup
+                .into_inner()
                 .finalize()
                 .map_err(CreateBackupError::UploadFailed)?;
 
@@ -601,14 +609,25 @@ impl BackupService {
         }
 
         Ok(CreateBackupSuccess {
-            creation_output: CreateBackupOutput {
+            backup: BackupDto {
+                id: backup_file_name.clone(),
+                description: description.to_owned(),
+                metadata: BackupMetadataPartialDto {
+                    created_at: created_at.into(),
+                    size_bytes: backup_stats.bytes_written,
+                    is_signed,
+                    is_encrypted: self.encryption_context.is_some(),
+                    can_be_restored: true,
+                },
+            },
+            output: CreateBackupOutput {
                 backup_id: backup_file_name,
                 digest_ids,
                 signature_ids,
             },
-            creation_stats: CreateBackupStats {
+            stats: CreateBackupStats {
                 backup_upload_duration,
-                check_upload_durations,
+                checks_upload_durations,
             },
         })
     }
@@ -660,7 +679,9 @@ pub enum CreateBackupError {
 
 impl BackupService {
     /// List all backups, in alphabetically descending order.
-    pub async fn list_backups(&self) -> Result<Vec<BackupDto>, anyhow::Error> {
+    pub async fn list_backups(
+        &self,
+    ) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
         //   no way to list in reverse order or list by “last modified” date
         //   (even ascending). Therefore, we have no choice but to list ALL
@@ -695,7 +716,7 @@ impl BackupService {
 
         let signing_is_mandatory = self.signing_context.is_signing_mandatory;
 
-        let mut dtos: Vec<BackupDto> = Vec::with_capacity(backups.len());
+        let mut dtos: Vec<BackupDto<BackupMetadataPartialDto>> = Vec::with_capacity(backups.len());
 
         for backup in backups.into_iter().rev() {
             let backup_file_name = backup.file_name;

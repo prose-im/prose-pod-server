@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, anyhow, bail};
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
-use crate::stats::{ReadStats, StatsReader};
+use crate::stats::{MeteredStream, ReadStats};
 use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
 use crate::writer_chain::WriterChainBuilder;
@@ -223,7 +223,7 @@ pub(crate) fn extract<'a>(
         .context("Could not open backup file")
         .inspect_err(debug_panic)?;
 
-    let backup_reader = StatsReader::new(backup_file, &mut stats.raw_read_stats);
+    let backup_reader = MeteredStream::new(backup_file, &mut stats.raw_read_stats);
 
     // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
     //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
@@ -238,7 +238,7 @@ pub(crate) fn extract<'a>(
     let archive_bytes =
         zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
 
-    let archive_bytes = StatsReader::new(archive_bytes, &mut stats.decompression_stats);
+    let archive_bytes = MeteredStream::new(archive_bytes, &mut stats.decompression_stats);
 
     extract_archive_(archive_bytes, blueprints, &mut stats.extracted_bytes_count)
 }

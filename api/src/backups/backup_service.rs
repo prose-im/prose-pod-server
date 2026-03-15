@@ -22,6 +22,12 @@ use crate::{
 
 use self::prelude::*;
 
+/// Current version of Prose backup archives.
+///
+/// If we change the internal structure of backups in the future, we’ll bump
+/// this version number and keep backward compatibility.
+const CURRENT_BACKUP_VERSION: u8 = 1;
+
 #[derive(Debug, Clone)]
 pub struct BackupService {
     pub implem: Arc<dyn BackupServiceImpl>,

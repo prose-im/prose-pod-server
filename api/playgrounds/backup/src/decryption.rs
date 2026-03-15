@@ -35,7 +35,7 @@ where
         if let Some(context) = context.pgp.as_ref() {
             let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_name, report)?;
 
-            let decryptor = crate::stats::StatsReader::new(decryptor, stats);
+            let decryptor = crate::stats::MeteredStream::new(decryptor, stats);
 
             Ok(Either::A(decryptor))
         } else {

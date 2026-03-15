@@ -3,7 +3,12 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-//! TODO: Describe.
+//! This example, in addition to show how this library can be used, ensures
+//! that it supports the use case of [Prose] Pods, in their
+//! [early 2026 architecture].
+//!
+//! [Prose]: https://prose.org/ "Prose IM homepage"
+//! [early 2026 architecture]: https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md
 
 mod common;
 mod prose;
@@ -43,6 +48,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
     // TODO: Test that the URL works.
+
+    let _result = dashboard.restore_backup(String::clone(&backup_id)).await?;
+
+    let _result = dashboard.delete_backup(String::clone(&backup_id)).await?;
 
     todo!()
 }

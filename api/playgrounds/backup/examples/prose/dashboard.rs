@@ -8,6 +8,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::anyhow;
+use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartialDto};
 use time::UtcDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
@@ -30,7 +31,17 @@ impl Dashboard {
 }
 
 #[allow(dead_code)]
-pub struct BackupUiModel {
+pub struct BackupEntryModel {
+    pub backup_id: String,
+    pub description: String,
+    pub is_signed: bool,
+    pub is_encrypted: bool,
+    pub created_at: UtcDateTime,
+    pub size_bytes: u64,
+}
+
+#[allow(dead_code)]
+pub struct BackupDetailsModel {
     pub backup_id: String,
     pub description: String,
     pub is_signed: bool,
@@ -43,23 +54,16 @@ pub struct BackupUiModel {
 //   errors as alert-looking elements, not be binary like `Result`. However,
 //   for the purpose of this example, we won’t go into such detail.
 impl Dashboard {
-    pub async fn show_backups(&self) -> Result<Vec<BackupUiModel>, anyhow::Error> {
+    pub async fn show_backups(&self) -> Result<Vec<BackupEntryModel>, anyhow::Error> {
         let backups = {
             let api = self.api().await?;
             api.get_backups().await?
         };
 
-        let mut list: Vec<BackupUiModel> = Vec::with_capacity(backups.len());
+        let mut list: Vec<BackupEntryModel> = Vec::with_capacity(backups.len());
 
         for dto in backups {
-            list.push(BackupUiModel {
-                backup_id: dto.id.to_string(),
-                description: dto.description,
-                is_signed: dto.metadata.is_signed,
-                is_encrypted: dto.metadata.is_encrypted,
-                created_at: dto.metadata.created_at,
-                size_bytes: dto.metadata.size_bytes,
-            });
+            list.push(BackupEntryModel::from(dto));
         }
 
         Ok(list)
@@ -68,22 +72,25 @@ impl Dashboard {
     pub async fn create_backup(
         &self,
         description: impl Into<String>,
-    ) -> Result<BackupUiModel, anyhow::Error> {
-        let backup = {
+    ) -> Result<BackupEntryModel, anyhow::Error> {
+        let response = {
             let api = self.api().await?;
             api.post_backups(description.into()).await?
         };
 
-        todo!()
+        Ok(BackupEntryModel::from(response.backup))
     }
 
-    pub async fn inspect_backup(&self, backup_id: String) -> Result<BackupUiModel, anyhow::Error> {
+    pub async fn inspect_backup(
+        &self,
+        backup_id: String,
+    ) -> Result<BackupDetailsModel, anyhow::Error> {
         let backup = {
             let api = self.api().await?;
             api.get_backup(backup_id).await?
         };
 
-        todo!()
+        Ok(BackupDetailsModel::from(backup))
     }
 
     pub async fn download_backup(&self, backup_id: String) -> Result<String, anyhow::Error> {
@@ -96,5 +103,52 @@ impl Dashboard {
         // TODO: Download and save to a file instead of returning the URL.
 
         Ok(download_url)
+    }
+
+    pub async fn restore_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
+        let result = {
+            let api = self.api().await?;
+            api.put_backup_restore(backup_id).await?
+        };
+
+        Ok(result)
+    }
+
+    pub async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
+        let result = {
+            let api = self.api().await?;
+            api.delete_backup(backup_id).await?
+        };
+
+        Ok(result)
+    }
+}
+
+// MARK: - Boilerplate
+
+impl From<BackupDto<BackupMetadataPartialDto>> for BackupEntryModel {
+    fn from(dto: BackupDto<BackupMetadataPartialDto>) -> Self {
+        Self {
+            backup_id: dto.id.to_string(),
+            description: dto.description,
+            is_signed: dto.metadata.is_signed,
+            is_encrypted: dto.metadata.is_encrypted,
+            created_at: dto.metadata.created_at,
+            size_bytes: dto.metadata.size_bytes,
+        }
+    }
+}
+
+impl From<BackupDto<BackupMetadataFullDto>> for BackupDetailsModel {
+    fn from(dto: BackupDto<BackupMetadataFullDto>) -> Self {
+        let fixme = "Add more fields";
+        Self {
+            backup_id: dto.id.to_string(),
+            description: dto.description,
+            is_signed: dto.metadata.is_signed,
+            is_encrypted: dto.metadata.is_encrypted,
+            created_at: dto.metadata.created_at,
+            size_bytes: dto.metadata.size_bytes,
+        }
     }
 }

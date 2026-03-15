@@ -18,11 +18,75 @@ use super::*;
 // MARK: - Public API
 
 #[async_trait::async_trait]
-impl ProsePodApi for ApiV2 {
+impl ProsePodApi for ProsePodApiV2 {
     /// `POST /backups`.
     async fn post_backups(
         &self,
         description: String,
+    ) -> Result<CreateBackupSuccess, anyhow::Error> {
+        let prose_pod_api_data = todo!();
+
+        self.server_api
+            .post_backups(description, prose_pod_api_data)
+            .await
+    }
+
+    /// `GET /backups`.
+    async fn get_backups(&self) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
+        self.server_api.get_backups().await
+    }
+
+    /// `GET /backups/{backup_id}`.
+    async fn get_backup(
+        &self,
+        backup_id: String,
+    ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
+        self.server_api.get_backup(backup_id).await
+    }
+
+    /// `DELETE /backups/{backup_id}`.
+    async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
+        self.server_api.delete_backup(backup_id).await
+    }
+
+    /// `PUT /backups/{backup_id}/restore`.
+    async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
+        self.server_api.put_backup_restore(backup_id).await
+    }
+
+    /// `GET /backups/{backup_id}/download-url`.
+    async fn get_backup_download_url(
+        &self,
+        backup_id: String,
+        ttl: std::time::Duration,
+    ) -> Result<String, anyhow::Error> {
+        self.server_api
+            .get_backup_download_url(backup_id, ttl)
+            .await
+    }
+}
+
+pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
+    let server_api = {
+        let state = ProsePodServerState::new_v2()?;
+
+        ProsePodServerApiV2 {
+            constants: ProsePodServerConstants::v2(),
+            state: RwLock::new(state),
+        }
+    };
+
+    Ok(ProsePodApiV2 { server_api })
+}
+
+// MARK: - Internals
+
+impl ProsePodServerApiV2 {
+    /// `POST /backups`.
+    async fn post_backups(
+        &self,
+        description: String,
+        prose_pod_api_data: Vec<u8>,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
         let state = self.state().await;
 
@@ -105,37 +169,36 @@ impl ProsePodApi for ApiV2 {
     }
 }
 
-pub fn start_v2() -> Result<ApiV2, anyhow::Error> {
-    let state = ApiState::new_v2()?;
-
-    Ok(ApiV2 {
-        constants: ApiConstants::v2(),
-        state: RwLock::new(state),
-    })
-}
-
 // MARK: - Implementation details
 
-// MARK: API
+// MARK: Prose Pod API
 
-pub struct ApiV2 {
-    constants: ApiConstants,
-    state: RwLock<ApiState>,
+/// Prose Pod API, as of early 2026. For more information, see
+/// [“Prose Pod Server architecture: Server API vs XMPP server”](https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md).
+pub struct ProsePodApiV2 {
+    server_api: ProsePodServerApiV2,
 }
 
-impl ApiV2 {
-    async fn state(&self) -> RwLockReadGuard<'_, ApiState> {
+// MARK: Prose Pod Server
+
+struct ProsePodServerApiV2 {
+    constants: ProsePodServerConstants,
+    state: RwLock<ProsePodServerState>,
+}
+
+impl ProsePodServerApiV2 {
+    async fn state(&self) -> RwLockReadGuard<'_, ProsePodServerState> {
         self.state.read().await
     }
 }
 
 /// This would be hard-coded as constants in the Prose Pod API code.
-pub struct ApiConstants {
+pub struct ProsePodServerConstants {
     backups_version: u8,
     backup_blueprints: HashMap<u8, ArchiveBlueprint>,
 }
 
-impl ApiConstants {
+impl ProsePodServerConstants {
     fn v2() -> Self {
         let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
         let src_root = Path::new(&prose_pod_api_dir).join("local-run/scenarios/demo");
@@ -166,21 +229,21 @@ impl ApiConstants {
 // MARK: API config
 
 #[derive(Debug, serde::Deserialize)]
-struct ApiConfig {
+struct ProsePodServerConfig {
     backups: BackupConfig,
 }
 
-fn load_config() -> Result<ApiConfig, anyhow::Error> {
+fn load_config() -> Result<ProsePodServerConfig, anyhow::Error> {
     todo!()
 }
 
 // MARK: API state
 
-pub struct ApiState {
+pub struct ProsePodServerState {
     backup_service: BackupService,
 }
 
-impl ApiState {
+impl ProsePodServerState {
     fn new_v2() -> Result<Self, anyhow::Error> {
         let api_config = load_config()?;
 
