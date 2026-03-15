@@ -24,7 +24,16 @@ impl ProsePodApi for ProsePodApiV2 {
         &self,
         description: String,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
-        let prose_pod_api_data = todo!();
+        let buf: Vec<u8> = Vec::new();
+        let mut builder = tar::Builder::new(buf);
+
+        // NOTE: Example data, the Prose Pod API saves other files.
+        builder.append_file(
+            "example",
+            &mut std::fs::File::open(env!("CARGO_MANIFEST_PATH"))?,
+        )?;
+
+        let prose_pod_api_data = builder.into_inner()?;
 
         self.server_api
             .post_backups(description, prose_pod_api_data)
@@ -206,24 +215,24 @@ impl ProsePodServerConstants {
 
         Self {
             backups_version: 1,
-            backup_blueprints: [(1, Self::blueprint_v2(&src_root))].into_iter().collect(),
+            backup_blueprints: [(1, blueprint_v2(&src_root))].into_iter().collect(),
         }
     }
+}
 
-    fn blueprint_v2(root: impl AsRef<Path>) -> ArchiveBlueprint {
-        let root = root.as_ref();
-        ArchiveBlueprint::from_iter(
-            [
-                ("prose-pod-server-data", "var/lib/prose-pod-server"),
-                ("prose-pod-api-data", "var/lib/prose-pod-api"),
-                ("prosody-data", "var/lib/prosody"),
-                ("prose-config", "etc/prose"),
-                ("prosody-config", "etc/prosody"),
-            ]
-            .into_iter()
-            .map(|(dst, src)| (dst, root.join(src))),
-        )
-    }
+fn blueprint_v2(root: impl AsRef<Path>) -> ArchiveBlueprint {
+    let root = root.as_ref();
+    ArchiveBlueprint::from_iter(
+        [
+            ("prose-pod-server-data", "var/lib/prose-pod-server"),
+            ("prose-pod-api-data", "var/lib/prose-pod-api"),
+            ("prosody-data", "var/lib/prosody"),
+            ("prose-config", "etc/prose"),
+            ("prosody-config", "etc/prosody"),
+        ]
+        .into_iter()
+        .map(|(dst, src)| (dst, root.join(src))),
+    )
 }
 
 // MARK: API config
