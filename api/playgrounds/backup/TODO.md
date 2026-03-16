@@ -8,7 +8,8 @@ None.
 
 Medium priority (unordered):
 
-None.
+- Backups remain partially uploaded if an integrity check upload fails.
+- Passphrase-protected OpenPGP secret key material are not supported.
 
 Low priority (unordered):
 
