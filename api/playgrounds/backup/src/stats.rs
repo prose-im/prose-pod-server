@@ -207,16 +207,20 @@ pub(crate) fn meter_writes<W, MakeErr, FinalizeErr, Stats: WriterStats>(
 // MARK: - Boilerplate
 
 impl<T: StreamStats> StreamStats for &mut T {
+    #[inline(always)]
     fn record_chunk(&mut self, len: usize) {
         (*self).record_chunk(len)
     }
 
+    #[cfg(debug_assertions)]
+    #[inline(always)]
     fn record_duration(&mut self, duration: &std::time::Duration) {
         (*self).record_duration(duration)
     }
 }
 
 impl<T: WriterStats> WriterStats for &mut T {
+    #[inline(always)]
     fn record_flush(&mut self) {
         (*self).record_flush()
     }

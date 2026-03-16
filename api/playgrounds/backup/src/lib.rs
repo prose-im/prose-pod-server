@@ -457,10 +457,12 @@ impl BackupService {
             created_at,
         }: CreateBackupCommand<'_>,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
+        use std::time::SystemTime;
+
         archiving::check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
-        let created_at = std::time::SystemTime::now();
+        let created_at = SystemTime::now();
 
         let backup_name = BackupName::new(prefix, description, &created_at);
 
@@ -477,6 +479,8 @@ impl BackupService {
             .writer(&backup_file_name)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
+
+        let start = SystemTime::now();
 
         let backup_writer = archive(&blueprint, version)
             .then(compress(&self.compression_config))
@@ -533,7 +537,7 @@ impl BackupService {
         () = backup_upload
             .finalize()
             .map_err(CreateBackupError::UploadFailed)?;
-        let backup_upload_duration = backup_stats.active_write_duration;
+        let backup_upload_duration = SystemTime::now().duration_since(start).unwrap_or_default();
 
         // Construct the response.
         Ok(CreateBackupSuccess {
