@@ -505,7 +505,7 @@ impl BackupService {
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
             }))
-            .then(tee(digest_writer))
+            .tee_into(digest_writer)
             .opt_tee(
                 self.signing_context.pgp.as_ref(),
                 |ctx| pgp_sign(ctx, created_at),
@@ -513,9 +513,9 @@ impl BackupService {
             )
             .build(upload_backup)?;
 
-        let (backup_upload, pgp_signature) = backup_writer.finalize();
+        let ((backup_upload, digest_writer), pgp_signature) = backup_writer.finalize();
 
-        let (upload_backup, digest_writer) = backup_upload?;
+        let upload_backup = backup_upload?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
         let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
