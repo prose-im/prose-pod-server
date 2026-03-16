@@ -98,50 +98,37 @@ fn archive_writer<W: Write>(
     Ok(())
 }
 
-impl<M, F> WriterChainBuilder<M, F> {
-    /// NOTE: We don’t start from zero as the Prose Pod API has to send its own
-    ///   backup to the Prose Pod Server. The Pod Server then merges it with
-    ///   the rest of the server’s data and creates the backup file.
-    pub(crate) fn archive<InnerWriter, OuterWriter>(
-        self,
-        blueprint: &ArchiveBlueprint,
-        version: u8,
-    ) -> WriterChainBuilder<
-        impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
-        impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
-    >
-    where
-        InnerWriter: Write,
-        M: FnOnce(tar::Builder<InnerWriter>) -> Result<OuterWriter, CreateBackupError>,
-        F: FnOnce(OuterWriter) -> Result<tar::Builder<InnerWriter>, CreateBackupError>,
-    {
-        let Self { make, finalize, .. } = self;
+/// NOTE: We don’t start from zero as the Prose Pod API has to send its own
+///   backup to the Prose Pod Server. The Pod Server then merges it with
+///   the rest of the server’s data and creates the backup file.
+pub(crate) fn archive<W: Write>(
+    blueprint: &ArchiveBlueprint,
+    version: u8,
+) -> WriterChainBuilder<
+    impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
+    impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
+> {
+    WriterChainBuilder {
+        make: move |writer: W| {
+            let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
-        WriterChainBuilder {
-            make: move |writer: InnerWriter| {
-                let mut builder: tar::Builder<_> = tar::Builder::new(writer);
+            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
+                .map_err(CreateBackupError::CannotArchive)?;
 
-                add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
-                    .map_err(CreateBackupError::CannotArchive)?;
+            archive_writer(&mut builder, blueprint).map_err(CreateBackupError::CannotArchive)?;
 
-                archive_writer(&mut builder, blueprint)
-                    .map_err(CreateBackupError::CannotArchive)?;
+            Ok(builder)
+        },
 
-                make(builder)
-            },
+        finalize: move |writer: tar::Builder<W>| {
+            let res = writer
+                // NOTE: Flushes the stream if needed.
+                .into_inner()
+                .context("Could not init archive")
+                .map_err(CreateBackupError::CannotArchive)?;
 
-            finalize: move |writer: OuterWriter| {
-                let writer = finalize(writer)?;
-
-                let res = writer
-                    // NOTE: Flushes the stream if needed.
-                    .into_inner()
-                    .context("Could not init archive")
-                    .map_err(CreateBackupError::CannotArchive)?;
-
-                Ok(res)
-            },
-        }
+            Ok(res)
+        },
     }
 }
 

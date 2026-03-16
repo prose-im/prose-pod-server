@@ -11,40 +11,26 @@ use anyhow::Context as _;
 
 use crate::{CreateBackupError, config::CompressionConfig, writer_chain::WriterChainBuilder};
 
-impl<M, F> WriterChainBuilder<M, F> {
-    pub(crate) fn compress<InnerWriter, OuterWriter>(
-        self,
-        config: &CompressionConfig,
-    ) -> WriterChainBuilder<
-        impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
-        impl FnOnce(OuterWriter) -> Result<InnerWriter, CreateBackupError>,
-    >
-    where
-        InnerWriter: Write,
-        M: FnOnce(zstd::Encoder<'static, InnerWriter>) -> Result<OuterWriter, CreateBackupError>,
-        F: FnOnce(OuterWriter) -> Result<zstd::Encoder<'static, InnerWriter>, CreateBackupError>,
-    {
-        let Self { make, finalize, .. } = self;
+pub(crate) fn compress<'a, W: Write>(
+    config: &CompressionConfig,
+) -> WriterChainBuilder<
+    impl FnOnce(W) -> Result<zstd::Encoder<'a, W>, CreateBackupError>,
+    impl FnOnce(zstd::Encoder<'a, W>) -> Result<W, CreateBackupError>,
+> {
+    WriterChainBuilder {
+        make: move |writer: W| {
+            zstd::Encoder::new(writer, config.zstd_compression_level)
+                .context("Could not build zstd encoder")
+                .map_err(CreateBackupError::CannotCompress)
+        },
 
-        WriterChainBuilder {
-            make: move |writer: InnerWriter| {
-                let writer = zstd::Encoder::new(writer, config.zstd_compression_level)
-                    .context("Could not build zstd encoder")
-                    .map_err(CreateBackupError::CannotCompress)?;
+        finalize: move |writer: zstd::Encoder<'a, W>| {
+            let res = writer
+                .finish()
+                .map_err(anyhow::Error::new)
+                .map_err(CreateBackupError::CompressionFailed);
 
-                make(writer)
-            },
-
-            finalize: move |writer: OuterWriter| {
-                let writer = finalize(writer)?;
-
-                let res = writer
-                    .finish()
-                    .map_err(anyhow::Error::new)
-                    .map_err(CreateBackupError::CompressionFailed);
-
-                res
-            },
-        }
+            res
+        },
     }
 }

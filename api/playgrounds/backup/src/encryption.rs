@@ -7,12 +7,7 @@
 
 use std::{io::Write, time::SystemTime};
 
-use openpgp::serialize::stream::*;
-
-use crate::{
-    CreateBackupError,
-    writer_chain::{WriterChainBuilder, either::Either},
-};
+use crate::{CreateBackupError, writer_chain::WriterChainBuilder};
 
 pub use self::EncryptionContext as Context;
 
@@ -25,26 +20,55 @@ pub enum EncryptionContext {
     },
 }
 
-impl EncryptionContext {
-    fn encrypt<'a, W: Write + Send + Sync + 'a>(
-        &'a self,
-        writer: W,
-        created_at: SystemTime,
-    ) -> Result<EncryptionWriter<'a>, anyhow::Error> {
-        match self {
-            Self::Pgp { recipients, policy } => {
-                self::pgp::encrypt(writer, recipients.as_slice(), policy.as_ref(), created_at)
-                    .map(EncryptionWriter::Pgp)
+pub enum EncryptionWriter<'a, W> {
+    Pgp(pgp::PgpEncryptedWriter<'a, W>),
+}
+
+pub(crate) fn encrypt<'a, W>(
+    context: &'a EncryptionContext,
+    created_at: SystemTime,
+) -> WriterChainBuilder<
+    impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CreateBackupError>,
+    impl FnOnce(EncryptionWriter<'a, W>) -> Result<W, CreateBackupError>,
+>
+where
+    W: Write + Send + Sync,
+{
+    WriterChainBuilder {
+        make: move |writer: W| match context {
+            EncryptionContext::Pgp { recipients, policy } => {
+                let pgp_writer = pgp::PgpEncryptedWriter::try_new(
+                    writer,
+                    policy,
+                    recipients.clone(),
+                    |writer, policy, recipients| {
+                        self::pgp::encrypt(
+                            writer,
+                            recipients.as_slice(),
+                            policy.as_ref(),
+                            created_at,
+                        )
+                        .map(Some)
+                    },
+                )
+                .map_err(CreateBackupError::CannotEncrypt)?;
+
+                Ok(EncryptionWriter::Pgp(pgp_writer))
             }
-        }
+        },
+
+        finalize: move |writer: EncryptionWriter<'a, W>| match writer {
+            EncryptionWriter::Pgp(pgp_writer) => pgp_writer
+                .finalize()
+                .map_err(CreateBackupError::EncryptionFailed),
+        },
     }
 }
 
-pub enum EncryptionWriter<'a> {
-    Pgp(Message<'a>),
-}
-
-impl<'a> Write for EncryptionWriter<'a> {
+impl<'a, W> Write for EncryptionWriter<'a, W>
+where
+    W: Write,
+{
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             EncryptionWriter::Pgp(writer) => writer.write(buf),
@@ -58,77 +82,63 @@ impl<'a> Write for EncryptionWriter<'a> {
     }
 }
 
-impl<'a> EncryptionWriter<'a> {
-    fn finalize(self) -> Result<(), anyhow::Error> {
-        match self {
-            EncryptionWriter::Pgp(message) => message.finalize(),
-        }
-    }
-}
-
-impl<M, F> WriterChainBuilder<M, F> {
-    pub(crate) fn encrypt_if_possible<'a, InnerWriter, OuterWriter>(
-        self,
-        helper: Option<&'a EncryptionContext>,
-        created_at: SystemTime,
-    ) -> WriterChainBuilder<
-        impl FnOnce(InnerWriter) -> Result<OuterWriter, CreateBackupError>,
-        impl FnOnce(OuterWriter) -> Result<(), CreateBackupError>,
-    >
-    where
-        InnerWriter: Write + Send + Sync + 'a,
-        M: FnOnce(
-            Either<EncryptionWriter<'a>, InnerWriter>,
-        ) -> Result<OuterWriter, CreateBackupError>,
-        F: FnOnce(
-            OuterWriter,
-        ) -> Result<Either<EncryptionWriter<'a>, InnerWriter>, CreateBackupError>,
-    {
-        let Self { make, finalize, .. } = self;
-
-        WriterChainBuilder {
-            make: move |writer: InnerWriter| {
-                let writer: Either<_, _> = match helper {
-                    Some(helper) => {
-                        let encrypted_writer = helper
-                            .encrypt(writer, created_at)
-                            .map_err(CreateBackupError::CannotEncrypt)?;
-                        Either::A(encrypted_writer)
-                    }
-                    None => Either::B(writer),
-                };
-
-                make(writer)
-            },
-
-            finalize: move |writer: OuterWriter| {
-                let writer: Either<_, _> = finalize(writer)?;
-
-                let res = match writer {
-                    Either::A(message) => message
-                        .finalize()
-                        .map_err(CreateBackupError::EncryptionFailed),
-                    Either::B(_) => Ok(()),
-                };
-
-                res
-            },
-        }
-    }
-}
-
 mod pgp {
     use std::io::Write;
 
     use openpgp::policy::Policy;
     use openpgp::serialize::stream::*;
 
-    pub(crate) fn encrypt<'cert, 'policy: 'cert, W: Write + Send + Sync + 'cert>(
+    /// [`openpgp::serialize::stream::Message`] takes ownership of the writer,
+    /// but never gives it back. We need a wrapper that holds both the owned
+    /// writer but also the owned `Message` which holds a mutable reference to
+    /// it. This causes self-referencing issues, which must be worked around
+    /// using [`ouroboros`].
+    ///
+    /// We opened an issue in `sequoia_openpgp` to hopefully monomorphize
+    /// writers so we can get back ownership of the inner writer (see
+    /// [Monomorphize streams to give back inner writer ownership (#1237) · Issue · sequoia-pgp/sequoia](https://gitlab.com/sequoia-pgp/sequoia/-/work_items/1237)).
+    /// Until then, we’ll use this verbose version.
+    #[ouroboros::self_referencing(no_doc, pub_extras)]
+    pub struct PgpEncryptedWriter<'a, W: 'a> {
         writer: W,
-        recipient_certs: &'cert [openpgp::Cert],
-        policy: &'policy dyn Policy,
+        policy: &'a Box<dyn Policy>,
+        certs: Vec<openpgp::Cert>,
+
+        #[borrows(mut writer, policy, certs)]
+        #[not_covariant]
+        message: Option<Message<'this>>,
+    }
+
+    impl<'a, W> PgpEncryptedWriter<'a, W> {
+        pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            self.with_message_mut(|message| message.take().unwrap().finalize())?;
+
+            Ok(self.into_heads().writer)
+        }
+    }
+
+    impl<'a, W> Write for PgpEncryptedWriter<'a, W>
+    where
+        W: Write,
+    {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            self.with_message_mut(|opt| opt.as_mut().unwrap().write(buf))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            self.with_message_mut(|opt| opt.as_mut().unwrap().flush())
+        }
+    }
+
+    pub(crate) fn encrypt<'a, W: Write + Send + Sync + 'a>(
+        writer: W,
+        recipient_certs: &'a [openpgp::Cert],
+        policy: &'a dyn Policy,
         created_at: std::time::SystemTime,
-    ) -> Result<Message<'cert>, anyhow::Error> {
+    ) -> Result<Message<'a>, anyhow::Error> {
         let message = Message::new(writer);
 
         let mut recipients = Vec::with_capacity(recipient_certs.len());

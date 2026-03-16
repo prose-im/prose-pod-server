@@ -229,7 +229,7 @@ impl BackupService {
         }
 
         'sha256_check: {
-            use crate::writer_chain::tee::TeeWriter;
+            use crate::writer_chain::TeeWriter;
             use sha2::{Digest as _, Sha256};
 
             let check_name = backup_name.with_extension("sha256");

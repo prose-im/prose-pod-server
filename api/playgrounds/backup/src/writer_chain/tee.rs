@@ -44,29 +44,47 @@ impl<W1: Write, W2: Write> Write for TeeWriter<W1, W2> {
 }
 
 impl<M, F> WriterChainBuilder<M, F> {
-    /// NOTE: Accepts a mutable reference to leave ownership to the called and
-    ///   allow it to finalize the other writer manually.
-    pub fn tee<InnerWriter, InnerWriter2, OuterWriter, Out, E>(
+    pub fn tee<A1, A2, B1, B2, Out1, Out2, Err, Err1, Err2>(
         self,
-        other_writer: InnerWriter2,
+        other: WriterChainBuilder<
+            impl FnOnce(A2) -> Result<B2, Err>,
+            impl FnOnce(B2) -> Result<Out2, Err2>,
+        >,
+        writer: A2,
     ) -> WriterChainBuilder<
-        impl FnOnce(InnerWriter) -> Result<OuterWriter, E>,
-        impl FnOnce(OuterWriter) -> Result<Out, E>,
+        impl FnOnce(A1) -> Result<TeeWriter<B1, B2>, Err>,
+        impl FnOnce(TeeWriter<B1, B2>) -> (Result<Out1, Err1>, Result<Out2, Err2>),
     >
     where
-        M: FnOnce(TeeWriter<InnerWriter, InnerWriter2>) -> Result<OuterWriter, E>,
-        F: FnOnce(OuterWriter) -> Result<Out, E>,
+        M: FnOnce(A1) -> Result<B1, Err>,
+        F: FnOnce(B1) -> Result<Out1, Err1>,
     {
         let Self { make, finalize, .. } = self;
 
         WriterChainBuilder {
-            make: move |writer| make(TeeWriter::new(writer, other_writer)),
+            make: move |a1: A1| {
+                let b1: B1 = make(a1)?;
+                let b2: B2 = (other.make)(writer)?;
+                Ok(TeeWriter::new(b1, b2))
+            },
 
-            finalize: move |writer: OuterWriter| {
-                let writer = finalize(writer)?;
-
-                Ok(writer)
+            finalize: move |tee: TeeWriter<B1, B2>| {
+                let res1: Result<Out1, Err1> = finalize(tee.w1);
+                let res2: Result<Out2, Err2> = (other.finalize)(tee.w2);
+                (res1, res2)
             },
         }
+    }
+}
+
+pub fn tee<B1, B2, Err>(
+    b2: B2,
+) -> WriterChainBuilder<
+    impl FnOnce(B1) -> Result<TeeWriter<B1, B2>, Err>,
+    impl FnOnce(TeeWriter<B1, B2>) -> Result<(B1, B2), Err>,
+> {
+    WriterChainBuilder {
+        make: move |b1: B1| Ok(TeeWriter::new(b1, b2)),
+        finalize: move |tee: TeeWriter<B1, B2>| Ok((tee.w1, tee.w2)),
     }
 }

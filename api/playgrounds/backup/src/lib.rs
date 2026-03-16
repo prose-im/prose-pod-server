@@ -33,7 +33,7 @@ pub mod stats;
 pub mod stores;
 mod util;
 pub mod verification;
-mod writer_chain;
+pub mod writer_chain;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -44,6 +44,10 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
+use crate::archiving::archive;
+use crate::compression::compress;
+use crate::encryption::encrypt;
+use crate::signing::pgp::pgp_sign;
 use crate::stats::{MeteredStream, WriteStats};
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
@@ -51,6 +55,7 @@ use crate::stores::FsStore;
 use crate::stores::S3Store;
 use crate::stores::{CachedStore, ObjectStore};
 use crate::util::assert_impl;
+use crate::writer_chain::*;
 
 pub use self::config::BackupConfig;
 pub use self::restore::*;
@@ -476,12 +481,12 @@ impl BackupService {
 
         // Record stats so we can know the final size of the backup.
         let mut backup_stats = WriteStats::new();
-        let mut upload_backup = MeteredStream::new(upload_backup, &mut backup_stats);
+        let upload_backup = MeteredStream::new(upload_backup, &mut backup_stats);
 
         // NOTE: We create only one writer in the form of an enum because:
         //   1. It does not make much sense to create multiple digests
         //   2. We ensure there is always at least one
-        let mut digest_writer = match self.hashing_config.algorithm {
+        let digest_writer = match self.hashing_config.algorithm {
             config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
         };
 
@@ -492,27 +497,24 @@ impl BackupService {
         //   but also compile as it would involve a lot of generics. Let’s make
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
-        let mut pgp_signature: Vec<u8> = Vec::new();
-        let mut pgp_signature_writer = match self.signing_context.pgp.as_ref() {
-            Some(context) => {
-                let writer = context
-                    .new_writer(&mut pgp_signature, created_at)
-                    .map_err(CreateBackupError::CannotSign)?;
-                Some(writer)
-            }
-            None => None,
-        };
-        let is_signed = pgp_signature_writer.is_some();
 
         let (writer, finalize_backup) = writer_chain::builder()
-            .archive(&blueprint, version)
-            .compress(&self.compression_config)
-            .encrypt_if_possible(self.encryption_context.as_ref(), created_at)
-            .tee(&mut digest_writer)
-            .opt_tee(pgp_signature_writer.as_mut())
-            .build(&mut upload_backup)?;
+            .then(archive(&blueprint, version))
+            .then(compress(&self.compression_config))
+            .then(eventually(self.encryption_context.as_ref(), |ctx| {
+                encrypt(ctx, created_at)
+            }))
+            .then(tee(digest_writer))
+            .opt_tee(
+                self.signing_context.pgp.as_ref(),
+                |ctx| pgp_sign(ctx, created_at),
+                Vec::new(),
+            )
+            .build(upload_backup)?;
 
-        () = finalize_backup(writer)?;
+        let (backup_upload, pgp_signature) = finalize_backup(writer);
+
+        let (upload_backup, digest_writer) = backup_upload?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
         let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
@@ -552,18 +554,13 @@ impl BackupService {
 
         let mut signature_ids: Vec<BackupFileName> = Vec::new();
 
+        let is_signed = pgp_signature.is_some();
+
         // OpenPGP signature.
-        if pgp_signature_writer.is_some() {
+        if let Some(pgp_signature) = pgp_signature {
             let start = SystemTime::now();
 
-            // NOTE(RemiBardon): Don’t ask me why, but the borrow checker
-            //   doesn’t accept opening the optional with a `match` statement.
-            //   It makes no sense to me why, but I guess we’ll unwrap then…
-            let sig_writer = pgp_signature_writer.unwrap();
-
-            () = sig_writer
-                .finalize()
-                .map_err(CreateBackupError::SigningFailed)?;
+            let pgp_signature = pgp_signature?;
 
             // NOTE: OpenPGP will likely forever be the only signing protocol
             //   we support, but if we ever add one that also uses the `.sig`

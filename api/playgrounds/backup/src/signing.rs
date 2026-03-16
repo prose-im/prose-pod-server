@@ -19,21 +19,86 @@ pub struct SigningContext {
 }
 
 pub use self::pgp::PgpSigningContext;
-mod pgp {
-    use std::{
-        io::{self, Write},
-        time::SystemTime,
-    };
+pub mod pgp {
+    use std::{io::Write, time::SystemTime};
 
     use anyhow::Context as _;
+
+    use crate::CreateBackupError;
+    use crate::writer_chain::WriterChainBuilder;
+
+    /// [`openpgp::serialize::stream::Message`] takes ownership of the writer,
+    /// but never gives it back. We need a wrapper that holds both the owned
+    /// writer but also the owned `Message` which holds a mutable reference to
+    /// it. This causes self-referencing issues, which must be worked around
+    /// using [`ouroboros`].
+    ///
+    /// We opened an issue in `sequoia_openpgp` to hopefully monomorphize
+    /// writers so we can get back ownership of the inner writer (see
+    /// [Monomorphize streams to give back inner writer ownership (#1237) · Issue · sequoia-pgp/sequoia](https://gitlab.com/sequoia-pgp/sequoia/-/work_items/1237)).
+    /// Until then, we’ll use this verbose version.
+    #[ouroboros::self_referencing(no_doc, pub_extras)]
+    pub struct PgpSigner<W: 'static> {
+        writer: W,
+
+        #[borrows(mut writer)]
+        #[not_covariant]
+        signer: Option<openpgp::serialize::stream::Signer<'this>>,
+    }
+
+    impl<W> PgpSigner<W> {
+        pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            // TODO: Try to `.build()` before? Would it work?
+            //   Try and make sure nothing breaks.
+            self.with_signer_mut(|signer| signer.take().unwrap().build()?.finalize())?;
+
+            Ok(self.into_heads().writer)
+        }
+    }
+
+    impl<W> Write for PgpSigner<W>
+    where
+        W: Write,
+    {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            self.with_signer_mut(|opt| opt.as_mut().unwrap().write(buf))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+            self.with_signer_mut(|opt| opt.as_mut().unwrap().flush())
+        }
+    }
+
+    pub(crate) fn pgp_sign<'a, W>(
+        context: &'a PgpSigningContext,
+        time: SystemTime,
+    ) -> WriterChainBuilder<
+        impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>,
+        impl FnOnce(PgpSigner<W>) -> Result<W, CreateBackupError>,
+    >
+    where
+        W: Write + Send + Sync,
+    {
+        WriterChainBuilder {
+            make: move |writer: W| {
+                PgpSigner::try_new(writer, |writer| context.new_writer(writer, time).map(Some))
+                    .map_err(CreateBackupError::CannotCompress)
+            },
+
+            finalize: move |writer: PgpSigner<W>| {
+                writer
+                    .finalize()
+                    .map_err(CreateBackupError::CompressionFailed)
+            },
+        }
+    }
 
     pub struct PgpSigningContext {
         pub tsk: openpgp::Cert,
         pub policy: Box<dyn openpgp::policy::Policy>,
-    }
-
-    pub struct PgpSignatureWriter<'a> {
-        signer: openpgp::serialize::stream::Signer<'a>,
     }
 
     impl PgpSigningContext {
@@ -41,7 +106,7 @@ mod pgp {
             &self,
             writer: W,
             time: SystemTime,
-        ) -> Result<PgpSignatureWriter<'a>, anyhow::Error>
+        ) -> Result<openpgp::serialize::stream::Signer<'a>, anyhow::Error>
         where
             W: Write + Send + Sync + 'a,
         {
@@ -69,25 +134,7 @@ mod pgp {
                 .detached()
                 .creation_time(time);
 
-            Ok(PgpSignatureWriter { signer })
-        }
-    }
-
-    impl<'a> PgpSignatureWriter<'a> {
-        pub fn finalize(self) -> Result<(), anyhow::Error> {
-            // TODO: Try to `.build()` before? Would it work?
-            //   Try and make sure nothing breaks.
-            self.signer.build()?.finalize()
-        }
-    }
-
-    impl<'a> Write for PgpSignatureWriter<'a> {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.signer.write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.signer.flush()
+            Ok(signer)
         }
     }
 }
