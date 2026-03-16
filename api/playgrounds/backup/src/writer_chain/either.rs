@@ -13,6 +13,7 @@ where
     W1: std::io::Write,
     W2: std::io::Write,
 {
+    #[inline(always)]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             Either::A(writer) => writer.write(buf),
@@ -20,6 +21,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             Either::A(writer) => writer.flush(),
@@ -33,6 +35,7 @@ where
     R1: std::io::Read,
     R2: std::io::Read,
 {
+    #[inline(always)]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Either::A(reader) => reader.read(buf),

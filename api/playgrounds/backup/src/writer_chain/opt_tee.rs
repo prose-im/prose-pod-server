@@ -7,6 +7,7 @@ use super::WriterChainBuilder;
 use super::tee::TeeWriter;
 
 impl<M, F> WriterChainBuilder<M, F> {
+    #[inline]
     pub fn opt_tee_into<A1, B1, Out1, MakeErr1, FinalizeErr1, T, B2>(
         self,
         cond: Option<T>,
@@ -35,6 +36,7 @@ impl<M, F> WriterChainBuilder<M, F> {
         }
     }
 
+    #[inline]
     pub fn opt_tee<A1, B1, Out1, T, A2, B2, Out2, MakeErr, FinalizeErr, M2, F2>(
         self,
         cond: Option<T>,

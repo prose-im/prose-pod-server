@@ -17,6 +17,7 @@ pub struct WriterChainBuilder<Make, Finalize> {
     pub finalize: Finalize,
 }
 
+#[inline(always)]
 pub fn builder<W, MakeErr, FinalizeErr>() -> WriterChainBuilder<
     // NOTE: We need `W -> W` here as this layer will be
     //   the outer-most layer when building the final writer.
@@ -83,6 +84,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     /// #     Ok(())
     /// # }
     /// ```
+    #[inline(always)]
     pub fn then<A, B, C, Out, MakeErr, FinalizeErr>(
         self,
         other: WriterChainBuilder<
@@ -113,6 +115,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     }
 }
 
+#[inline]
 pub fn eventually<
     A,
     B,
@@ -155,6 +158,7 @@ pub fn eventually<
     }
 }
 
+#[inline]
 pub fn optionally<
     A,
     B,
@@ -202,6 +206,7 @@ pub fn optionally<
 
 impl<M, F> WriterChainBuilder<M, F> {
     #[must_use]
+    #[inline(always)]
     pub fn build<A, C, Out, Err>(self, writer: A) -> Result<FinalizableWriter<C, F>, Err>
     where
         A: std::io::Write,
@@ -220,6 +225,7 @@ pub struct FinalizableWriter<W, Finalize> {
 }
 
 impl<W, Finalize> FinalizableWriter<W, Finalize> {
+    #[inline(always)]
     pub fn finalize<Out>(self) -> Out
     where
         Finalize: FnOnce(W) -> Out,

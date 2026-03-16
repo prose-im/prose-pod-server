@@ -19,12 +19,14 @@ pub struct TeeWriter<W1, W2> {
 }
 
 impl<W1, W2> TeeWriter<W1, W2> {
+    #[inline(always)]
     pub fn new(w1: W1, w2: W2) -> Self {
         Self { w1, w2 }
     }
 }
 
 impl<W1: Write, W2: Write> Write for TeeWriter<W1, W2> {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // Write to first writer
         let n = self.w1.write(buf)?;
@@ -36,6 +38,7 @@ impl<W1: Write, W2: Write> Write for TeeWriter<W1, W2> {
         Ok(n)
     }
 
+    #[inline]
     fn flush(&mut self) -> io::Result<()> {
         self.w1.flush()?;
         self.w2.flush()?;
@@ -44,6 +47,7 @@ impl<W1: Write, W2: Write> Write for TeeWriter<W1, W2> {
 }
 
 impl<M, F> WriterChainBuilder<M, F> {
+    #[inline]
     pub fn tee<A1, A2, B1, B2, Out1, Out2, Err, Err1, Err2>(
         self,
         other: WriterChainBuilder<
@@ -76,6 +80,7 @@ impl<M, F> WriterChainBuilder<M, F> {
         }
     }
 
+    #[inline]
     pub fn tee_into<A1, B1, Out1, MakeErr, FinalizeErr, B2>(
         self,
         b2: B2,
@@ -103,6 +108,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     }
 }
 
+#[inline(always)]
 pub fn tee<B1, B2, MakeErr, FinalizeErr>(
     b2: B2,
 ) -> WriterChainBuilder<
