@@ -5,7 +5,7 @@
 
 //! Decryption logic.
 
-use crate::writer_chain::Either;
+use writer_chain::Either;
 
 pub use self::DecryptionContext as Context;
 

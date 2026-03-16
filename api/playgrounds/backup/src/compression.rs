@@ -8,10 +8,10 @@
 use std::io::Write;
 
 use anyhow::Context as _;
+use writer_chain::WriterChainBuilder;
 
 use crate::CreateBackupError;
 use crate::config::CompressionConfig;
-use crate::writer_chain::WriterChainBuilder;
 
 pub(crate) fn compress<'a, W: Write>(
     config: &CompressionConfig,

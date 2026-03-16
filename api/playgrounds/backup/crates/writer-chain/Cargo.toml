@@ -1,0 +1,9 @@
+[package]
+name = "writer-chain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+
+[target.'cfg(doc)'.dependencies]
+anyhow = { version = "1", default-features = false }

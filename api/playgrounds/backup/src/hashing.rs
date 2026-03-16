@@ -10,10 +10,10 @@
 //! anymore (no access to public key material to check the detached signature)!
 
 use std::io::Write;
+use writer_chain::WriterChainBuilder;
 
 use crate::CreateBackupError;
 use crate::config::{self, HashingConfig};
-use crate::writer_chain::WriterChainBuilder;
 
 pub(crate) enum DigestWriter<W> {
     Sha256(Sha256DigestWriter<W>),

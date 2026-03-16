@@ -9,7 +9,7 @@
 
 use std::io::{self, Read, Write};
 
-use crate::writer_chain::WriterChainBuilder;
+use writer_chain::WriterChainBuilder;
 
 // MARK: Model
 

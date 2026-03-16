@@ -9,12 +9,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
+use writer_chain::WriterChainBuilder;
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
 use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
-use crate::writer_chain::WriterChainBuilder;
 use crate::{BackupFileNameComponents, CreateBackupError};
 
 pub use self::ArchivingContext as Context;

@@ -33,7 +33,6 @@ pub mod stats;
 pub mod stores;
 mod util;
 pub mod verification;
-pub mod writer_chain;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -44,6 +43,7 @@ use anyhow::Context as _;
 pub use openpgp;
 pub use tokio;
 pub use toml;
+use writer_chain::*;
 
 use crate::archiving::archive;
 use crate::compression::compress;
@@ -57,7 +57,6 @@ use crate::stores::FsStore;
 use crate::stores::S3Store;
 use crate::stores::{CachedStore, ObjectStore};
 use crate::util::assert_impl;
-use crate::writer_chain::*;
 
 pub use self::config::BackupConfig;
 pub use self::restore::*;

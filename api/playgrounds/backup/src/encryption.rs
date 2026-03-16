@@ -5,10 +5,12 @@
 
 //! Encryption logic.
 
-use std::{io::Write, time::SystemTime};
+use std::io::Write;
+use std::time::SystemTime;
+
+use writer_chain::WriterChainBuilder;
 
 use crate::CreateBackupError;
-use crate::writer_chain::WriterChainBuilder;
 
 pub use self::EncryptionContext as Context;
 

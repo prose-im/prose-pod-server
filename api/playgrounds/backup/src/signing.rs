@@ -23,9 +23,9 @@ pub mod pgp {
     use std::{io::Write, time::SystemTime};
 
     use anyhow::Context as _;
+    use writer_chain::WriterChainBuilder;
 
     use crate::CreateBackupError;
-    use crate::writer_chain::WriterChainBuilder;
 
     /// [`openpgp::serialize::stream::Message`] takes ownership of the writer,
     /// but never gives it back. We need a wrapper that holds both the owned
