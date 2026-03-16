@@ -23,7 +23,7 @@ pub struct FsStore {
 }
 
 impl Default for FsStore {
-    #[inline(always)]
+    #[inline]
     fn default() -> Self {
         Self {
             directory: PathBuf::new(),
@@ -291,7 +291,7 @@ pub struct FsStoreBuilder {
 }
 
 impl FsStore {
-    #[inline(always)]
+    #[inline]
     pub fn builder() -> FsStoreBuilder {
         FsStoreBuilder {
             res: Self::default(),
@@ -300,25 +300,25 @@ impl FsStore {
 }
 
 impl FsStoreBuilder {
-    #[inline(always)]
+    #[inline]
     pub fn overwrite(mut self, overwrite: bool) -> Self {
         self.res.overwrite = overwrite;
         self
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn mode(mut self, mode: u32) -> Self {
         self.res.mode = mode;
         self
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn directory(mut self, directory: impl AsRef<Path>) -> Self {
         self.res.directory = directory.as_ref().to_path_buf();
         self
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn build(self) -> FsStore {
         self.res
     }

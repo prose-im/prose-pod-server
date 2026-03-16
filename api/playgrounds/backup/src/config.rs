@@ -176,7 +176,8 @@ fn default_config_static() -> Figment {
     Figment::from(Serialized::defaults(static_defaults))
 }
 
-fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, figment::Error> {
+/// NOTE: `figment::Error` is at least 208 bytes. clippy suggested boxing.
+fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figment::Error>> {
     use figment::providers::*;
 
     let signing_enabled_opt = figment.extract_inner::<bool>("signing.enabled").ok();
@@ -419,7 +420,7 @@ pub struct CachingConfig {
 // MARK: Constructors
 
 impl BackupConfig {
-    #[inline(always)]
+    #[inline]
     pub fn default_figment() -> Figment {
         default_config_static()
     }
@@ -563,12 +564,12 @@ mod tests {
         // NOTE: Error message not relevant here,
         //   there is a default value for `storage`.
         let res = BackupConfig::try_from(toml::Table::new());
-        assert!(matches!(res, Err(_)));
+        assert!(res.is_err());
 
         // NOTE: Error message not relevant here,
         //   there is a default value for `storage.backups`.
         let res = backup_config!({ [storage] });
-        assert!(matches!(res, Err(_)));
+        assert!(res.is_err());
 
         assert_error!(
             toml: {

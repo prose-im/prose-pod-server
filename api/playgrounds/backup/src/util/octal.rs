@@ -15,7 +15,7 @@ impl<'de, const N_DIGITS: usize> serde::Deserialize<'de> for Octal<N_DIGITS> {
     {
         let n = u32::deserialize(deserializer)?;
 
-        let max = (0o1 << 3 * N_DIGITS) - 1;
+        let max = (0o1 << (3 * N_DIGITS)) - 1;
         if n > max {
             return Err(serde::de::Error::custom(format!(
                 "Value must be ≤ {max:#o}"

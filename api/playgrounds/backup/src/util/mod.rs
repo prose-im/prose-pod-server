@@ -21,9 +21,9 @@ pub fn saturating_i64_to_u64(value: i64) -> u64 {
 
 /// Renames a file/directory (moves it to a new location), temporarily backing
 /// it up and restoring it on failure (if applicable).
-pub fn safe_replace<'a>(
+pub fn safe_replace(
     src: impl AsRef<std::path::Path>,
-    dst: &'a std::path::Path,
+    dst: &std::path::Path,
 ) -> std::io::Result<Option<PathGuard>> {
     use std::fs;
     use std::path::PathBuf;
@@ -108,7 +108,7 @@ impl AsRef<std::path::Path> for PathGuard {
 
 impl Drop for PathGuard {
     fn drop(&mut self) {
-        let ref path = self.path;
+        let path = &self.path;
 
         if matches!(path.try_exists(), Ok(false)) {
             return;
@@ -148,7 +148,7 @@ impl SystemTimeExt for std::time::SystemTime {
     }
 }
 
-#[inline(always)]
+#[inline]
 pub fn unix_timestamp() -> u64 {
     std::time::SystemTime::now().unix_timestamp()
 }
@@ -156,7 +156,7 @@ pub fn unix_timestamp() -> u64 {
 /// Panic in debug mode.
 ///
 /// To use with [`Result::inspect_err`].
-#[inline(always)]
+#[inline]
 pub fn debug_panic<E: std::fmt::Debug>(error: &E) {
     if cfg!(debug_assertions) {
         panic!("{error:?}")
@@ -191,7 +191,7 @@ pub fn get_or_try_insert<T, E>(
     opt: &mut Option<T>,
     f: impl FnOnce() -> Result<T, E>,
 ) -> Result<&mut T, E> {
-    if let None = opt {
+    if opt.is_none() {
         *opt = Some(f()?);
     }
 

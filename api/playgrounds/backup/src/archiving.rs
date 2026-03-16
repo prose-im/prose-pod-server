@@ -21,7 +21,7 @@ pub use self::ArchivingContext as Context;
 use self::errors::*;
 
 // WARN: Do not change as doing so would break backward compatibility.
-const METADATA_FILE_NAME: &'static str = "metadata.json";
+const METADATA_FILE_NAME: &str = "metadata.json";
 
 pub mod errors {
     #[derive(Debug, thiserror::Error)]
@@ -48,15 +48,17 @@ impl ArchiveBlueprint {
     pub fn from_paths(paths: Vec<(String, PathBuf)>) -> Self {
         Self { paths }
     }
+}
 
-    pub fn from_iter<Dst, Src, I>(iter: I) -> Self
-    where
-        I: Iterator<Item = (Dst, Src)>,
-        Dst: ToString,
-        Src: AsRef<std::path::Path>,
-    {
+impl<Dst, Src> FromIterator<(Dst, Src)> for ArchiveBlueprint
+where
+    Dst: ToString,
+    Src: AsRef<std::path::Path>,
+{
+    fn from_iter<T: IntoIterator<Item = (Dst, Src)>>(iter: T) -> Self {
         Self {
             paths: iter
+                .into_iter()
                 .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
                 .collect(),
         }

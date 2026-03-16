@@ -16,7 +16,7 @@ use crate::common::log_error;
 static INIT: Once = Once::new();
 
 /// Directory containing a fake filesystem root, to use in tests.
-pub const TEST_DATA_DIR: &'static str = concat!(env!("CARGO_TARGET_TMPDIR"), "/data");
+pub const TEST_DATA_DIR: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/data");
 
 pub struct TestContext {
     pub now: SystemTime,

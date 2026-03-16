@@ -37,7 +37,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     let bucket_name_backups = env_required!("S3_BUCKET_NAME_BACKUPS");
     let bucket_name_checks = env_required!("S3_BUCKET_NAME_CHECKS");
 
-    print!("\n");
+    println!();
     tracing::info!("Create config");
     let backup_config = BackupConfig::try_from(toml! {
         [encryption]
@@ -64,7 +64,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     })?;
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    print!("\n");
+    println!();
     tracing::info!("Create OpenPGP TSKs");
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
@@ -81,7 +81,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
-    print!("\n");
+    println!();
     tracing::info!("Create service");
     let service = BackupService::from_config_custom(
         backup_config,
@@ -99,7 +99,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     let backup_store = as_s3_store(&service.backup_store.inner());
     let check_store = as_s3_store(&service.check_store);
 
-    print!("\n");
+    println!();
     tracing::info!("Create backup");
     let CreateBackupSuccess {
         output: creation_output,
@@ -134,25 +134,25 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
         })
     });
 
-    print!("\n");
+    println!();
     tracing::info!("List backups");
     let backups = service.list_backups().await?;
     tracing::debug!("Backups: {backups:#?}");
     assert!(backups.iter().any(|backup| backup.id == created_backup_id));
 
-    print!("\n");
+    println!();
     tracing::info!("Get backup details");
     let details = service.get_details(&created_backup_id).await?;
     tracing::debug!("Backup details: {details:#?}");
 
-    print!("\n");
+    println!();
     tracing::info!("Get download URL");
     let download_url = service
         .get_download_url(&created_backup_id, Duration::from_secs(3))
         .await?;
     tracing::debug!("Download URL: <{download_url}>.");
 
-    print!("\n");
+    println!();
     tracing::info!("Restore backup");
     let ExtractAndRestoreSuccess {
         extraction_stats, ..
@@ -166,7 +166,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
         extraction_stats.extracted_bytes_count,
     );
 
-    print!("\n");
+    println!();
     tracing::info!("Delete backup");
     () = service.delete_backup(&created_backup_id).await?;
 
@@ -192,7 +192,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     let bucket_name_backups = env_required!("S3_BUCKET_NAME_BACKUPS");
     let bucket_name_checks = env_required!("S3_BUCKET_NAME_CHECKS");
 
-    print!("\n");
+    println!();
     tracing::info!("Create config");
     let backup_config = BackupConfig::try_from(toml! {
         [storage.backups]
@@ -235,16 +235,16 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
-    print!("\n");
+    println!();
     tracing::info!("Create service");
     let service = BackupService::from_config(backup_config, blueprints)?;
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());
     let check_store = as_s3_store(&service.check_store);
-    let ref s3_client = check_store.client;
+    let s3_client = &check_store.client;
 
-    print!("\n");
+    println!();
     tracing::info!("Create backup");
     let CreateBackupSuccess {
         output: creation_output,
@@ -279,7 +279,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         })
     });
 
-    print!("\n");
+    println!();
     {
         let digest_id = creation_output.digest_ids.first().unwrap().to_owned();
 
@@ -292,8 +292,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         assert_eq!(
             lock_config
                 .object_lock_configuration()
-                .map(ObjectLockConfiguration::object_lock_enabled)
-                .flatten(),
+                .and_then(ObjectLockConfiguration::object_lock_enabled),
             Some(&ObjectLockEnabled::Enabled),
             "lock_config: {lock_config:#?}"
         );
@@ -306,10 +305,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             .send()
             .await?;
         assert_eq!(
-            retention
-                .retention()
-                .map(ObjectLockRetention::mode)
-                .flatten(),
+            retention.retention().and_then(ObjectLockRetention::mode),
             Some(&object_lock_mode),
             "retention: {retention:#?}"
         );
@@ -324,8 +320,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         assert_eq!(
             legal_hold
                 .legal_hold()
-                .map(ObjectLockLegalHold::status)
-                .flatten(),
+                .and_then(ObjectLockLegalHold::status),
             Some(&legal_hold_status),
             "legal_hold: {legal_hold:#?}"
         );
@@ -373,7 +368,7 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
     } = context;
 
     let s3_store = test_s3_store(None, None)?;
-    let ref s3_client = s3_store.client;
+    let s3_client = &s3_store.client;
 
     let key = format!("{test_id}-lock-oneshot");
 
@@ -423,10 +418,7 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         .send()
         .await?;
     assert_eq!(
-        retention
-            .retention()
-            .map(ObjectLockRetention::mode)
-            .flatten(),
+        retention.retention().and_then(ObjectLockRetention::mode),
         Some(&object_lock_retention),
         "retention: {retention:#?}"
     );
@@ -440,8 +432,7 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
     assert_eq!(
         legal_hold
             .legal_hold()
-            .map(ObjectLockLegalHold::status)
-            .flatten(),
+            .and_then(ObjectLockLegalHold::status),
         Some(&object_lock_legal_hold_status),
         "legal_hold: {legal_hold:#?}"
     );
@@ -474,7 +465,7 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         }),
         Some(ObjectLockLegalHoldStatus::On),
     )?;
-    let ref s3_client = s3_store.client;
+    let s3_client = &s3_store.client;
 
     let key = format!("{test_id}-lock-multipart");
 
@@ -653,6 +644,7 @@ fn test_s3_store(
     }))
 }
 
-fn as_s3_store<'a>(object_store: &'a Box<dyn ObjectStore>) -> &'static S3Store {
+#[allow(clippy::borrowed_box)] // For convenience in call sites.
+fn as_s3_store(object_store: &Box<dyn ObjectStore>) -> &'static S3Store {
     unsafe { &*(object_store.as_ref() as *const dyn ObjectStore as *const S3Store) }
 }

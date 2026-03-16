@@ -19,7 +19,7 @@ pub struct TeeWriter<W1, W2> {
 }
 
 impl<W1, W2> TeeWriter<W1, W2> {
-    #[inline(always)]
+    #[inline]
     pub fn new(w1: W1, w2: W2) -> Self {
         Self { w1, w2 }
     }
@@ -108,7 +108,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     }
 }
 
-#[inline(always)]
+#[inline]
 pub fn tee<B1, B2, MakeErr, FinalizeErr>(
     b2: B2,
 ) -> WriterChainBuilder<

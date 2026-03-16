@@ -5,7 +5,7 @@
 
 use std::time::SystemTime;
 
-pub const EXAMPLE_TMPDIR_VAR_NAME: &'static str = "EXAMPLE_TMPDIR";
+pub const EXAMPLE_TMPDIR_VAR_NAME: &str = "EXAMPLE_TMPDIR";
 
 pub fn init() -> Result<ExampleContext, anyhow::Error> {
     let start = SystemTime::now();

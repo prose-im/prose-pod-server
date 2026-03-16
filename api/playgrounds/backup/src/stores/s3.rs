@@ -128,7 +128,7 @@ impl ObjectStore for S3Store {
                 .await
                 .context("Failed listing S3 objects")?;
 
-            results.extend(resp.contents().into_iter().filter_map(|obj| {
+            results.extend(resp.contents().iter().filter_map(|obj| {
                 match (obj.key(), obj.size()) {
                     (Some(key), Some(size)) => Some(ObjectMetadata {
                         file_name: key.to_owned(),
@@ -163,7 +163,7 @@ impl ObjectStore for S3Store {
                 .await
                 .context("Failed listing S3 objects")?;
 
-            results.extend(resp.contents().into_iter().filter_map(|obj| {
+            results.extend(resp.contents().iter().filter_map(|obj| {
                 match (obj.key(), obj.size()) {
                     (Some(key), Some(size)) => Some(ObjectMetadata {
                         file_name: key.to_owned(),
@@ -264,7 +264,7 @@ impl ObjectStore for S3Store {
 
         let identifiers: Vec<ObjectIdentifier> = objects
             .contents()
-            .into_iter()
+            .iter()
             .filter_map(|object| match object.key() {
                 Some(object_key) => Some(
                     ObjectIdentifier::builder()
@@ -506,7 +506,7 @@ impl Write for S3Writer {
             tokio::task::block_in_place(move || {
                 tokio::runtime::Handle::current().block_on(self.flush_part())
             })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         } else {
             tracing::trace!(
                 key = self.key,
@@ -573,7 +573,7 @@ impl S3Reader {
                         .context("Failed to open S3 object for reading")
                 })
             })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
         })
     }
 }
@@ -597,7 +597,7 @@ impl Read for S3Reader {
 
         match chunk {
             None => Ok(0), // EOF
-            Some(Err(e)) => Err(io::Error::new(io::ErrorKind::Other, e)),
+            Some(Err(e)) => Err(io::Error::other(e)),
             Some(Ok(chunk)) => {
                 let n = std::cmp::min(out.len(), chunk.len());
                 out[..n].copy_from_slice(&chunk[..n]);

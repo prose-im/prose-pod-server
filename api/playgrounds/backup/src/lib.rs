@@ -198,7 +198,7 @@ impl BackupService {
             verification_context,
             decryption_context,
             backup_store: CachedStore::new(backup_store, Arc::default(), &config.caching),
-            check_store: check_store,
+            check_store,
             download_config: config.download,
         })
     }
@@ -729,14 +729,14 @@ impl BackupService {
                     can_be_restored,
                 },
                 description: description.into_owned(),
-                id: BackupFileName::from(backup_file_name),
+                id: backup_file_name,
             });
         }
 
         Ok(dtos)
     }
 
-    pub async fn get_details<'a>(
+    pub async fn get_details(
         &self,
         backup_file_name: &BackupFileName,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
@@ -897,7 +897,7 @@ mod restore {
             let verification_output = self
                 .download_backup_and_check_integrity(
                     &backup_name,
-                    created_at.clone(),
+                    created_at,
                     &mut verification_report,
                 )
                 .await?;
@@ -945,7 +945,7 @@ mod delete {
     impl BackupService {
         // NOTE: If using Object Lock, this method exits successfully and
         //   backups / integrity checks remain stored until locks are removed.
-        pub async fn delete_backup<'a>(
+        pub async fn delete_backup(
             &self,
             backup_name: &BackupFileName,
         ) -> Result<(), anyhow::Error> {
@@ -1059,8 +1059,8 @@ impl BackupName {
         assert!(prefix.len() <= 256);
         assert!(description.len() <= 256);
         // NOTE: Provide default values instead of passing empty strings.
-        assert!(prefix.len() > 0);
-        assert!(description.len() > 0);
+        assert!(!prefix.is_empty());
+        assert!(!description.is_empty());
 
         // “URL encode” components to get rid of spaces, emojis, etc.
         let prefix = urlencode_file_name_component(prefix);
@@ -1079,6 +1079,7 @@ impl BackupName {
     }
 }
 
+#[allow(clippy::let_and_return)]
 fn urlencode_file_name_component(str: &str) -> String {
     let res = urlencoding::encode(str);
 

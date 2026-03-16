@@ -72,8 +72,8 @@ pub mod pgp {
         }
     }
 
-    pub(crate) fn pgp_sign<'a, W>(
-        context: &'a PgpSigningContext,
+    pub(crate) fn pgp_sign<W>(
+        context: &PgpSigningContext,
         time: SystemTime,
     ) -> WriterChainBuilder<
         impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>,

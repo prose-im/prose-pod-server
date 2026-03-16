@@ -94,7 +94,7 @@ pub mod pgp {
         };
         let decryptor = DecryptorBuilder::from_reader(backup_reader)
             .context("Failed creating decryptor builder")?
-            .with_policy(context.policy.as_ref(), Some(helper.time.clone()), helper)
+            .with_policy(context.policy.as_ref(), Some(helper.time), helper)
             .context("Failed creating decryptor")?;
 
         Ok(decryptor)

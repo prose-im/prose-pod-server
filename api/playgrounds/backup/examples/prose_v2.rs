@@ -41,7 +41,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let backups = dashboard.show_backups().await?;
     debug_assert_eq!(backups.len(), 1);
 
-    let ref backup_id = backups[0].backup_id;
+    let backup_id = &backups[0].backup_id;
 
     let details = dashboard.inspect_backup(String::clone(&backup_id)).await?;
     debug_assert!(details.is_encrypted);
@@ -49,9 +49,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
     // TODO: Test that the URL works.
 
-    let _result = dashboard.restore_backup(String::clone(&backup_id)).await?;
+    () = dashboard.restore_backup(String::clone(&backup_id)).await?;
 
-    let _result = dashboard.delete_backup(String::clone(&backup_id)).await?;
+    () = dashboard.delete_backup(String::clone(&backup_id)).await?;
 
     todo!()
 }

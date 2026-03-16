@@ -36,7 +36,7 @@ async fn example1() -> Result<(), anyhow::Error> {
     let check_store_path = test_data_path.join("checks");
     std::fs::create_dir_all(&check_store_path)?;
 
-    print!("\n");
+    println!();
     let backup_config = {
         let backup_store_path = backup_store_path.display().to_string();
         let check_store_path = check_store_path.display().to_string();
@@ -72,7 +72,7 @@ async fn example1() -> Result<(), anyhow::Error> {
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
     let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
 
-    print!("\n");
+    println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
@@ -94,7 +94,7 @@ async fn example1() -> Result<(), anyhow::Error> {
         || pgp_policy.clone(),
     )?;
 
-    print!("\n");
+    println!();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -116,7 +116,7 @@ async fn example1() -> Result<(), anyhow::Error> {
     tracing::info!("Created backup '{backup_id}'.");
     tracing::info!("Integrity checks: {digest_ids:#?}");
 
-    print!("\n");
+    println!();
     if let EncryptionConfig::Pgp { config: pgp } = &encryption_config {
         let mut pgp_cert = certs.get(&pgp.tsk).unwrap().clone();
 
@@ -133,21 +133,21 @@ async fn example1() -> Result<(), anyhow::Error> {
         });
     }
 
-    print!("\n");
+    println!();
     let backups = service.list_backups().await?;
     tracing::info!("Backups: {backups:#?}");
 
-    print!("\n");
+    println!();
     let details = service.get_details(&backup_id).await?;
     tracing::info!("Backup details: {details:#?}");
 
-    print!("\n");
+    println!();
     let download_url = service
         .get_download_url(&backup_id, Duration::from_secs(3))
         .await?;
     tracing::info!("Download URL: <{download_url}>.");
 
-    print!("\n");
+    println!();
     let ExtractionSuccess {
         extraction_output,
         extraction_stats,
@@ -160,12 +160,12 @@ async fn example1() -> Result<(), anyhow::Error> {
         extraction_stats.extracted_bytes_count,
     );
 
-    print!("\n");
+    println!();
     service
         .restore_extracted_backup(extraction_output, &restore_blueprint)
         .await?;
 
-    print!("\n");
+    println!();
     () = service.delete_backup(&backup_id).await?;
 
     Ok(())

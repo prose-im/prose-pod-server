@@ -42,16 +42,11 @@ where
             EncryptionContext::Pgp { recipients, policy } => {
                 let pgp_writer = pgp::PgpEncryptedWriter::try_new(
                     writer,
-                    policy,
+                    policy.as_ref(),
                     recipients.clone(),
                     |writer, policy, recipients| {
-                        self::pgp::encrypt(
-                            writer,
-                            recipients.as_slice(),
-                            policy.as_ref(),
-                            created_at,
-                        )
-                        .map(Some)
+                        self::pgp::encrypt(writer, recipients.as_slice(), *policy, created_at)
+                            .map(Some)
                     },
                 )
                 .map_err(CreateBackupError::CannotEncrypt)?;
@@ -104,7 +99,7 @@ mod pgp {
     #[ouroboros::self_referencing(no_doc, pub_extras)]
     pub struct PgpEncryptedWriter<'a, W: 'a> {
         writer: W,
-        policy: &'a Box<dyn Policy>,
+        policy: &'a dyn Policy,
         certs: Vec<openpgp::Cert>,
 
         #[borrows(mut writer, policy, certs)]

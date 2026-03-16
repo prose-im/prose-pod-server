@@ -67,3 +67,11 @@ required-features = ["test", "destination_fs"]
 [[test]]
 name = "s3"
 required-features = ["test", "destination_s3"]
+
+[lints.clippy]
+collapsible_if = "allow" # Style preference.
+inline_always = "warn" # We don’t have benchmarks yet.
+manual_map = "allow" # Style preference. Also compiles faster.
+needless_borrow = "allow" # Style preference.
+needless_borrows_for_generic_args = "allow" # Style preference.
+type_complexity = "allow" # Composable streams need complex types.

@@ -19,7 +19,7 @@ pub(crate) enum DigestWriter<W> {
     Sha256(Sha256DigestWriter<W>),
 }
 
-pub(crate) fn digest<'a, W>(
+pub(crate) fn digest<W>(
     hashing_config: &HashingConfig,
 ) -> WriterChainBuilder<
     impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>,

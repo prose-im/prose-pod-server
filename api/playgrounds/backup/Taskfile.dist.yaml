@@ -22,6 +22,8 @@ tasks:
   ci:
     desc: Run CI tests (doesn’t test S3).
     cmds:
+      - cargo fmt --check
+      - cargo clippy
       - cargo test --no-default-features -F test -F destination_all -- --skip s3
       - cargo check --release --lib
     dotenv: [test.env]

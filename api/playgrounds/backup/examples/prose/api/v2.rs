@@ -100,7 +100,7 @@ impl ProsePodServerApiV2 {
         let state = self.state().await;
 
         let backups_version = self.constants.backups_version;
-        let ref blueprint = self.constants.backup_blueprints[&backups_version];
+        let blueprint = &self.constants.backup_blueprints[&backups_version];
 
         let response = state
             .backup_service

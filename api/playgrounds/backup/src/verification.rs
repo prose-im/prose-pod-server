@@ -89,6 +89,7 @@ impl BackupService {
     /// They are saved in memory because they are relatively small (few
     /// hundred bytes). No need to save it to temporary files, it would only
     /// add I/O overhead.
+    #[inline]
     pub async fn download_backup_and_check_integrity(
         &self,
         backup_name: &crate::BackupFileName,

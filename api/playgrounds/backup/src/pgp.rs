@@ -108,7 +108,7 @@ mod tests {
             &cert,
             &compromised_subkey,
             &mut primary_keypair,
-            revocation_time.clone(),
+            revocation_time,
             ReasonForRevocation::KeyCompromised,
             b"It was the maid :/",
         )?;
@@ -116,7 +116,7 @@ mod tests {
             &cert,
             &superseded_subkey,
             &mut primary_keypair,
-            revocation_time.clone(),
+            revocation_time,
             ReasonForRevocation::KeySuperseded,
             b"Rotated.",
         )?;

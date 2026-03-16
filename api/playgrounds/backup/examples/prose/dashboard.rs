@@ -106,7 +106,7 @@ impl Dashboard {
     }
 
     pub async fn restore_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
-        let result = {
+        let result: () = {
             let api = self.api().await?;
             api.put_backup_restore(backup_id).await?
         };
@@ -115,7 +115,7 @@ impl Dashboard {
     }
 
     pub async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
-        let result = {
+        let result: () = {
             let api = self.api().await?;
             api.delete_backup(backup_id).await?
         };

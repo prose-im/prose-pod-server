@@ -20,7 +20,7 @@ pub use self::v2::start_v2;
 // MARK: - Public API
 
 #[async_trait::async_trait]
-pub trait ProsePodApi {
+pub trait ProsePodApi: Send + Sync {
     /// `POST /backups`.
     async fn post_backups(&self, description: String)
     -> Result<CreateBackupSuccess, anyhow::Error>;

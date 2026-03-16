@@ -118,7 +118,7 @@ macro_rules! gen_stats_dto {
         }
 
         impl $t {
-            #[inline(always)]
+            #[inline]
             pub fn new() -> Self {
                 Self {
                     $bytes_count: 0,
@@ -131,7 +131,7 @@ macro_rules! gen_stats_dto {
         }
 
         impl Default for $t {
-            #[inline(always)]
+            #[inline]
             fn default() -> Self {
                 Self::new()
             }
@@ -207,20 +207,20 @@ pub(crate) fn meter_writes<W, MakeErr, FinalizeErr, Stats: WriterStats>(
 // MARK: - Boilerplate
 
 impl<T: StreamStats> StreamStats for &mut T {
-    #[inline(always)]
+    #[inline]
     fn record_chunk(&mut self, len: usize) {
         (*self).record_chunk(len)
     }
 
     #[cfg(debug_assertions)]
-    #[inline(always)]
+    #[inline]
     fn record_duration(&mut self, duration: &std::time::Duration) {
         (*self).record_duration(duration)
     }
 }
 
 impl<T: WriterStats> WriterStats for &mut T {
-    #[inline(always)]
+    #[inline]
     fn record_flush(&mut self) {
         (*self).record_flush()
     }
