@@ -11,11 +11,38 @@
 
 use std::io::Write;
 
-pub(crate) enum HashingVariant<Sha256> {
-    Sha256(Sha256),
+use crate::CreateBackupError;
+use crate::config::{self, HashingConfig};
+use crate::writer_chain::WriterChainBuilder;
+
+pub(crate) enum DigestWriter<W> {
+    Sha256(Sha256DigestWriter<W>),
 }
 
-pub(crate) type DigestWriter<W> = HashingVariant<Sha256DigestWriter<W>>;
+pub(crate) fn digest<'a, W>(
+    hashing_config: &HashingConfig,
+) -> WriterChainBuilder<
+    impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>,
+    impl FnOnce(DigestWriter<W>) -> Result<W, CreateBackupError>,
+>
+where
+    W: Write + Send + Sync,
+{
+    WriterChainBuilder {
+        // NOTE: We create only one writer in the form of an enum because:
+        //   1. It does not make much sense to create multiple digests
+        //   2. We ensure there is always at least one
+        make: move |writer: W| match hashing_config.algorithm {
+            config::HashingAlgorithm::Sha256 => {
+                Ok(DigestWriter::Sha256(Sha256DigestWriter::new(writer)))
+            }
+        },
+
+        finalize: move |writer: DigestWriter<W>| {
+            writer.finalize().map_err(CreateBackupError::HashingFailed)
+        },
+    }
+}
 
 impl<W: Write> Write for DigestWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -31,27 +58,17 @@ impl<W: Write> Write for DigestWriter<W> {
     }
 }
 
-pub(crate) type Digest = HashingVariant<sha256::Output>;
-
 impl<W: Write> DigestWriter<W> {
-    pub fn finalize(self) -> Result<Digest, anyhow::Error> {
+    pub fn finalize(self) -> Result<W, anyhow::Error> {
         match self {
-            Self::Sha256(writer) => writer.finalize().map(Digest::Sha256),
-        }
-    }
-}
-
-impl AsRef<[u8]> for Digest {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Sha256(digest) => digest.as_ref(),
+            Self::Sha256(writer) => writer.finalize(),
         }
     }
 }
 
 // MARK: SHA-256
 
-pub use self::sha256::*;
+use self::sha256::*;
 mod sha256 {
     use std::io::{self, Write};
 
@@ -63,24 +80,22 @@ mod sha256 {
         writer: W,
     }
 
-    impl Sha256DigestWriter<Vec<u8>> {
-        pub fn new() -> Self {
+    impl<W> Sha256DigestWriter<W> {
+        pub fn new(writer: W) -> Self {
             Self {
                 hasher: Sha256::new(),
-                writer: Vec::new(),
+                writer,
             }
         }
     }
 
-    pub type Output = sha2::digest::Output<Sha256>;
-
     impl<W: Write> Sha256DigestWriter<W> {
-        pub fn finalize(mut self) -> Result<self::Output, anyhow::Error> {
+        pub fn finalize(mut self) -> Result<W, anyhow::Error> {
             let hash = self.hasher.finalize();
             self.writer
                 .write_all(&hash)
                 .context("Could not write hash")?;
-            Ok(hash)
+            Ok(self.writer)
         }
     }
 

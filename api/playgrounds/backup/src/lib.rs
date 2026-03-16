@@ -48,6 +48,7 @@ pub use toml;
 use crate::archiving::archive;
 use crate::compression::compress;
 use crate::encryption::encrypt;
+use crate::hashing::digest;
 use crate::signing::pgp::pgp_sign;
 use crate::stats::{MeteredStream, WriteStats};
 #[cfg(feature = "destination_fs")]
@@ -430,21 +431,21 @@ impl BackupService {
     ///                    |  (PGP)  │ │
     ///                    └────┬────┘ │
     ///                         ◇──────┘
-    ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━┯━╸
-    ///    ┌───┴────┐     ┌─────┴─────┐             │ PGP signing
-    ///    | Upload |     │   Hash    |             │ enabled?
-    ///    | backup |     | (SHA 256) │             ◇───────┐
-    ///    |  (S3)  |     └─────┬─────┘         Yes │       │ No
-    ///    └───┬────┘  ┌────────┴─────────┐     ┌───┴───┐   ◯
-    ///        ◯       | Upload integrity |     │ Sign  |
-    ///                |    check (S3)    |     | (PGP) │
-    ///                └────────┬─────────┘     └───┬───┘
-    ///                         ◯             ┌─────┴─────┐
-    ///                                       |  Upload   |
-    ///                                       | signature |
-    ///                                       |   (S3)    |
-    ///                                       └─────┬─────┘
-    ///                                             ◯
+    ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━┯━╸
+    ///    ┌───┴────┐     ┌─────┴─────┐            │ PGP signing
+    ///    | Upload |     │   Hash    |            │ enabled?
+    ///    | backup |     | (SHA 256) │            ◇───────┐
+    ///    |  (S3)  |     └─────┬─────┘        Yes │       │ No
+    ///    └───┬────┘  ┌────────┴─────────┐    ┌───┴───┐   ◯
+    ///        ◯       | Upload integrity |    │ Sign  |
+    ///                |    check (S3)    |    | (PGP) │
+    ///                └────────┬─────────┘    └───┬───┘
+    ///                         ◯            ┌─────┴─────┐
+    ///                                      |  Upload   |
+    ///                                      | signature |
+    ///                                      |   (S3)    |
+    ///                                      └─────┬─────┘
+    ///                                            ◯
     /// ```
     pub async fn create_backup(
         &self,
@@ -457,9 +458,6 @@ impl BackupService {
             created_at,
         }: CreateBackupCommand<'_>,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
-        use crate::hashing::{DigestWriter, Sha256DigestWriter};
-        use std::time::SystemTime;
-
         archiving::check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
@@ -474,6 +472,7 @@ impl BackupService {
             None => backup_name.with_extension("tar.zst"),
         };
 
+        // Try to open sink first, to abort early if something is wrong.
         let upload_backup = self
             .backup_store
             .writer(&backup_file_name)
@@ -484,127 +483,63 @@ impl BackupService {
         let mut backup_stats = WriteStats::new();
         let upload_backup = MeteredStream::new(upload_backup, &mut backup_stats);
 
-        // NOTE: We create only one writer in the form of an enum because:
-        //   1. It does not make much sense to create multiple digests
-        //   2. We ensure there is always at least one
-        let digest_writer = match self.hashing_config.algorithm {
-            config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(Sha256DigestWriter::new()),
-        };
-
-        // NOTE: While it would be tempting to try to factor this so we can
-        //   handle _n_ writers and not forget to call `finalize` on it,
-        //   Rust’s borrow checker makes it very complicated. It would require
-        //   quite a lot of new types, making the code more complicated to read
-        //   but also compile as it would involve a lot of generics. Let’s make
-        //   it easier for both humans and `rustc` to figure out what’s going
-        //   on, by keeping it explicit.
-
         let backup_writer = archive(&blueprint, version)
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
             }))
-            .tee_into(digest_writer)
+            .tee(digest(&self.hashing_config), Vec::<u8>::new())
             .opt_tee(
                 self.signing_context.pgp.as_ref(),
                 |ctx| pgp_sign(ctx, created_at),
-                Vec::new(),
+                Vec::<u8>::new(),
             )
             .build(upload_backup)?;
 
-        let ((backup_upload, digest_writer), pgp_signature) = backup_writer.finalize();
+        let ((backup_upload, digest), pgp_signature) = backup_writer.finalize();
 
-        let upload_backup = backup_upload?;
+        let backup_upload = backup_upload?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
         let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
 
-        // SHA-256 digest.
-        {
-            let start = SystemTime::now();
-
-            let digest = digest_writer
-                .finalize()
-                .map_err(CreateBackupError::HashingFailed)?;
-
-            let file_name = backup_file_name.with_extension("sha256");
-
-            let mut uploader = self
-                .check_store
-                .writer(&file_name)
-                .await
-                .map_err(CreateBackupError::CannotCreateSink)?;
-
-            let mut cursor = std::io::Cursor::new(digest);
-            std::io::copy(&mut cursor, &mut uploader)
-                .context("`std::io::copy` failed")
-                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-
-            uploader
-                .finalize()
-                .context("`finalize` failed")
-                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-
-            checks_upload_durations.push((
-                file_name.clone(),
-                SystemTime::now().duration_since(start).unwrap(),
-            ));
-            digest_ids.push(file_name);
-        }
+        // Upload SHA-256 digest.
+        upload_integrity_check(
+            digest?,
+            backup_file_name.with_extension("sha256"),
+            &self,
+            &mut checks_upload_durations,
+            &mut digest_ids,
+        )
+        .await?;
 
         let mut signature_ids: Vec<BackupFileName> = Vec::new();
 
         let is_signed = pgp_signature.is_some();
 
-        // OpenPGP signature.
+        // Upload OpenPGP signature.
         if let Some(pgp_signature) = pgp_signature {
-            let start = SystemTime::now();
-
-            let pgp_signature = pgp_signature?;
-
-            // NOTE: OpenPGP will likely forever be the only signing protocol
-            //   we support, but if we ever add one that also uses the `.sig`
-            //   extension we can just use `.<protocol>.sig` for it.
-            let file_name = backup_file_name.with_extension("sig");
-
-            let mut uploader = self
-                .check_store
-                .writer(&file_name)
-                .await
-                .map_err(CreateBackupError::CannotCreateSink)?;
-
-            let mut cursor = std::io::Cursor::new(pgp_signature);
-            std::io::copy(&mut cursor, &mut uploader)
-                .context("`std::io::copy` failed")
-                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-
-            uploader
-                .finalize()
-                .context("`finalize` failed")
-                .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
-
-            checks_upload_durations.push((
-                file_name.clone(),
-                SystemTime::now().duration_since(start).unwrap(),
-            ));
-            signature_ids.push(file_name);
+            upload_integrity_check(
+                pgp_signature?,
+                // NOTE: OpenPGP will likely forever be the only signing protocol
+                //   we support, but if we ever add one that also uses the `.sig`
+                //   extension we can just use `.<protocol>.sig` for it.
+                backup_file_name.with_extension("sig"),
+                &self,
+                &mut checks_upload_durations,
+                &mut signature_ids,
+            )
+            .await?;
         }
 
-        // Upload backup.
-        let backup_upload_duration;
-        {
-            let start = SystemTime::now();
+        // Finish uploading backup.
+        () = backup_upload
+            .into_inner()
+            .finalize()
+            .map_err(CreateBackupError::UploadFailed)?;
+        let backup_upload_duration = backup_stats.active_write_duration;
 
-            // TODO: Contribute upstream to `sequoia_openpgp` to add a `into_inner`
-            //   on `Message` so we can compose it.
-            () = upload_backup
-                .into_inner()
-                .finalize()
-                .map_err(CreateBackupError::UploadFailed)?;
-
-            backup_upload_duration = SystemTime::now().duration_since(start).unwrap();
-        }
-
+        // Construct the response.
         Ok(CreateBackupSuccess {
             backup: BackupDto {
                 id: backup_file_name.clone(),
@@ -628,6 +563,42 @@ impl BackupService {
             },
         })
     }
+}
+
+async fn upload_integrity_check(
+    data: Vec<u8>,
+    key: BackupFileName,
+    service: &BackupService,
+    checks_upload_durations: &mut Vec<(BackupFileName, std::time::Duration)>,
+    uploaded: &mut Vec<BackupFileName>,
+) -> Result<(), CreateBackupError> {
+    use std::time::SystemTime;
+
+    let start = SystemTime::now();
+
+    let mut uploader = service
+        .check_store
+        .writer(&key)
+        .await
+        .map_err(CreateBackupError::CannotCreateSink)?;
+
+    let mut cursor = std::io::Cursor::new(data);
+    std::io::copy(&mut cursor, &mut uploader)
+        .context("`std::io::copy` failed")
+        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+
+    uploader
+        .finalize()
+        .context("`finalize` failed")
+        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+
+    checks_upload_durations.push((
+        key.clone(),
+        SystemTime::now().duration_since(start).unwrap(),
+    ));
+    uploaded.push(key);
+
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
