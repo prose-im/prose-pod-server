@@ -499,8 +499,7 @@ impl BackupService {
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
 
-        let backup_writer = writer_chain::builder()
-            .then(archive(&blueprint, version))
+        let backup_writer = archive(&blueprint, version)
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
