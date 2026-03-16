@@ -113,7 +113,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     pub fn build<InnermostWriter, OuterWriter, Out, Err>(
         self,
         writer: InnermostWriter,
-    ) -> Result<(OuterWriter, F), Err>
+    ) -> Result<FinalizableWriter<OuterWriter, F>, Err>
     where
         InnermostWriter: std::io::Write,
         M: FnOnce(InnermostWriter) -> Result<OuterWriter, Err>,
@@ -121,7 +121,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        make(writer).map(move |w| (w, finalize))
+        make(writer).map(move |writer| FinalizableWriter { writer, finalize })
     }
 }
 
@@ -207,5 +207,21 @@ pub fn optionally<
             },
             None => Ok(None),
         },
+    }
+}
+
+// MARK: - Build
+
+pub struct FinalizableWriter<W, Finalize> {
+    pub writer: W,
+    finalize: Finalize,
+}
+
+impl<W, Finalize> FinalizableWriter<W, Finalize> {
+    pub fn finalize<Out>(self) -> Out
+    where
+        Finalize: FnOnce(W) -> Out,
+    {
+        (self.finalize)(self.writer)
     }
 }

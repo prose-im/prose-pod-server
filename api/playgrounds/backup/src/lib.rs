@@ -498,7 +498,7 @@ impl BackupService {
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
 
-        let (writer, finalize_backup) = writer_chain::builder()
+        let backup_writer = writer_chain::builder()
             .then(archive(&blueprint, version))
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
@@ -512,7 +512,7 @@ impl BackupService {
             )
             .build(upload_backup)?;
 
-        let (backup_upload, pgp_signature) = finalize_backup(writer);
+        let (backup_upload, pgp_signature) = backup_writer.finalize();
 
         let (upload_backup, digest_writer) = backup_upload?;
 
