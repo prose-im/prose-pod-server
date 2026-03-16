@@ -5,6 +5,8 @@
 
 //! Decryption logic.
 
+use crate::writer_chain::Either;
+
 pub use self::DecryptionContext as Context;
 
 #[non_exhaustive]
@@ -49,8 +51,6 @@ where
         Ok(Either::B(backup_reader))
     }
 }
-
-use crate::writer_chain::either::Either;
 
 pub use self::pgp::*;
 pub mod pgp {

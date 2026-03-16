@@ -69,10 +69,10 @@ impl<M, F> WriterChainBuilder<M, F> {
                 let b2_opt = match make_b2_opt {
                     Some(make_b2) => {
                         let b2: B2 = make_b2(writer)?;
-                        Ok(Some(b2))
+                        Some(b2)
                     }
-                    None => Ok(None),
-                }?;
+                    None => None,
+                };
 
                 Ok(TeeWriter::new(b1, b2_opt))
             },
