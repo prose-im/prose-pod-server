@@ -17,11 +17,11 @@ pub struct WriterChainBuilder<Make, Finalize> {
     pub finalize: Finalize,
 }
 
-pub fn builder<W, E>() -> WriterChainBuilder<
+pub fn builder<W, MakeErr, FinalizeErr>() -> WriterChainBuilder<
     // NOTE: We need `W -> W` here as this layer will be
     //   the outer-most layer when building the final writer.
-    impl FnOnce(W) -> Result<W, E>,
-    impl FnOnce(W) -> Result<W, E>,
+    impl FnOnce(W) -> Result<W, MakeErr>,
+    impl FnOnce(W) -> Result<W, FinalizeErr>,
 > {
     WriterChainBuilder {
         make: move |writer: W| Ok(writer),
@@ -74,25 +74,30 @@ impl<M, F> WriterChainBuilder<M, F> {
     ///
     /// let out = std::fs::File::open("/dev/null")?; // File
     ///
-    /// let (writer, finalize) = writer_chain::builder() // W -> W
+    /// let writer = writer_chain::builder::<_, anyhow::Error, anyhow::Error>() // W -> W
     ///     .then(archive("foo/bar")) // W -> tar::Builder<W>
     ///     .then(compress(3)) // W -> zstd::Encoder<tar::Builder<W>>
     ///     .build(out)?; // zstd::Encoder<tar::Builder<File>>
     ///
-    /// finalize(writer)?;
+    /// writer.finalize()?;
     /// #     Ok(())
     /// # }
     /// ```
-    pub fn then<A, B, C, Out, Err>(
+    pub fn then<A, B, C, Out, MakeErr1, FinalizeErr1, MakeErr2, FinalizeErr2>(
         self,
         other: WriterChainBuilder<
-            impl FnOnce(A) -> Result<B, Err>,
-            impl FnOnce(B) -> Result<Out, Err>,
+            impl FnOnce(A) -> Result<B, MakeErr2>,
+            impl FnOnce(B) -> Result<Out, FinalizeErr2>,
         >,
-    ) -> WriterChainBuilder<impl FnOnce(A) -> Result<C, Err>, impl FnOnce(C) -> Result<Out, Err>>
+    ) -> WriterChainBuilder<
+        impl FnOnce(A) -> Result<C, MakeErr1>,
+        impl FnOnce(C) -> Result<Out, FinalizeErr1>,
+    >
     where
-        M: FnOnce(B) -> Result<C, Err>,
-        F: FnOnce(C) -> Result<B, Err>,
+        M: FnOnce(B) -> Result<C, MakeErr1>,
+        F: FnOnce(C) -> Result<B, FinalizeErr1>,
+        MakeErr1: From<MakeErr2>,
+        FinalizeErr1: From<FinalizeErr2>,
     {
         let Self { make, finalize, .. } = self;
 
@@ -104,7 +109,7 @@ impl<M, F> WriterChainBuilder<M, F> {
 
             finalize: move |c: C| {
                 let b: B = finalize(c)?;
-                (other.finalize)(b)
+                (other.finalize)(b).map_err(FinalizeErr1::from)
             },
         }
     }

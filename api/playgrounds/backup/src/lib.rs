@@ -37,6 +37,7 @@ pub mod writer_chain;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -44,10 +45,10 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
-use crate::archiving::archive;
-use crate::compression::compress;
-use crate::encryption::encrypt;
-use crate::signing::pgp::pgp_sign;
+use crate::archiving::{archive, errors::*};
+use crate::compression::{compress, errors::*};
+use crate::encryption::{encrypt, errors::*};
+use crate::signing::{errors::*, pgp::pgp_sign};
 use crate::stats::{MeteredStream, WriteStats};
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
@@ -498,7 +499,7 @@ impl BackupService {
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
 
-        let backup_writer = writer_chain::builder()
+        let backup_writer = writer_chain::builder::<_, CreateBackupError, CreateBackupError>()
             .then(archive(&blueprint, version))
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
@@ -632,35 +633,35 @@ impl BackupService {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateBackupError {
-    #[error("Cannot create backup: '{0}' does not exist.")]
-    MissingFile(std::path::PathBuf),
-
     #[error("Cannot create backup sink")]
     CannotCreateSink(#[source] anyhow::Error),
 
-    #[error("Cannot create backup archive")]
-    CannotArchive(#[source] anyhow::Error),
+    #[error(transparent)]
+    CannotArchive(#[from] CannotArchive),
 
-    #[error("Cannot compress backup archive")]
-    CannotCompress(#[source] anyhow::Error),
+    #[error(transparent)]
+    ArchivingFailed(#[from] ArchivingFailed),
 
-    #[error("Backup archive compression failed")]
-    CompressionFailed(#[source] anyhow::Error),
+    #[error(transparent)]
+    CannotCompress(#[from] CannotCompress),
 
-    #[error("Cannot encrypt backup")]
-    CannotEncrypt(#[source] anyhow::Error),
+    #[error(transparent)]
+    CompressionFailed(#[from] CompressionFailed),
 
-    #[error("Backup encryption failed")]
-    EncryptionFailed(#[source] anyhow::Error),
+    #[error(transparent)]
+    CannotEncrypt(#[from] CannotEncrypt),
+
+    #[error(transparent)]
+    EncryptionFailed(#[from] EncryptionFailed),
 
     #[error("Backup hashing failed")]
     HashingFailed(#[source] anyhow::Error),
 
-    #[error("Cannot sign backup")]
-    CannotSign(#[source] anyhow::Error),
+    #[error(transparent)]
+    CannotSign(#[from] CannotSign),
 
-    #[error("Backup signing failed")]
-    SigningFailed(#[source] anyhow::Error),
+    #[error(transparent)]
+    SigningFailed(#[from] SigningFailed),
 
     #[error("Failed uploading backup")]
     UploadFailed(#[source] anyhow::Error),
@@ -670,6 +671,12 @@ pub enum CreateBackupError {
 
     #[error(transparent)]
     Other(anyhow::Error),
+}
+
+impl From<Infallible> for CreateBackupError {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
 }
 
 // MARK: Read

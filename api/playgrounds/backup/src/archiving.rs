@@ -10,17 +10,31 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 
+use crate::BackupFileNameComponents;
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
 use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
 use crate::writer_chain::WriterChainBuilder;
-use crate::{BackupFileNameComponents, CreateBackupError};
 
 pub use self::ArchivingContext as Context;
+use self::errors::*;
 
 // WARN: Do not change as doing so would break backward compatibility.
 const METADATA_FILE_NAME: &'static str = "metadata.json";
+
+pub mod errors {
+    #[derive(Debug, thiserror::Error)]
+    pub enum CannotArchive {
+        #[error("Missing file: '{0}'.")]
+        MissingFile(std::path::PathBuf),
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("Archiving failed")]
+    #[repr(transparent)]
+    pub struct ArchivingFailed(#[from] pub anyhow::Error);
+}
 
 pub struct ArchivingContext {
     pub blueprints: HashMap<u8, ArchiveBlueprint>,
@@ -63,10 +77,10 @@ struct BackupInternalMetadata {
 
 pub(crate) fn check_archiving_will_succeed(
     blueprint: &ArchiveBlueprint,
-) -> Result<(), CreateBackupError> {
+) -> Result<(), CannotArchive> {
     for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
-            return Err(CreateBackupError::MissingFile(local_path.to_owned()));
+            return Err(CannotArchive::MissingFile(local_path.to_owned()));
         }
     }
 
@@ -105,29 +119,26 @@ pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
 ) -> WriterChainBuilder<
-    impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
-    impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
+    impl FnOnce(W) -> Result<tar::Builder<W>, ArchivingFailed>,
+    impl FnOnce(tar::Builder<W>) -> Result<W, ArchivingFailed>,
 > {
     WriterChainBuilder {
         make: move |writer: W| {
             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
-            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
-                .map_err(CreateBackupError::CannotArchive)?;
+            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)?;
 
-            archive_writer(&mut builder, blueprint).map_err(CreateBackupError::CannotArchive)?;
+            archive_writer(&mut builder, blueprint)?;
 
             Ok(builder)
         },
 
         finalize: move |writer: tar::Builder<W>| {
-            let res = writer
+            writer
                 // NOTE: Flushes the stream if needed.
                 .into_inner()
                 .context("Could not init archive")
-                .map_err(CreateBackupError::CannotArchive)?;
-
-            Ok(res)
+                .map_err(ArchivingFailed)
         },
     }
 }

@@ -7,9 +7,22 @@
 
 use std::{io::Write, time::SystemTime};
 
-use crate::{CreateBackupError, writer_chain::WriterChainBuilder};
+use crate::writer_chain::WriterChainBuilder;
 
 pub use self::EncryptionContext as Context;
+use self::errors::*;
+
+pub mod errors {
+    #[derive(Debug, thiserror::Error)]
+    #[error("Cannot encrypt")]
+    #[repr(transparent)]
+    pub struct CannotEncrypt(#[from] pub anyhow::Error);
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("Encryption failed")]
+    #[repr(transparent)]
+    pub struct EncryptionFailed(#[from] pub anyhow::Error);
+}
 
 #[non_exhaustive]
 #[derive(Debug)]
@@ -28,8 +41,8 @@ pub(crate) fn encrypt<'a, W>(
     context: &'a EncryptionContext,
     created_at: SystemTime,
 ) -> WriterChainBuilder<
-    impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CreateBackupError>,
-    impl FnOnce(EncryptionWriter<'a, W>) -> Result<W, CreateBackupError>,
+    impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CannotEncrypt>,
+    impl FnOnce(EncryptionWriter<'a, W>) -> Result<W, EncryptionFailed>,
 >
 where
     W: Write + Send + Sync,
@@ -50,17 +63,14 @@ where
                         )
                         .map(Some)
                     },
-                )
-                .map_err(CreateBackupError::CannotEncrypt)?;
+                )?;
 
                 Ok(EncryptionWriter::Pgp(pgp_writer))
             }
         },
 
         finalize: move |writer: EncryptionWriter<'a, W>| match writer {
-            EncryptionWriter::Pgp(pgp_writer) => pgp_writer
-                .finalize()
-                .map_err(CreateBackupError::EncryptionFailed),
+            EncryptionWriter::Pgp(pgp_writer) => pgp_writer.finalize().map_err(EncryptionFailed),
         },
     }
 }

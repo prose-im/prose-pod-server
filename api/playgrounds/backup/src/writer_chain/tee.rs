@@ -3,7 +3,10 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::io::{self, Write};
+use std::{
+    convert::Infallible,
+    io::{self, Write},
+};
 
 use super::WriterChainBuilder;
 
@@ -75,13 +78,39 @@ impl<M, F> WriterChainBuilder<M, F> {
             },
         }
     }
+
+    pub fn tee_into<A1, B1, Out1, MakeErr, FinalizeErr, B2>(
+        self,
+        b2: B2,
+    ) -> WriterChainBuilder<
+        impl FnOnce(A1) -> Result<TeeWriter<B1, B2>, MakeErr>,
+        impl FnOnce(TeeWriter<B1, B2>) -> (Result<Out1, FinalizeErr>, B2),
+    >
+    where
+        M: FnOnce(A1) -> Result<B1, MakeErr>,
+        F: FnOnce(B1) -> Result<Out1, FinalizeErr>,
+    {
+        let Self { make, finalize, .. } = self;
+
+        WriterChainBuilder {
+            make: move |a1: A1| {
+                let b1: B1 = make(a1)?;
+                Ok(TeeWriter::new(b1, b2))
+            },
+
+            finalize: move |tee: TeeWriter<B1, B2>| {
+                let res1: Result<Out1, FinalizeErr> = finalize(tee.w1);
+                (res1, tee.w2)
+            },
+        }
+    }
 }
 
-pub fn tee<B1, B2, Err>(
+pub fn tee<B1, B2>(
     b2: B2,
 ) -> WriterChainBuilder<
-    impl FnOnce(B1) -> Result<TeeWriter<B1, B2>, Err>,
-    impl FnOnce(TeeWriter<B1, B2>) -> Result<(B1, B2), Err>,
+    impl FnOnce(B1) -> Result<TeeWriter<B1, B2>, Infallible>,
+    impl FnOnce(TeeWriter<B1, B2>) -> Result<(B1, B2), Infallible>,
 > {
     WriterChainBuilder {
         make: move |b1: B1| Ok(TeeWriter::new(b1, b2)),
