@@ -9,6 +9,8 @@
 
 use std::io::{self, Read, Write};
 
+use crate::writer_chain::WriterChainBuilder;
+
 // MARK: Model
 
 pub trait StreamStats {
@@ -28,13 +30,13 @@ pub trait WriterStats: StreamStats {
 
 /// A `Read`/`Write` wrapper that stores stats (e.g. bytes read/written,
 /// number of `read`/`write` calls…).
-pub struct MeteredStream<'r, Stream, Stats: StreamStats> {
+pub struct MeteredStream<Stream, Stats: StreamStats> {
     inner: Stream,
-    stats: &'r mut Stats,
+    stats: Stats,
 }
 
-impl<'r, Stream, Stats: StreamStats> MeteredStream<'r, Stream, Stats> {
-    pub fn new(inner: Stream, stats: &'r mut Stats) -> Self {
+impl<Stream, Stats: StreamStats> MeteredStream<Stream, Stats> {
+    pub fn new(inner: Stream, stats: Stats) -> Self {
         Self { inner, stats }
     }
 
@@ -43,7 +45,7 @@ impl<'r, Stream, Stats: StreamStats> MeteredStream<'r, Stream, Stats> {
     }
 }
 
-impl<'r, Stream, Stats: StreamStats> Read for MeteredStream<'r, Stream, Stats>
+impl<Stream, Stats: StreamStats> Read for MeteredStream<Stream, Stats>
 where
     Stream: Read,
 {
@@ -67,7 +69,7 @@ where
     }
 }
 
-impl<'r, Stream, Stats: StreamStats> Write for MeteredStream<'r, Stream, Stats>
+impl<Stream, Stats: StreamStats> Write for MeteredStream<Stream, Stats>
 where
     Stream: Write,
     Stats: WriterStats,
@@ -185,5 +187,37 @@ gen_stats_dto!(WriteStats {
 impl WriterStats for WriteStats {
     fn record_flush(&mut self) {
         self.flush_count += 1;
+    }
+}
+
+// MARK: Convenience helpers.
+
+pub(crate) fn meter_writes<W, MakeErr, FinalizeErr, Stats: WriterStats>(
+    stats: Stats,
+) -> WriterChainBuilder<
+    impl FnOnce(W) -> Result<MeteredStream<W, Stats>, MakeErr>,
+    impl FnOnce(MeteredStream<W, Stats>) -> Result<(W, Stats), FinalizeErr>,
+> {
+    WriterChainBuilder {
+        make: move |writer: W| Ok(MeteredStream::new(writer, stats)),
+        finalize: move |writer: MeteredStream<W, Stats>| Ok((writer.inner, writer.stats)),
+    }
+}
+
+// MARK: - Boilerplate
+
+impl<T: StreamStats> StreamStats for &mut T {
+    fn record_chunk(&mut self, len: usize) {
+        (*self).record_chunk(len)
+    }
+
+    fn record_duration(&mut self, duration: &std::time::Duration) {
+        (*self).record_duration(duration)
+    }
+}
+
+impl<T: WriterStats> WriterStats for &mut T {
+    fn record_flush(&mut self) {
+        (*self).record_flush()
     }
 }

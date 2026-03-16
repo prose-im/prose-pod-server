@@ -50,7 +50,7 @@ use crate::compression::compress;
 use crate::encryption::encrypt;
 use crate::hashing::digest;
 use crate::signing::pgp::pgp_sign;
-use crate::stats::{MeteredStream, WriteStats};
+use crate::stats::{WriteStats, meter_writes};
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
 #[cfg(feature = "destination_s3")]
@@ -479,15 +479,13 @@ impl BackupService {
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        // Record stats so we can know the final size of the backup.
-        let mut backup_stats = WriteStats::new();
-        let upload_backup = MeteredStream::new(upload_backup, &mut backup_stats);
-
         let backup_writer = archive(&blueprint, version)
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
             }))
+            // Record stats so we can know the final size of the backup.
+            .then(meter_writes(WriteStats::new()))
             .tee(digest(&self.hashing_config), Vec::<u8>::new())
             .opt_tee(
                 self.signing_context.pgp.as_ref(),
@@ -498,7 +496,7 @@ impl BackupService {
 
         let ((backup_upload, digest), pgp_signature) = backup_writer.finalize();
 
-        let backup_upload = backup_upload?;
+        let (backup_upload, backup_stats) = backup_upload?;
 
         let mut digest_ids: Vec<BackupFileName> = Vec::new();
         let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
@@ -534,7 +532,6 @@ impl BackupService {
 
         // Finish uploading backup.
         () = backup_upload
-            .into_inner()
             .finalize()
             .map_err(CreateBackupError::UploadFailed)?;
         let backup_upload_duration = backup_stats.active_write_duration;
