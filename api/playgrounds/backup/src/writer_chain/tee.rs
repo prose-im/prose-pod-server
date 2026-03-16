@@ -3,10 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{
-    convert::Infallible,
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use super::WriterChainBuilder;
 
@@ -106,11 +103,11 @@ impl<M, F> WriterChainBuilder<M, F> {
     }
 }
 
-pub fn tee<B1, B2>(
+pub fn tee<B1, B2, MakeErr, FinalizeErr>(
     b2: B2,
 ) -> WriterChainBuilder<
-    impl FnOnce(B1) -> Result<TeeWriter<B1, B2>, Infallible>,
-    impl FnOnce(TeeWriter<B1, B2>) -> Result<(B1, B2), Infallible>,
+    impl FnOnce(B1) -> Result<TeeWriter<B1, B2>, MakeErr>,
+    impl FnOnce(TeeWriter<B1, B2>) -> Result<(B1, B2), FinalizeErr>,
 > {
     WriterChainBuilder {
         make: move |b1: B1| Ok(TeeWriter::new(b1, b2)),

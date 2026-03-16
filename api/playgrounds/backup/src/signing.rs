@@ -11,18 +11,6 @@
 
 pub use self::SigningContext as Context;
 
-pub mod errors {
-    #[derive(Debug, thiserror::Error)]
-    #[error("Cannot sign")]
-    #[repr(transparent)]
-    pub struct CannotSign(#[from] pub anyhow::Error);
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("Signing failed")]
-    #[repr(transparent)]
-    pub struct SigningFailed(#[from] pub anyhow::Error);
-}
-
 #[non_exhaustive]
 #[derive(Default)]
 pub struct SigningContext {
@@ -36,9 +24,8 @@ pub mod pgp {
 
     use anyhow::Context as _;
 
+    use crate::CreateBackupError;
     use crate::writer_chain::WriterChainBuilder;
-
-    use super::errors::*;
 
     /// [`openpgp::serialize::stream::Message`] takes ownership of the writer,
     /// but never gives it back. We need a wrapper that holds both the owned
@@ -89,8 +76,8 @@ pub mod pgp {
         context: &'a PgpSigningContext,
         time: SystemTime,
     ) -> WriterChainBuilder<
-        impl FnOnce(W) -> Result<PgpSigner<W>, CannotSign>,
-        impl FnOnce(PgpSigner<W>) -> Result<W, SigningFailed>,
+        impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>,
+        impl FnOnce(PgpSigner<W>) -> Result<W, CreateBackupError>,
     >
     where
         W: Write + Send + Sync,
@@ -99,10 +86,12 @@ pub mod pgp {
             make: move |writer: W| {
                 PgpSigner::try_new(writer, |writer| context.new_writer(writer, time).map(Some))
                     .context("Failed building OpenPGP signer")
-                    .map_err(CannotSign)
+                    .map_err(CreateBackupError::CannotSign)
             },
 
-            finalize: move |writer: PgpSigner<W>| writer.finalize().map_err(SigningFailed),
+            finalize: move |writer: PgpSigner<W>| {
+                writer.finalize().map_err(CreateBackupError::SigningFailed)
+            },
         }
     }
 

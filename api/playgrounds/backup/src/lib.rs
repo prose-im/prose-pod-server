@@ -45,10 +45,10 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
-use crate::archiving::{archive, errors::*};
-use crate::compression::{compress, errors::*};
-use crate::encryption::{encrypt, errors::*};
-use crate::signing::{errors::*, pgp::pgp_sign};
+use crate::archiving::archive;
+use crate::compression::compress;
+use crate::encryption::encrypt;
+use crate::signing::pgp::pgp_sign;
 use crate::stats::{MeteredStream, WriteStats};
 #[cfg(feature = "destination_fs")]
 use crate::stores::FsStore;
@@ -499,7 +499,7 @@ impl BackupService {
         //   it easier for both humans and `rustc` to figure out what’s going
         //   on, by keeping it explicit.
 
-        let backup_writer = writer_chain::builder::<_, CreateBackupError, CreateBackupError>()
+        let backup_writer = writer_chain::builder()
             .then(archive(&blueprint, version))
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
@@ -636,32 +636,32 @@ pub enum CreateBackupError {
     #[error("Cannot create backup sink")]
     CannotCreateSink(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    CannotArchive(#[from] CannotArchive),
+    #[error("Cannot archive")]
+    CannotArchive(#[from] archiving::errors::CannotArchive),
 
-    #[error(transparent)]
-    ArchivingFailed(#[from] ArchivingFailed),
+    #[error("Archiving failed")]
+    ArchivingFailed(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    CannotCompress(#[from] CannotCompress),
+    #[error("Cannot compress")]
+    CannotCompress(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    CompressionFailed(#[from] CompressionFailed),
+    #[error("Compression failed")]
+    CompressionFailed(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    CannotEncrypt(#[from] CannotEncrypt),
+    #[error("Cannot encrypt")]
+    CannotEncrypt(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    EncryptionFailed(#[from] EncryptionFailed),
+    #[error("Encryption failed")]
+    EncryptionFailed(#[source] anyhow::Error),
 
     #[error("Backup hashing failed")]
     HashingFailed(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    CannotSign(#[from] CannotSign),
+    #[error("Cannot sign")]
+    CannotSign(#[source] anyhow::Error),
 
-    #[error(transparent)]
-    SigningFailed(#[from] SigningFailed),
+    #[error("Signing failed")]
+    SigningFailed(#[source] anyhow::Error),
 
     #[error("Failed uploading backup")]
     UploadFailed(#[source] anyhow::Error),

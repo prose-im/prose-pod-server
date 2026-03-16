@@ -35,40 +35,22 @@ impl<M, F> WriterChainBuilder<M, F> {
         }
     }
 
-    pub fn opt_tee<
-        A1,
-        B1,
-        Out1,
-        MakeErr1,
-        FinalizeErr1,
-        T,
-        A2,
-        B2,
-        Out2,
-        MakeErr2,
-        FinalizeErr2,
-        M2,
-        F2,
-    >(
+    pub fn opt_tee<A1, B1, Out1, T, A2, B2, Out2, MakeErr, FinalizeErr, M2, F2>(
         self,
         cond: Option<T>,
         other_builder: impl FnOnce(T) -> WriterChainBuilder<M2, F2>,
         writer: A2,
     ) -> WriterChainBuilder<
-        impl FnOnce(A1) -> Result<TeeWriter<B1, Option<B2>>, MakeErr1>,
+        impl FnOnce(A1) -> Result<TeeWriter<B1, Option<B2>>, MakeErr>,
         impl FnOnce(
             TeeWriter<B1, Option<B2>>,
-        ) -> (
-            Result<Out1, FinalizeErr1>,
-            Option<Result<Out2, FinalizeErr2>>,
-        ),
+        ) -> (Result<Out1, FinalizeErr>, Option<Result<Out2, FinalizeErr>>),
     >
     where
-        M: FnOnce(A1) -> Result<B1, MakeErr1>,
-        F: FnOnce(B1) -> Result<Out1, FinalizeErr1>,
-        M2: FnOnce(A2) -> Result<B2, MakeErr2>,
-        F2: FnOnce(B2) -> Result<Out2, FinalizeErr2>,
-        MakeErr1: From<MakeErr2>,
+        M: FnOnce(A1) -> Result<B1, MakeErr>,
+        F: FnOnce(B1) -> Result<Out1, FinalizeErr>,
+        M2: FnOnce(A2) -> Result<B2, MakeErr>,
+        F2: FnOnce(B2) -> Result<Out2, FinalizeErr>,
     {
         let Self { make, finalize, .. } = self;
 
@@ -96,7 +78,7 @@ impl<M, F> WriterChainBuilder<M, F> {
             },
 
             finalize: move |tee: TeeWriter<B1, Option<B2>>| {
-                let res1: Result<Out1, FinalizeErr1> = finalize(tee.w1);
+                let res1: Result<Out1, FinalizeErr> = finalize(tee.w1);
 
                 let res2_opt = match tee.w2 {
                     Some(b) => match finalize_b2_opt {

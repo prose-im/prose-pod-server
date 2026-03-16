@@ -74,7 +74,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     ///
     /// let out = std::fs::File::open("/dev/null")?; // File
     ///
-    /// let writer = writer_chain::builder::<_, anyhow::Error, anyhow::Error>() // W -> W
+    /// let writer = writer_chain::builder() // W -> W
     ///     .then(archive("foo/bar")) // W -> tar::Builder<W>
     ///     .then(compress(3)) // W -> zstd::Encoder<tar::Builder<W>>
     ///     .build(out)?; // zstd::Encoder<tar::Builder<File>>
@@ -83,21 +83,19 @@ impl<M, F> WriterChainBuilder<M, F> {
     /// #     Ok(())
     /// # }
     /// ```
-    pub fn then<A, B, C, Out, MakeErr1, FinalizeErr1, MakeErr2, FinalizeErr2>(
+    pub fn then<A, B, C, Out, MakeErr, FinalizeErr>(
         self,
         other: WriterChainBuilder<
-            impl FnOnce(A) -> Result<B, MakeErr2>,
-            impl FnOnce(B) -> Result<Out, FinalizeErr2>,
+            impl FnOnce(A) -> Result<B, MakeErr>,
+            impl FnOnce(B) -> Result<Out, FinalizeErr>,
         >,
     ) -> WriterChainBuilder<
-        impl FnOnce(A) -> Result<C, MakeErr1>,
-        impl FnOnce(C) -> Result<Out, FinalizeErr1>,
+        impl FnOnce(A) -> Result<C, MakeErr>,
+        impl FnOnce(C) -> Result<Out, FinalizeErr>,
     >
     where
-        M: FnOnce(B) -> Result<C, MakeErr1>,
-        F: FnOnce(C) -> Result<B, FinalizeErr1>,
-        MakeErr1: From<MakeErr2>,
-        FinalizeErr1: From<FinalizeErr2>,
+        M: FnOnce(B) -> Result<C, MakeErr>,
+        F: FnOnce(C) -> Result<B, FinalizeErr>,
     {
         let Self { make, finalize, .. } = self;
 
@@ -109,7 +107,7 @@ impl<M, F> WriterChainBuilder<M, F> {
 
             finalize: move |c: C| {
                 let b: B = finalize(c)?;
-                (other.finalize)(b).map_err(FinalizeErr1::from)
+                (other.finalize)(b)
             },
         }
     }

@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 
-use crate::BackupFileNameComponents;
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
 use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
 use crate::writer_chain::WriterChainBuilder;
+use crate::{BackupFileNameComponents, CreateBackupError};
 
 pub use self::ArchivingContext as Context;
 use self::errors::*;
@@ -29,11 +29,6 @@ pub mod errors {
         #[error("Missing file: '{0}'.")]
         MissingFile(std::path::PathBuf),
     }
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("Archiving failed")]
-    #[repr(transparent)]
-    pub struct ArchivingFailed(#[from] pub anyhow::Error);
 }
 
 pub struct ArchivingContext {
@@ -119,16 +114,17 @@ pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
 ) -> WriterChainBuilder<
-    impl FnOnce(W) -> Result<tar::Builder<W>, ArchivingFailed>,
-    impl FnOnce(tar::Builder<W>) -> Result<W, ArchivingFailed>,
+    impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
+    impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
 > {
     WriterChainBuilder {
         make: move |writer: W| {
             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
-            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)?;
+            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
+                .map_err(CreateBackupError::ArchivingFailed)?;
 
-            archive_writer(&mut builder, blueprint)?;
+            archive_writer(&mut builder, blueprint).map_err(CreateBackupError::ArchivingFailed)?;
 
             Ok(builder)
         },
@@ -138,7 +134,7 @@ pub(crate) fn archive<W: Write>(
                 // NOTE: Flushes the stream if needed.
                 .into_inner()
                 .context("Could not init archive")
-                .map_err(ArchivingFailed)
+                .map_err(CreateBackupError::ArchivingFailed)
         },
     }
 }
