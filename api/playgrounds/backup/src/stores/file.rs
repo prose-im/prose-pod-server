@@ -77,6 +77,7 @@ enum ModeResult {
 }
 
 // TODO: Add tests.
+#[allow(clippy::if_same_then_else)]
 fn validate_mode(mode: &u32, min_permissions: &u32) -> ModeResult {
     if mode == min_permissions {
         // Exit early if exact match.
@@ -214,7 +215,7 @@ impl ObjectStore for FsStore {
 
         let meta = fs::metadata(&file_path)
             .context("Failed getting file metadata")
-            .map_err(|err| ReadObjectError::ObjectNotFound(anyhow::Error::from(err)))?;
+            .map_err(ReadObjectError::ObjectNotFound)?;
 
         Ok(ObjectMetadata {
             file_name: file_name.to_owned(),
@@ -258,10 +259,9 @@ impl ObjectStore for FsStore {
                     if file_name.as_str() > prefix {
                         match self.delete(&file_name).await {
                             Ok(_) => output.deleted.push(file_name),
-                            Err(err) => output.errors.push(
-                                anyhow::Error::from(err)
-                                    .context(format!("File `{file_name}` not deleted")),
-                            ),
+                            Err(err) => output
+                                .errors
+                                .push(err.context(format!("File `{file_name}` not deleted"))),
                         }
                     }
                 }
