@@ -104,15 +104,12 @@ impl ProsePodServerApiV2 {
 
         let response = state
             .backup_service
-            .create_backup(prose_backup::CreateBackupCommand {
-                prefix: concat!("example-", env!("CARGO_CRATE_NAME")),
-                description: &description,
-                version: backups_version,
+            .create_backup(prose_backup::CreateBackupCommand::new(
+                concat!("example-", env!("CARGO_CRATE_NAME")),
+                &description,
+                backups_version,
                 blueprint,
-                // Just to make rust-analyzer happy…
-                #[cfg(feature = "test")]
-                created_at: std::time::SystemTime::now(),
-            })
+            ))
             .await?;
 
         Ok(response)

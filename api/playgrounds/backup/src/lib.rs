@@ -359,15 +359,37 @@ pub struct CreateBackupCommand<'a> {
 
     pub blueprint: &'a archiving::ArchiveBlueprint,
 
-    // TODO: Get rid of this, and move it to somewhere else so it doesn’t
-    //   pollute examples because of `rust-analyzer`. For example, store a
-    //   time dependency in `BackupService` that can be overriden individually.
     /// Timestamp which should be associated with the backup.
     ///
     /// This is only useful in tests, as we have no way to read data as it was
     /// at the previous date. It’s only metadata.
     #[cfg(feature = "test")]
     pub created_at: std::time::SystemTime,
+}
+
+#[cfg(feature = "test")]
+impl<'a> CreateBackupCommand<'a> {
+    #[inline]
+    pub fn new(
+        prefix: &'a str,
+        description: &'a str,
+        version: u8,
+        blueprint: &'a archiving::ArchiveBlueprint,
+    ) -> Self {
+        Self {
+            prefix,
+            description,
+            version,
+            blueprint,
+            created_at: std::time::SystemTime::now(),
+        }
+    }
+
+    #[inline]
+    pub fn created_at(mut self, created_at: std::time::SystemTime) -> Self {
+        self.created_at = created_at;
+        self
+    }
 }
 
 #[derive(Debug)]
