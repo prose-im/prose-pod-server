@@ -104,6 +104,7 @@ async fn example1() -> Result<(), anyhow::Error> {
             description: "Test backup",
             version: archive_version,
             blueprint: &blueprint,
+            additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
         service.create_backup(command).await?

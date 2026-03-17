@@ -87,7 +87,13 @@ pub(crate) fn check_archiving_will_succeed(
 fn archive_writer<W: Write>(
     builder: &mut tar::Builder<W>,
     blueprint: &ArchiveBlueprint,
+    additional_data: &[(String, bytes::Bytes)],
 ) -> Result<(), anyhow::Error> {
+    // Add in-memory data first, to avoid filesystem I/O if it fails.
+    for (archive_path, bytes) in additional_data {
+        append_data(&bytes, archive_path, builder)?;
+    }
+
     for (archive_path, local_path) in blueprint.paths.iter() {
         let path = Path::new(local_path);
 
@@ -115,6 +121,7 @@ fn archive_writer<W: Write>(
 pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
+    additional_data: &[(String, bytes::Bytes)],
 ) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
     impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
@@ -126,7 +133,8 @@ pub(crate) fn archive<W: Write>(
             add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
                 .map_err(CreateBackupError::ArchivingFailed)?;
 
-            archive_writer(&mut builder, blueprint).map_err(CreateBackupError::ArchivingFailed)?;
+            archive_writer(&mut builder, blueprint, additional_data)
+                .map_err(CreateBackupError::ArchivingFailed)?;
 
             Ok(builder)
         },
@@ -358,4 +366,18 @@ where
     }
 
     Ok(ExtractionOutput { tmp_dir, blueprint })
+}
+
+fn append_data<W: std::io::Write>(
+    data: &[u8],
+    path: impl AsRef<std::path::Path>,
+    builder: &mut tar::Builder<W>,
+) -> Result<(), std::io::Error> {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(data.len() as u64);
+    header.set_cksum();
+
+    builder.append_data(&mut header, path, std::io::Cursor::new(data))?;
+
+    Ok(())
 }

@@ -111,6 +111,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
             description: "Test backup",
             version: archive_version,
             blueprint: &blueprint,
+            additional_archive_data: vec![],
             created_at: now,
         })
         .await?;
@@ -256,6 +257,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             description: "Test backup",
             version: archive_version,
             blueprint: &blueprint,
+            additional_archive_data: vec![],
             created_at: now,
         })
         .await?;

@@ -32,6 +32,7 @@ Medium priority (unordered):
     - Or always return metadata directly; actually that would be better.
 - Only allow one restore at a time.
 - Type errors more granularly.
+- Test that permissions are correctly kept when restoring a backup.
 
 Low priority (unordered):
 

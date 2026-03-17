@@ -359,6 +359,9 @@ pub struct CreateBackupCommand<'a> {
 
     pub blueprint: &'a archiving::ArchiveBlueprint,
 
+    /// Some more data to insert in the archive before it’s built.
+    pub additional_archive_data: Vec<(String, bytes::Bytes)>,
+
     /// Timestamp which should be associated with the backup.
     ///
     /// This is only useful in tests, as we have no way to read data as it was
@@ -367,7 +370,6 @@ pub struct CreateBackupCommand<'a> {
     pub created_at: std::time::SystemTime,
 }
 
-#[cfg(feature = "test")]
 impl<'a> CreateBackupCommand<'a> {
     #[inline]
     pub fn new(
@@ -381,10 +383,13 @@ impl<'a> CreateBackupCommand<'a> {
             description,
             version,
             blueprint,
+            additional_archive_data: Vec::with_capacity(0),
+            #[cfg(feature = "test")]
             created_at: std::time::SystemTime::now(),
         }
     }
 
+    #[cfg(feature = "test")]
     #[inline]
     pub fn created_at(mut self, created_at: std::time::SystemTime) -> Self {
         self.created_at = created_at;
@@ -475,6 +480,7 @@ impl BackupService {
             description,
             version,
             blueprint,
+            additional_archive_data,
             #[cfg(feature = "test")]
             created_at,
         }: CreateBackupCommand<'_>,
@@ -504,7 +510,7 @@ impl BackupService {
 
         let start = SystemTime::now();
 
-        let backup_writer = archive(&blueprint, version)
+        let backup_writer = archive(&blueprint, version, &additional_archive_data)
             .then(compress(&self.compression_config))
             .then(eventually(self.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)

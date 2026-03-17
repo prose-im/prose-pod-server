@@ -24,8 +24,7 @@ use crate::prose::dashboard::Dashboard;
 /// backups.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let context = common::lifecycle::init()?;
-    prose::api::v2::init_fake_fs_root(&context)?;
+    let context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
 
     let api = prose::api::start_v2()?;
     let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
@@ -55,3 +54,22 @@ async fn main() -> Result<(), anyhow::Error> {
 
     todo!()
 }
+
+/// The fake files to create at the start of this example.
+///
+/// Format: `("volume", "path", "contents")`.
+#[rustfmt::skip]
+const EXAMPLE_FS_TREE: [(&str, &str, &str); 12] = [
+    ("prose-pod-api-data", "var/lib/prose-pod-api/database.sqlite", ""),
+    ("prose-config",       "etc/prose/prose.toml", ""),
+    ("prose-config",       "etc/prose/prose.env", ""),
+    ("prose-config",       "etc/prose/prose.lic", ""),
+    ("prose-config",       "etc/prose/compose.yaml", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/cron.dat", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/group_info/team.dat", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
+    ("prosody-data",       "var/lib/prosody/example%2eorg/groups/team.dat", ""),
+    ("prosody-config",     "etc/prosody/prosody.cfg.lua", ""),
+];

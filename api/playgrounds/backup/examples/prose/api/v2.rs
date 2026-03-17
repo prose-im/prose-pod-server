@@ -28,15 +28,15 @@ impl ProsePodApi for ProsePodApiV2 {
         let mut builder = tar::Builder::new(buf);
 
         // NOTE: Example data, the Prose Pod API saves other files.
-        builder.append_file(
-            "example",
-            &mut std::fs::File::open(env!("CARGO_MANIFEST_PATH"))?,
+        builder.append_dir_all(
+            &self.constants.backup_data_key_self,
+            Path::new(EXAMPLE_TMPDIR_VAR_NAME).join("var/lib/prose-pod-api"),
         )?;
 
         let prose_pod_api_data = builder.into_inner()?;
 
         self.server_api
-            .post_backups(description, prose_pod_api_data)
+            .post_backups(description, prose_pod_api_data.into())
             .await
     }
 
@@ -80,37 +80,43 @@ pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
         let state = ProsePodServerState::new_v2()?;
 
         ProsePodServerApiV2 {
-            constants: ProsePodServerConstants::v2(),
+            constants: ProsePodServerApiConstants::v2(),
             state: RwLock::new(state),
         }
     };
 
-    Ok(ProsePodApiV2 { server_api })
+    Ok(ProsePodApiV2 {
+        constants: ProsePodApiConstants::v2(),
+        server_api,
+    })
 }
 
 // MARK: - Internals
+
+const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
 
 impl ProsePodServerApiV2 {
     /// `POST /backups`.
     async fn post_backups(
         &self,
         description: String,
-        prose_pod_api_data: Vec<u8>,
+        prose_pod_api_data: bytes::Bytes,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
         let state = self.state().await;
 
         let backups_version = self.constants.backups_version;
         let blueprint = &self.constants.backup_blueprints[&backups_version];
 
-        let response = state
-            .backup_service
-            .create_backup(prose_backup::CreateBackupCommand::new(
-                concat!("example-", env!("CARGO_CRATE_NAME")),
-                &description,
-                backups_version,
-                blueprint,
-            ))
-            .await?;
+        let mut command = prose_backup::CreateBackupCommand::new(
+            concat!("example-", env!("CARGO_CRATE_NAME")),
+            &description,
+            backups_version,
+            blueprint,
+        );
+        command.additional_archive_data =
+            vec![(PROSE_POD_API_ARCHIVE_KEY.to_owned(), prose_pod_api_data)];
+
+        let response = state.backup_service.create_backup(command).await?;
 
         Ok(response)
     }
@@ -182,13 +188,27 @@ impl ProsePodServerApiV2 {
 /// Prose Pod API, as of early 2026. For more information, see
 /// [“Prose Pod Server architecture: Server API vs XMPP server”](https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md).
 pub struct ProsePodApiV2 {
+    constants: ProsePodApiConstants,
     server_api: ProsePodServerApiV2,
+}
+
+/// This would be hard-coded as constants in the Prose Pod API code.
+pub struct ProsePodApiConstants {
+    backup_data_key_self: String,
+}
+
+impl ProsePodApiConstants {
+    fn v2() -> Self {
+        Self {
+            backup_data_key_self: "self-data".to_owned(),
+        }
+    }
 }
 
 // MARK: Prose Pod Server
 
 struct ProsePodServerApiV2 {
-    constants: ProsePodServerConstants,
+    constants: ProsePodServerApiConstants,
     state: RwLock<ProsePodServerState>,
 }
 
@@ -198,13 +218,13 @@ impl ProsePodServerApiV2 {
     }
 }
 
-/// This would be hard-coded as constants in the Prose Pod API code.
-pub struct ProsePodServerConstants {
+/// This would be hard-coded as constants in the Prose Pod Server API code.
+pub struct ProsePodServerApiConstants {
     backups_version: u8,
     backup_blueprints: HashMap<u8, ArchiveBlueprint>,
 }
 
-impl ProsePodServerConstants {
+impl ProsePodServerApiConstants {
     fn v2() -> Self {
         let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
         let src_root = Path::new(&prose_pod_api_dir).join("local-run/scenarios/demo");
@@ -257,44 +277,4 @@ impl ProsePodServerState {
 
         todo!()
     }
-}
-
-// MARK: Setup
-
-/// Creates a temporary filesystem root where backup operations will be
-/// performed (avoids TODO).
-pub fn init_fake_fs_root(
-    example_context: &crate::common::lifecycle::ExampleContext,
-) -> Result<(), anyhow::Error> {
-    use crate::common::util::env_required;
-    use std::process::Command;
-
-    let tmpdir = example_context.tmpdir.path();
-
-    let pod_api_commit_hash = todo!();
-    let temp_api_path = tempfile::TempPath::from_path(tmpdir.join("prose-pod-api"));
-
-    // Checkout the Prose Pod API at the desired version.
-    {
-        let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
-
-        _ = Command::new("git")
-            .args([
-                "-C",
-                prose_pod_api_dir.as_str(),
-                "worktree",
-                "add",
-                // SAFETY: `EXAMPLE_TMPDIR` has already been parsed to valid UTF-8.
-                temp_api_path.to_str().unwrap(),
-                pod_api_commit_hash,
-            ])
-            .status()?;
-    }
-
-    {}
-    let fake_fsroot_path = tmpdir.join("fs-root");
-
-    // std::fs::rename(temp_api_path.join("local-run/scenarios/demo"), to)
-
-    todo!()
 }
