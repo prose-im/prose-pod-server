@@ -8,7 +8,7 @@
 use std::io::Write;
 use std::time::SystemTime;
 
-use writer_chain::WriterChainBuilder;
+use composable_stream::ComposableStreamBuilder;
 
 use crate::CreateBackupError;
 
@@ -30,14 +30,14 @@ pub enum EncryptionWriter<'a, W> {
 pub(crate) fn encrypt<'a, W>(
     context: &'a EncryptionContext,
     created_at: SystemTime,
-) -> WriterChainBuilder<
+) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CreateBackupError>,
     impl FnOnce(EncryptionWriter<'a, W>) -> Result<W, CreateBackupError>,
 >
 where
     W: Write + Send + Sync,
 {
-    WriterChainBuilder {
+    ComposableStreamBuilder {
         make: move |writer: W| match context {
             EncryptionContext::Pgp { recipients, policy } => {
                 let pgp_writer = pgp::PgpEncryptedWriter::try_new(

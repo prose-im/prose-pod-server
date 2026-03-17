@@ -23,7 +23,7 @@ pub mod pgp {
     use std::{io::Write, time::SystemTime};
 
     use anyhow::Context as _;
-    use writer_chain::WriterChainBuilder;
+    use composable_stream::ComposableStreamBuilder;
 
     use crate::CreateBackupError;
 
@@ -75,14 +75,14 @@ pub mod pgp {
     pub(crate) fn pgp_sign<W>(
         context: &PgpSigningContext,
         time: SystemTime,
-    ) -> WriterChainBuilder<
+    ) -> ComposableStreamBuilder<
         impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>,
         impl FnOnce(PgpSigner<W>) -> Result<W, CreateBackupError>,
     >
     where
         W: Write + Send + Sync,
     {
-        WriterChainBuilder {
+        ComposableStreamBuilder {
             make: move |writer: W| {
                 PgpSigner::try_new(writer, |writer| context.new_writer(writer, time).map(Some))
                     .context("Failed building OpenPGP signer")

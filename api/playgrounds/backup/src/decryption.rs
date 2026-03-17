@@ -5,7 +5,7 @@
 
 //! Decryption logic.
 
-use writer_chain::Either;
+use composable_stream::Either;
 
 pub use self::DecryptionContext as Context;
 

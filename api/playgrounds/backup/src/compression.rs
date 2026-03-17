@@ -8,18 +8,18 @@
 use std::io::Write;
 
 use anyhow::Context as _;
-use writer_chain::WriterChainBuilder;
+use composable_stream::ComposableStreamBuilder;
 
 use crate::CreateBackupError;
 use crate::config::CompressionConfig;
 
 pub(crate) fn compress<'a, W: Write>(
     config: &CompressionConfig,
-) -> WriterChainBuilder<
+) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<zstd::Encoder<'a, W>, CreateBackupError>,
     impl FnOnce(zstd::Encoder<'a, W>) -> Result<W, CreateBackupError>,
 > {
-    WriterChainBuilder {
+    ComposableStreamBuilder {
         make: move |writer: W| {
             zstd::Encoder::new(writer, config.zstd_compression_level)
                 .context("Could not build zstd encoder")

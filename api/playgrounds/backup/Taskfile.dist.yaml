@@ -25,6 +25,7 @@ tasks:
       - cargo fmt --check
       - cargo clippy
       - cargo test --no-default-features -F test -F destination_all -- --skip s3
+      - cargo test --doc -p composable-stream -F doc
       - cargo check --release --lib
     dotenv: [test.env]
 

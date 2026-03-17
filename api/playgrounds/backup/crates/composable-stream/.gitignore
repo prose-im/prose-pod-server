@@ -1,0 +1,19 @@
+# Ignore all by default. This prevents unexpected leaks, and improves DX when
+# switching feature branches (e.g. tests in one branch created a directory
+# it git-ignores, but other branch doesn’t know about it and files are
+# committed unexpectedly).
+*
+
+!/src/
+!/src/**
+
+!/tests/
+!/tests/**
+
+!/.gitignore
+
+!/Cargo.toml
+
+!/README.md
+
+!/TODO.md

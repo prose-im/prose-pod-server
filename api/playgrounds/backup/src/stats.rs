@@ -9,7 +9,7 @@
 
 use std::io::{self, Read, Write};
 
-use writer_chain::WriterChainBuilder;
+use composable_stream::ComposableStreamBuilder;
 
 // MARK: Model
 
@@ -194,11 +194,11 @@ impl WriterStats for WriteStats {
 
 pub(crate) fn meter_writes<W, MakeErr, FinalizeErr, Stats: WriterStats>(
     stats: Stats,
-) -> WriterChainBuilder<
+) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<MeteredStream<W, Stats>, MakeErr>,
     impl FnOnce(MeteredStream<W, Stats>) -> Result<(W, Stats), FinalizeErr>,
 > {
-    WriterChainBuilder {
+    ComposableStreamBuilder {
         make: move |writer: W| Ok(MeteredStream::new(writer, stats)),
         finalize: move |writer: MeteredStream<W, Stats>| Ok((writer.inner, writer.stats)),
     }

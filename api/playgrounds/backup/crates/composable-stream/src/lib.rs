@@ -3,53 +3,65 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! A library providing APIs to compose `Write`rs and `Read`ers in topological
+//! order.
+//!
+//! Usually, layers streams in reverse topological order, meaning they must
+//! create the “last” stream first, then build on it to finaly achieve the
+//! desired shape. Code becomes harder to reason about, but also it’s likely
+//! for someone to forget “finalizing” a stream in the chain, resulting in
+//! an incorrect/corrupted output.
+//!
+//! With this library, streams can be described as a logical sequence of steps,
+//! then finalized to get their output.
+//!
+//! See [`ComposableStreamBuilder::then`] for an example.
+
 mod either;
-mod opt_tee;
 mod option;
 mod tee;
 
-pub use self::WriterChainBuilder as Builder;
+pub use self::ComposableStreamBuilder as Builder;
 pub use self::either::*;
 pub use self::option::*;
 pub use self::tee::*;
 
 // MARK: - Builder
 
-pub struct WriterChainBuilder<Make, Finalize> {
+pub struct ComposableStreamBuilder<Make, Finalize> {
     pub make: Make,
     pub finalize: Finalize,
 }
 
 #[inline]
-pub fn builder<W, MakeErr, FinalizeErr>() -> WriterChainBuilder<
-    // NOTE: We need `W -> W` here as this layer will be
-    //   the outer-most layer when building the final writer.
-    impl FnOnce(W) -> Result<W, MakeErr>,
-    impl FnOnce(W) -> Result<W, FinalizeErr>,
+pub fn builder<S, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
+    // NOTE: We need `S -> S` here as this layer will be
+    //   the outer-most layer when building the final stream.
+    impl FnOnce(S) -> Result<S, MakeErr>,
+    impl FnOnce(S) -> Result<S, FinalizeErr>,
 > {
-    WriterChainBuilder {
-        make: move |writer: W| Ok(writer),
-        finalize: move |writer: W| Ok(writer),
+    ComposableStreamBuilder {
+        make: move |stream: S| Ok(stream),
+        finalize: move |stream: S| Ok(stream),
     }
 }
 
-impl<M, F> WriterChainBuilder<M, F> {
+impl<M, F> ComposableStreamBuilder<M, F> {
     /// Given a `W -> Bar<Baz<W>>` builder, augment a `W -> Foo<W>` so it
     /// becomes `W -> Foo<Bar<Baz<W>>>`. For example:
     ///
     /// ```no_run
     /// use anyhow::Context as _;
-    /// use prose_backup::writer_chain;
     /// use std::io::Write;
     ///
     /// # fn example() -> Result<(), anyhow::Error> {
     /// fn archive<W: Write>(
     ///     path: impl AsRef<std::path::Path>,
-    /// ) -> writer_chain::Builder<
+    /// ) -> composable_stream::Builder<
     ///     impl FnOnce(W) -> Result<tar::Builder<W>, anyhow::Error>,
     ///     impl FnOnce(tar::Builder<W>) -> Result<W, anyhow::Error>,
     /// > {
-    ///     writer_chain::Builder {
+    ///     composable_stream::Builder {
     ///         make: move |writer: W| {
     ///             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
     ///             builder.append_path(path)?;
@@ -61,11 +73,11 @@ impl<M, F> WriterChainBuilder<M, F> {
     ///     }
     /// }
     ///
-    /// fn compress<W: Write>(level: i32) -> writer_chain::Builder<
+    /// fn compress<W: Write>(level: i32) -> composable_stream::Builder<
     ///     impl FnOnce(W) -> Result<zstd::Encoder<'static, W>, anyhow::Error>,
     ///     impl FnOnce(zstd::Encoder<'static, W>) -> Result<W, anyhow::Error>,
     /// > {
-    ///     writer_chain::Builder {
+    ///     composable_stream::Builder {
     ///         make: move |writer: W| {
     ///             zstd::Encoder::new(writer, level)
     ///                 .context("Failed creating zstd encoder")
@@ -78,23 +90,23 @@ impl<M, F> WriterChainBuilder<M, F> {
     ///
     /// let out = std::fs::File::open("/dev/null")?; // File
     ///
-    /// let writer = writer_chain::builder() // W -> W
-    ///     .then(archive("foo/bar")) // W -> tar::Builder<W>
-    ///     .then(compress(3)) // W -> zstd::Encoder<tar::Builder<W>>
+    /// let writer = composable_stream::builder() // W₀ -> W₀
+    ///     .then(archive("foo/bar")) // W₁ -> tar::Builder<W₁>
+    ///     .then(compress(3)) // W₂ -> zstd::Encoder<tar::Builder<W₂>>
     ///     .build(out)?; // zstd::Encoder<tar::Builder<File>>
     ///
-    /// writer.finalize()?;
+    /// let _file: std::fs::File = writer.finalize()?;
     /// #     Ok(())
     /// # }
     /// ```
     #[inline]
     pub fn then<A, B, C, Out, MakeErr, FinalizeErr>(
         self,
-        other: WriterChainBuilder<
+        other: ComposableStreamBuilder<
             impl FnOnce(A) -> Result<B, MakeErr>,
             impl FnOnce(B) -> Result<Out, FinalizeErr>,
         >,
-    ) -> WriterChainBuilder<
+    ) -> ComposableStreamBuilder<
         impl FnOnce(A) -> Result<C, MakeErr>,
         impl FnOnce(C) -> Result<Out, FinalizeErr>,
     >
@@ -104,7 +116,7 @@ impl<M, F> WriterChainBuilder<M, F> {
     {
         let Self { make, finalize, .. } = self;
 
-        WriterChainBuilder {
+        ComposableStreamBuilder {
             make: move |a: A| {
                 let b: B = (other.make)(a)?;
                 make(b)
@@ -120,31 +132,30 @@ impl<M, F> WriterChainBuilder<M, F> {
 
 // MARK: - Build
 
-impl<M, F> WriterChainBuilder<M, F> {
+impl<M, F> ComposableStreamBuilder<M, F> {
     #[inline]
-    pub fn build<A, C, Out, Err>(self, writer: A) -> Result<FinalizableWriter<C, F>, Err>
+    pub fn build<A, C, Out, Err>(self, stream: A) -> Result<FinalizableStream<C, F>, Err>
     where
-        A: std::io::Write,
         M: FnOnce(A) -> Result<C, Err>,
         F: FnOnce(C) -> Out,
     {
         let Self { make, finalize, .. } = self;
 
-        make(writer).map(move |writer| FinalizableWriter { writer, finalize })
+        make(stream).map(move |stream| FinalizableStream { stream, finalize })
     }
 }
 
-pub struct FinalizableWriter<W, Finalize> {
-    pub writer: W,
-    finalize: Finalize,
+pub struct FinalizableStream<S, F> {
+    pub stream: S,
+    finalize: F,
 }
 
-impl<W, Finalize> FinalizableWriter<W, Finalize> {
+impl<S, F> FinalizableStream<S, F> {
     #[inline]
     pub fn finalize<Out>(self) -> Out
     where
-        Finalize: FnOnce(W) -> Out,
+        F: FnOnce(S) -> Out,
     {
-        (self.finalize)(self.writer)
+        (self.finalize)(self.stream)
     }
 }

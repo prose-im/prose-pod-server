@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
-use writer_chain::WriterChainBuilder;
+use composable_stream::ComposableStreamBuilder;
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
@@ -115,11 +115,11 @@ fn archive_writer<W: Write>(
 pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
-) -> WriterChainBuilder<
+) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
     impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
 > {
-    WriterChainBuilder {
+    ComposableStreamBuilder {
         make: move |writer: W| {
             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 

@@ -9,8 +9,8 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
+use composable_stream::ComposableStreamBuilder;
 use std::io::Write;
-use writer_chain::WriterChainBuilder;
 
 use crate::CreateBackupError;
 use crate::config::{self, HashingConfig};
@@ -21,14 +21,14 @@ pub(crate) enum DigestWriter<W> {
 
 pub(crate) fn digest<W>(
     hashing_config: &HashingConfig,
-) -> WriterChainBuilder<
+) -> ComposableStreamBuilder<
     impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>,
     impl FnOnce(DigestWriter<W>) -> Result<W, CreateBackupError>,
 >
 where
     W: Write + Send + Sync,
 {
-    WriterChainBuilder {
+    ComposableStreamBuilder {
         // NOTE: We create only one writer in the form of an enum because:
         //   1. It does not make much sense to create multiple digests
         //   2. We ensure there is always at least one
