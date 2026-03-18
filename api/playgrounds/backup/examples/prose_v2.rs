@@ -37,6 +37,8 @@ async fn main() -> Result<(), anyhow::Error> {
     let backup_details = dashboard.create_backup("Example 1").await?;
     debug_assert_eq!(backup_details.description.as_str(), "Example 1");
 
+    // TODO: Register cleanup function.
+
     let backups = dashboard.show_backups().await?;
     debug_assert_eq!(backups.len(), 1);
 
@@ -59,17 +61,18 @@ async fn main() -> Result<(), anyhow::Error> {
 ///
 /// Format: `("volume", "path", "contents")`.
 #[rustfmt::skip]
-const EXAMPLE_FS_TREE: [(&str, &str, &str); 12] = [
-    ("prose-pod-api-data", "var/lib/prose-pod-api/database.sqlite", ""),
-    ("prose-config",       "etc/prose/prose.toml", ""),
-    ("prose-config",       "etc/prose/prose.env", ""),
-    ("prose-config",       "etc/prose/prose.lic", ""),
-    ("prose-config",       "etc/prose/compose.yaml", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/cron.dat", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/group_info/team.dat", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
-    ("prosody-data",       "var/lib/prosody/example%2eorg/groups/team.dat", ""),
-    ("prosody-config",     "etc/prosody/prosody.cfg.lua", ""),
+const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
+    ("etc/prose/compose.yaml", ""),
+    ("etc/prose/prose.env", ""),
+    ("etc/prose/prose.lic", ""),
+    ("etc/prose/prose.toml", ""),
+    ("etc/prosody/prosody.cfg.lua", ""),
+    ("var/lib/prose-pod-api/database.sqlite", ""),
+    ("var/lib/prose-pod-server/salt.bin", ""),
+    ("var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/cron.dat", ""),
+    ("var/lib/prosody/example%2eorg/group_info/team.dat", ""),
+    ("var/lib/prosody/example%2eorg/groups/team.dat", ""),
 ];

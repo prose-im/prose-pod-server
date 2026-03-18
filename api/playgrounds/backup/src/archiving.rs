@@ -36,7 +36,7 @@ pub struct ArchivingContext {
 }
 
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArchiveBlueprint {
     pub paths: Vec<(String, PathBuf)>,
 }

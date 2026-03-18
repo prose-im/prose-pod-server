@@ -84,7 +84,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     println!();
     tracing::info!("Create service");
     let service = BackupService::from_config_custom(
-        backup_config,
+        &backup_config,
         archiving::Context { blueprints },
         |path| {
             certs
@@ -238,7 +238,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
 
     println!();
     tracing::info!("Create service");
-    let service = BackupService::from_config(backup_config, blueprints)?;
+    let service = BackupService::from_config(&backup_config, blueprints)?;
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());

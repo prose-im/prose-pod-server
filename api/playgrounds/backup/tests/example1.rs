@@ -83,7 +83,7 @@ async fn example1() -> Result<(), anyhow::Error> {
     let encryption_config = backup_config.encryption.clone();
 
     let mut service = BackupService::from_config_custom(
-        backup_config,
+        &backup_config,
         archiving::Context { blueprints },
         |path| {
             certs

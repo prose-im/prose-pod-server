@@ -9,7 +9,7 @@ tasks:
 
   example:*:
     desc: Run an example.
-    cmd: cargo run --example {{ index .MATCH 0 }}
+    cmd: cargo run -F example --example {{ index .MATCH 0 }}
     dotenv: [test.env]
 
   test:

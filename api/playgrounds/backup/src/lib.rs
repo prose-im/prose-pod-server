@@ -82,7 +82,7 @@ assert_impl!(BackupService: Sync);
 
 impl BackupService {
     pub fn from_config(
-        config: BackupConfig,
+        config: &BackupConfig,
         blueprints: HashMap<u8, archiving::ArchiveBlueprint>,
     ) -> Result<Self, anyhow::Error> {
         // NOTE: This gets inlined in release builds.
@@ -104,7 +104,7 @@ impl BackupService {
     #[doc(hidden)]
     #[cfg_attr(not(feature = "test"), inline(always))]
     pub fn from_config_custom<P>(
-        config: BackupConfig,
+        config: &BackupConfig,
         archiving_context: archiving::Context,
         get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
         pgp_policy: impl Fn() -> P,
@@ -191,15 +191,15 @@ impl BackupService {
 
         Ok(Self {
             archiving_context,
-            compression_config: config.compression,
-            hashing_config: config.hashing,
+            compression_config: config.compression.to_owned(),
+            hashing_config: config.hashing.to_owned(),
             encryption_context,
             signing_context,
             verification_context,
             decryption_context,
             backup_store: CachedStore::new(backup_store, Arc::default(), &config.caching),
             check_store,
-            download_config: config.download,
+            download_config: config.download.to_owned(),
         })
     }
 }

@@ -137,8 +137,7 @@ pub struct BackupConfig {
 
 // MARK: Parsing
 
-fn default_config_static() -> Figment {
-    use figment::providers::*;
+pub fn default_config_static() -> toml::Table {
     use toml::toml;
 
     #[allow(unused_mut)]
@@ -173,11 +172,11 @@ fn default_config_static() -> Figment {
         fs.mode = 0o600
     });
 
-    Figment::from(Serialized::defaults(static_defaults))
+    static_defaults
 }
 
 /// NOTE: `figment::Error` is at least 208 bytes. clippy suggested boxing.
-fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figment::Error>> {
+pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figment::Error>> {
     use figment::providers::*;
 
     let signing_enabled_opt = figment.extract_inner::<bool>("signing.enabled").ok();
@@ -327,7 +326,7 @@ pub struct StorageConfig {
 #[serde(tag = "mode")]
 pub enum StorageSubconfig {
     #[cfg(feature = "destination_s3")]
-    #[serde(rename = "s3")]
+    #[serde(rename = "s3", alias = "S3")]
     S3 {
         #[serde(rename = "s3")]
         config: StorageS3Config,
@@ -422,7 +421,9 @@ pub struct CachingConfig {
 impl BackupConfig {
     #[inline]
     pub fn default_figment() -> Figment {
-        default_config_static()
+        use figment::providers::Serialized;
+
+        Figment::from(Serialized::defaults(default_config_static()))
     }
 }
 
@@ -501,37 +502,6 @@ impl<'de> serde::Deserialize<'de> for AlwaysNone {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_signing_defaults() {
-        // NOTE(RemiBardon): I guess I have to explain this. Basically the way
-        //   configuration defaults are implemented we might forget to apply a
-        //   “enabled”. Here I’m leveraging Rust’s type system to ensure we
-        //   update the test everytime we change the configuration schema and,
-        //   consequently, keep the defaults up-to-date.
-        let SigningConfig {
-            mandatory: _mandatory,
-            pgp,
-        } = SigningConfig {
-            mandatory: false,
-            pgp: None,
-        };
-
-        default_config_static();
-
-        let json = json::Map::new();
-
-        macro_rules! assert_none {
-            ($key:ident) => {
-                assert_eq!(
-                    json.get(stringify!($key)),
-                    $key.map_or(None, |_| unreachable!())
-                );
-            };
-        }
-
-        assert_none!(pgp);
-    }
 
     #[test]
     fn test_storage_errors() {

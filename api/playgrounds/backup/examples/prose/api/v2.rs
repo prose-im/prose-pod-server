@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use anyhow::Context;
 use prose_backup::{BackupConfig, BackupFileName, BackupService, archiving::ArchiveBlueprint};
 use tokio::sync::RwLock;
 
@@ -28,10 +29,11 @@ impl ProsePodApi for ProsePodApiV2 {
         let mut builder = tar::Builder::new(buf);
 
         // NOTE: Example data, the Prose Pod API saves other files.
-        builder.append_dir_all(
-            &self.constants.backup_data_key_self,
-            Path::new(EXAMPLE_TMPDIR_VAR_NAME).join("var/lib/prose-pod-api"),
-        )?;
+        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
+        builder
+            .append_dir_all(&self.constants.backup_data_key_self, &api_data_path)
+            .context(format!("Dir: {api_data_path:?}"))?;
 
         let prose_pod_api_data = builder.into_inner()?;
 
@@ -77,10 +79,11 @@ impl ProsePodApi for ProsePodApiV2 {
 
 pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
     let server_api = {
-        let state = ProsePodServerState::new_v2()?;
+        let constants = ProsePodServerApiConstants::v2();
+        let state = ProsePodServerState::new_v2(&constants)?;
 
         ProsePodServerApiV2 {
-            constants: ProsePodServerApiConstants::v2(),
+            constants,
             state: RwLock::new(state),
         }
     };
@@ -226,13 +229,14 @@ pub struct ProsePodServerApiConstants {
 
 impl ProsePodServerApiConstants {
     fn v2() -> Self {
-        let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
-        let src_root = Path::new(&prose_pod_api_dir).join("local-run/scenarios/demo");
-        let a = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+
+        let mut blueprints: HashMap<u8, ArchiveBlueprint> = HashMap::with_capacity(1);
+        blueprints.insert(1, blueprint_v2(fs_root));
 
         Self {
             backups_version: 1,
-            backup_blueprints: [(1, blueprint_v2(&src_root))].into_iter().collect(),
+            backup_blueprints: blueprints,
         }
     }
 }
@@ -260,21 +264,100 @@ struct ProsePodServerConfig {
 }
 
 fn load_config() -> Result<ProsePodServerConfig, anyhow::Error> {
-    todo!()
+    use figment::Figment;
+
+    fn default_config_static() -> toml::Table {
+        use toml::toml;
+
+        let backups_default = prose_backup::config::default_config_static();
+
+        let defaults = toml! {
+            backups = backups_default
+        };
+
+        defaults
+    }
+
+    fn default_figment() -> Figment {
+        use figment::providers::Serialized;
+
+        Figment::from(Serialized::defaults(default_config_static()))
+    }
+
+    fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, anyhow::Error> {
+        use figment::providers::*;
+
+        let backups = prose_backup::config::with_dynamic_defaults(figment.focus("backups"))?;
+        let backups_value = backups.extract::<figment::value::Value>()?;
+
+        figment = figment
+            // NOTE: `Figment::merge` merges objects which does not remove
+            //   existing keys. Merging `()` first does the trick.
+            .merge(Serialized::default("backups", figment::value::Empty::Unit))
+            .merge(Serialized::default("backups", backups_value));
+
+        Ok(figment)
+    }
+
+    pub fn figment() -> Figment {
+        use figment::providers::*;
+
+        default_figment()
+            // NOTE: Normally we’d read a file here,
+            //   but we won’t to simplify this example.
+            .merge(Env::prefixed("PROSE_").split("__"))
+    }
+
+    fn try_from(figment: figment::Figment) -> Result<ProsePodServerConfig, anyhow::Error> {
+        with_dynamic_defaults(figment)?
+            .extract::<ProsePodServerConfig>()
+            .map_err(anyhow::Error::from)
+    }
+
+    // Map env to simulate real configuration.
+    macro_rules! map_env {
+        ($from:literal -> $to:literal) => {
+            let val = env_required!($from);
+            std::env::set_var($to, val);
+        };
+    }
+    unsafe {
+        std::env::set_var("PROSE_BACKUPS__STORAGE__BACKUPS__MODE", "S3");
+        map_env!("S3_BUCKET_NAME_BACKUPS" -> "PROSE_BACKUPS__STORAGE__BACKUPS__S3__BUCKET_NAME");
+
+        std::env::set_var("PROSE_BACKUPS__STORAGE__CHECKS__MODE", "S3");
+        map_env!("S3_BUCKET_NAME_CHECKS" -> "PROSE_BACKUPS__STORAGE__CHECKS__S3__BUCKET_NAME");
+
+        map_env!("S3_REGION" -> "PROSE_BACKUPS__S3__REGION");
+        map_env!("S3_ENDPOINT_URL" -> "PROSE_BACKUPS__S3__ENDPOINT_URL");
+        map_env!("S3_ACCESS_KEY" -> "PROSE_BACKUPS__S3__ACCESS_KEY");
+        map_env!("S3_SECRET_KEY" -> "PROSE_BACKUPS__S3__SECRET_KEY");
+    };
+
+    try_from(figment())
 }
 
 // MARK: API state
 
 pub struct ProsePodServerState {
+    // NOTE: Just to highlight the fact that `BackupService::from_config`
+    //   doesn’t consume its configuration.
+    #[allow(dead_code)]
+    config: ProsePodServerConfig,
     backup_service: BackupService,
 }
 
 impl ProsePodServerState {
-    fn new_v2() -> Result<Self, anyhow::Error> {
-        let api_config = load_config()?;
+    fn new_v2(constants: &ProsePodServerApiConstants) -> Result<Self, anyhow::Error> {
+        let config = load_config()?;
+        // tracing::debug!("Parsed config: {api_config:#?}");
 
-        let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
+        let backup_service =
+            BackupService::from_config(&config.backups, constants.backup_blueprints.clone())?;
 
-        todo!()
+        Ok(Self {
+            config,
+            backup_service,
+        })
     }
 }

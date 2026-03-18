@@ -10,7 +10,7 @@ use anyhow::Context as _;
 pub const EXAMPLE_TMPDIR_VAR_NAME: &str = "EXAMPLE_TMPDIR";
 
 pub fn init<const N: usize>(
-    fs_tree: &[(&'static str, &'static str, &'static str); N],
+    fs_tree: &[(&'static str, &'static str); N],
 ) -> Result<ExampleContext, anyhow::Error> {
     let start = SystemTime::now();
 
@@ -25,6 +25,8 @@ pub fn init<const N: usize>(
     unsafe { std::env::set_var(EXAMPLE_TMPDIR_VAR_NAME, &tmpdir.path()) };
 
     init_fs_tree(tmpdir.path(), fs_tree).context("Failed creating fake filesystem")?;
+
+    let fixme = "Init certs";
 
     Ok(ExampleContext {
         start,
@@ -56,7 +58,7 @@ fn init_tracing() {
 
 fn init_fs_tree<const N: usize>(
     fs_root: impl AsRef<Path>,
-    fs_tree: &[(&'static str, &'static str, &'static str); N],
+    fs_tree: &[(&'static str, &'static str); N],
 ) -> Result<(), anyhow::Error> {
     use std::{fs, path};
 
@@ -70,7 +72,7 @@ fn init_fs_tree<const N: usize>(
     }
 
     let mut file: fs::File;
-    for (_, path, contents) in fs_tree.iter() {
+    for (path, contents) in fs_tree.iter() {
         let path: &path::Path = Path::new(path);
 
         // NOTE: If `path` is absolute, `fs_root.join(path)` results in `path`
