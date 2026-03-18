@@ -106,7 +106,7 @@ impl BackupService {
             .context("Failed creating a temporary directory to download the backup in")
             .map_err(VerificationError::Other)?;
         let tmp_dir = Arc::new(tmp_dir);
-        let backup_path = tmp_dir.path().join(&backup_id);
+        let backup_path = tmp_dir.path().join(backup_id);
 
         let mut backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.

@@ -454,7 +454,7 @@ mod create {
     use crate::signing::pgp::pgp_sign;
     use crate::stats::{WriteStats, meter_writes};
     use crate::stores::ObjectStore as _;
-    use crate::{BackupId, BackupName, BackupService};
+    use crate::{BackupId, BackupName, BackupService, ObjectId};
 
     pub(crate) async fn create_backup(
         service: &BackupService,
@@ -512,8 +512,8 @@ mod create {
 
         let (backup_upload, backup_stats) = backup_upload?;
 
-        let mut digest_ids: Vec<BackupId> = Vec::new();
-        let mut checks_upload_durations: Vec<(BackupId, std::time::Duration)> = Vec::new();
+        let mut digest_ids: Vec<ObjectId> = Vec::new();
+        let mut checks_upload_durations: Vec<(ObjectId, std::time::Duration)> = Vec::new();
 
         // Upload SHA-256 digest.
         upload_integrity_check(
@@ -525,7 +525,7 @@ mod create {
         )
         .await?;
 
-        let mut signature_ids: Vec<BackupId> = Vec::new();
+        let mut signature_ids: Vec<ObjectId> = Vec::new();
 
         let is_signed = pgp_signature.is_some();
 
@@ -580,10 +580,10 @@ mod create {
 
     async fn upload_integrity_check(
         data: Vec<u8>,
-        check_id: BackupId,
+        check_id: ObjectId,
         service: &BackupService,
-        checks_upload_durations: &mut Vec<(BackupId, std::time::Duration)>,
-        uploaded: &mut Vec<BackupId>,
+        checks_upload_durations: &mut Vec<(ObjectId, std::time::Duration)>,
+        uploaded: &mut Vec<ObjectId>,
     ) -> Result<(), CreateBackupError> {
         use std::time::SystemTime;
 
@@ -675,18 +675,18 @@ mod create {
         /// (cryptographic checksums).
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
-        pub digest_ids: Vec<BackupId>,
+        pub digest_ids: Vec<ObjectId>,
 
         /// Unique identifiers (file names / object keys) of backup signatures.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sig`.
-        pub signature_ids: Vec<BackupId>,
+        pub signature_ids: Vec<ObjectId>,
     }
 
     #[derive(Debug)]
     pub struct CreateBackupStats {
         pub backup_upload_duration: std::time::Duration,
-        pub checks_upload_durations: Vec<(BackupId, std::time::Duration)>,
+        pub checks_upload_durations: Vec<(ObjectId, std::time::Duration)>,
     }
 
     #[derive(Debug)]
@@ -1193,9 +1193,7 @@ impl BackupName {
     pub fn with_extension(&self, extension: &'static str) -> BackupId {
         debug_assert!(!extension.starts_with('.'));
 
-        BackupId {
-            value: format!("{self}.{extension}"),
-        }
+        BackupId(ObjectId(format!("{self}.{extension}")))
     }
 }
 
@@ -1211,59 +1209,114 @@ impl std::fmt::Display for BackupName {
     }
 }
 
-/// Unique identifier of the backup.
+/// Unique identifier of an object.
 ///
-/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-#[derive(Clone)]
-pub struct BackupId {
-    value: String,
-}
+/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`,
+/// `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
+#[derive(Clone, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ObjectId(String);
 
-impl std::fmt::Debug for BackupId {
+impl std::ops::Deref for ObjectId {
+    type Target = String;
+
     #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.value, f)
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl std::fmt::Display for BackupId {
+impl AsRef<str> for ObjectId {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<std::path::Path> for ObjectId {
+    #[inline]
+    fn as_ref(&self) -> &std::path::Path {
+        self.0.as_ref()
+    }
+}
+
+impl std::fmt::Debug for ObjectId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.value, f)
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for ObjectId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::str::FromStr for ObjectId {
+    type Err = std::convert::Infallible;
+
+    #[inline]
+    fn from_str(str: &str) -> Result<Self, Self::Err> {
+        Ok(Self(str.to_owned()))
+    }
+}
+
+/// Unique identifier of the backup.
+///
+/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
+#[derive(Clone, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct BackupId(ObjectId);
+
+impl std::ops::Deref for BackupId {
+    type Target = ObjectId;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for BackupId {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
     }
 }
 
 impl AsRef<std::path::Path> for BackupId {
     #[inline]
     fn as_ref(&self) -> &std::path::Path {
-        self.value.as_ref()
+        self.0.as_ref()
     }
 }
 
-impl std::cmp::PartialEq for BackupId {
+impl std::fmt::Debug for BackupId {
     #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for BackupId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 
 impl std::str::FromStr for BackupId {
-    type Err = std::convert::Infallible;
+    type Err = <ObjectId as std::str::FromStr>::Err;
 
     #[inline]
-    fn from_str(file_name: &str) -> Result<Self, Self::Err> {
-        Ok(Self {
-            value: file_name.to_owned(),
-        })
+    fn from_str(str: &str) -> Result<Self, Self::Err> {
+        ObjectId::from_str(str).map(Self)
     }
 }
 
 impl BackupId {
-    #[inline]
-    pub fn try_from(str: impl AsRef<str>) -> Result<Self, <Self as std::str::FromStr>::Err> {
-        std::str::FromStr::from_str(str.as_ref())
-    }
-
     /// Push a new extension to the backup ID (keeps existing ones).
     ///
     /// ```
@@ -1273,43 +1326,11 @@ impl BackupId {
     /// let other_backup_id = backup_id.with_extension("baz");
     /// assert_eq!(other_backup_id.as_str(), "test.foo.bar.baz");
     /// ```
-    pub fn with_extension(&self, extension: &'static str) -> Self {
+    pub fn with_extension(&self, extension: &'static str) -> ObjectId {
         debug_assert!(!extension.starts_with('.'));
         assert!(!extension.ends_with('.'));
 
-        Self {
-            value: format!("{self}.{extension}", self = self.value),
-        }
-    }
-}
-
-impl std::ops::Deref for BackupId {
-    type Target = str;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.value.as_str()
-    }
-}
-
-impl AsRef<String> for BackupId {
-    #[inline]
-    fn as_ref(&self) -> &String {
-        &self.value
-    }
-}
-
-impl AsRef<str> for BackupId {
-    #[inline]
-    fn as_ref(&self) -> &str {
-        self.value.as_str()
-    }
-}
-
-impl BackupId {
-    #[inline]
-    pub fn as_str(&self) -> &str {
-        self.value.as_str()
+        ObjectId(format!("{self}.{extension}"))
     }
 }
 

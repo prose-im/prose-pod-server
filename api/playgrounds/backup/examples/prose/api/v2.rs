@@ -6,7 +6,7 @@
 //! The version 2 of the Prose Pod API, where the Prose Pod API has state
 //! and it calls the Prose Pod Server API for some operations.
 
-use std::path::Path;
+use std::{path::Path, str::FromStr as _};
 
 use anyhow::Context;
 use prose_backup::{
@@ -147,7 +147,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupId::try_from(&backup_id)?;
+        let backup_id = BackupId::from_str(&backup_id)?;
 
         let backup = state.backup_service.get_details(&backup_id).await?;
 
@@ -158,7 +158,7 @@ impl ProsePodServerApiV2 {
     async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupId::try_from(&backup_id)?;
+        let backup_id = BackupId::from_str(&backup_id)?;
 
         state.backup_service.delete_backup(&backup_id).await?;
 
@@ -173,7 +173,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupId::try_from(backup_id)?;
+        let backup_id = BackupId::from_str(&backup_id)?;
 
         let blueprint = self
             .constants
@@ -211,7 +211,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<String, anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupId::try_from(&backup_id)?;
+        let backup_id = BackupId::from_str(&backup_id)?;
 
         let backup = state
             .backup_service
