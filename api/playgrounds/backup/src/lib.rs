@@ -43,6 +43,7 @@ pub use openpgp;
 pub use tokio;
 pub use toml;
 
+pub use self::backup_id::*;
 pub use self::config::BackupConfig;
 pub use self::create::*;
 pub use self::restore::*;
@@ -443,18 +444,21 @@ pub mod dtos {
 }
 
 mod create {
+    use std::borrow::Cow;
+
     use anyhow::Context as _;
     use composable_stream::*;
 
-    use crate::archiving::{self, archive};
-    use crate::compression::compress;
-    use crate::dtos::{BackupDto, BackupMetadataPartialDto};
-    use crate::encryption::{self, encrypt};
-    use crate::hashing::digest;
-    use crate::signing::pgp::pgp_sign;
-    use crate::stats::{WriteStats, meter_writes};
-    use crate::stores::ObjectStore as _;
-    use crate::{BackupId, BackupName, BackupService, ObjectId};
+    use crate::BackupService;
+    use crate::archiving::{self, *};
+    use crate::compression::*;
+    use crate::dtos::*;
+    use crate::encryption::*;
+    use crate::hashing::*;
+    use crate::signing::pgp::*;
+    use crate::stats::*;
+    use crate::stores::*;
+    use crate::{BackupIdComponents, backup_id::*};
 
     pub(crate) async fn create_backup(
         service: &BackupService,
@@ -470,19 +474,22 @@ mod create {
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
         use std::time::SystemTime;
 
-        archiving::check_archiving_will_succeed(&blueprint)?;
+        check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
         let created_at = SystemTime::now();
 
-        let backup_name = BackupName::new(prefix, description, &created_at);
-
-        let backup_id = match service.encryption_context {
-            Some(encryption::EncryptionContext::Pgp { .. }) => {
-                backup_name.with_extension("tar.zst.pgp")
-            }
-            None => backup_name.with_extension("tar.zst"),
+        let extensions = match service.encryption_context {
+            Some(EncryptionContext::Pgp { .. }) => "tar.zst.pgp",
+            None => "tar.zst",
         };
+
+        let backup_id = BackupId::from(BackupIdComponents {
+            prefix: Cow::Borrowed(prefix),
+            created_at: created_at.into(),
+            description: Cow::Borrowed(description),
+            extensions,
+        });
 
         // Try to open sink first, to abort early if something is wrong.
         let upload_backup = service
@@ -624,7 +631,7 @@ mod create {
 
         pub version: u8,
 
-        pub blueprint: &'a archiving::ArchiveBlueprint,
+        pub blueprint: &'a ArchiveBlueprint,
 
         /// Some more data to insert in the archive before it’s built.
         pub additional_archive_data: Vec<(String, bytes::Bytes)>,
@@ -643,7 +650,7 @@ mod create {
             prefix: &'a str,
             description: &'a str,
             version: u8,
-            blueprint: &'a archiving::ArchiveBlueprint,
+            blueprint: &'a ArchiveBlueprint,
         ) -> Self {
             Self {
                 prefix,
@@ -740,9 +747,10 @@ mod create {
 }
 
 mod read {
+    use crate::backup_id::*;
     use crate::dtos::*;
     use crate::stores::ObjectStore as _;
-    use crate::{BackupFileNameComponents, BackupId, BackupService};
+    use crate::{BackupIdComponents, BackupService};
 
     pub(crate) async fn list_backups(
         service: &BackupService,
@@ -799,11 +807,11 @@ mod read {
                 }
             };
 
-            let BackupFileNameComponents {
+            let BackupIdComponents {
                 created_at,
                 description,
                 ..
-            } = match BackupFileNameComponents::parse(&backup_id) {
+            } = match BackupIdComponents::parse(&backup_id) {
                 Ok(components) => components,
                 Err(err) => {
                     tracing::warn!("Skipping `{backup_id}`: {err:?}");
@@ -835,13 +843,13 @@ mod read {
         use crate::decryption::DecryptionReport;
         use crate::verification::VerificationReport;
 
-        let parsed_backup_name = BackupFileNameComponents::parse(&backup_id)?;
+        let parsed_backup_id = BackupIdComponents::parse(&backup_id)?;
 
         let mut verification_report = VerificationReport::default();
         let verification_result = service
             .download_backup_and_check_integrity(
                 &backup_id,
-                parsed_backup_name.created_at,
+                parsed_backup_id.created_at,
                 &mut verification_report,
             )
             .await;
@@ -854,7 +862,7 @@ mod read {
             Ok(verification_output) => {
                 let extraction_result = extract(
                     &verification_output,
-                    &parsed_backup_name,
+                    &parsed_backup_id,
                     &service.archiving_context.blueprints,
                     &service.decryption_context,
                     &mut decryption_report,
@@ -886,7 +894,7 @@ mod read {
 
         let dto = BackupDto {
             metadata: BackupMetadataFullDto {
-                created_at: parsed_backup_name.created_at,
+                created_at: parsed_backup_id.created_at,
                 size_bytes: metadata.size_bytes,
                 is_signed,
                 is_encrypted,
@@ -902,7 +910,7 @@ mod read {
                     .map(|(cert_fingerprint, _)| cert_fingerprint.to_spaced_hex()),
                 is_encryption_valid,
             },
-            description: parsed_backup_name.description.into_owned(),
+            description: parsed_backup_id.description.into_owned(),
             id: backup_id.to_owned(),
         };
 
@@ -926,10 +934,11 @@ mod read {
 
 mod restore {
     use crate::archiving::*;
+    use crate::backup_id::*;
     use crate::decryption::*;
     use crate::restoration::*;
     use crate::verification::*;
-    use crate::{BackupFileNameComponents, BackupId, BackupService};
+    use crate::{BackupIdComponents, BackupService};
 
     #[derive(Debug)]
     pub struct ExtractionSuccess<'a> {
@@ -976,8 +985,8 @@ mod restore {
     ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
         // Parse backup name first.
         // Avoids unnecessary I/O if malformed.
-        let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
-            BackupFileNameComponents::parse(&backup_id)?;
+        let parsed_backup_id @ BackupIdComponents { created_at, .. } =
+            BackupIdComponents::parse(&backup_id)?;
 
         let mut verification_report = VerificationReport::default();
         let verification_output = service
@@ -988,7 +997,7 @@ mod restore {
         let mut extraction_stats = ExtractionStats::default();
         let extraction_output = extract(
             &verification_output,
-            &parsed_backup_name,
+            &parsed_backup_id,
             &service.archiving_context.blueprints,
             &service.decryption_context,
             &mut decryption_report,
@@ -1016,8 +1025,9 @@ mod restore {
 }
 
 mod delete {
-    use crate::stores::{BulkDeleteOutput, ObjectStore as _};
-    use crate::{BackupId, BackupService};
+    use crate::BackupService;
+    use crate::backup_id::*;
+    use crate::stores::*;
 
     // NOTE: If using Object Lock, this method exits successfully and
     //   backups / integrity checks remain stored until locks are removed.
@@ -1071,8 +1081,7 @@ mod delete {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "test", derive(PartialEq, Eq))]
-pub(crate) struct BackupFileNameComponents<'a> {
-    #[allow(dead_code)]
+pub(crate) struct BackupIdComponents<'a> {
     pub prefix: Cow<'a, str>,
 
     pub created_at: time::UtcDateTime,
@@ -1082,7 +1091,7 @@ pub(crate) struct BackupFileNameComponents<'a> {
     pub extensions: &'a str,
 }
 
-impl<'a> BackupFileNameComponents<'a> {
+impl<'a> BackupIdComponents<'a> {
     fn parse(file_name: &'a str) -> Result<Self, anyhow::Error> {
         let Some((prefix, rest)) = file_name.split_once('-') else {
             anyhow::bail!("File `{file_name}` has no prefix.");
@@ -1110,7 +1119,7 @@ impl<'a> BackupFileNameComponents<'a> {
             format!("Backup description `{description}` contains invalid UTF-8")
         })?;
 
-        Ok(BackupFileNameComponents {
+        Ok(BackupIdComponents {
             prefix,
             created_at,
             description,
@@ -1119,16 +1128,14 @@ impl<'a> BackupFileNameComponents<'a> {
     }
 }
 
-/// Name of a backup (base name of the file).
-///
-/// E.g. `1772432392-Automatic%20backup`.
-#[derive(Clone)]
-#[repr(transparent)]
-pub struct BackupName(String);
-
-impl BackupName {
-    pub fn new(prefix: &str, description: &str, created_at: &std::time::SystemTime) -> Self {
-        use crate::util::SystemTimeExt as _;
+impl<'a> std::fmt::Display for BackupIdComponents<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            prefix,
+            created_at,
+            description,
+            extensions,
+        } = self;
 
         // Arbitrary safety limits.
         assert!(prefix.len() <= 256);
@@ -1138,8 +1145,8 @@ impl BackupName {
         assert!(!description.is_empty());
 
         // “URL encode” components to get rid of spaces, emojis, etc.
-        let prefix = urlencode_file_name_component(prefix);
-        let description = urlencode_file_name_component(description);
+        let prefix = urlencode_file_name_component(&prefix);
+        let description = urlencode_file_name_component(&description);
 
         // Unix timestamp with second precision as 10 chars covers 2001-09-09
         // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
@@ -1148,9 +1155,8 @@ impl BackupName {
         let created_at = created_at.unix_timestamp();
         assert!(created_at <= 9_999_999_999);
         debug_assert!(created_at > 999_999_999);
-        let backup_name = format!("{prefix}-{created_at:010}-{description}");
 
-        Self(backup_name)
+        write!(f, "{prefix}-{created_at:010}-{description}.{extensions}")
     }
 }
 
@@ -1189,164 +1195,81 @@ fn urlencode_file_name_component(str: &str) -> String {
     res
 }
 
-impl BackupName {
-    pub fn with_extension(&self, extension: &'static str) -> BackupId {
-        debug_assert!(!extension.starts_with('.'));
+mod backup_id {
+    use crate::{BackupIdComponents, stores::ObjectId};
 
-        BackupId(ObjectId(format!("{self}.{extension}")))
-    }
-}
-
-impl std::fmt::Debug for BackupName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl std::fmt::Display for BackupName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// Unique identifier of an object.
-///
-/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`,
-/// `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
-#[derive(Clone, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct ObjectId(String);
-
-impl std::ops::Deref for ObjectId {
-    type Target = String;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<str> for ObjectId {
-    #[inline]
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<std::path::Path> for ObjectId {
-    #[inline]
-    fn as_ref(&self) -> &std::path::Path {
-        self.0.as_ref()
-    }
-}
-
-impl std::fmt::Debug for ObjectId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl std::fmt::Display for ObjectId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl std::str::FromStr for ObjectId {
-    type Err = std::convert::Infallible;
-
-    #[inline]
-    fn from_str(str: &str) -> Result<Self, Self::Err> {
-        Ok(Self(str.to_owned()))
-    }
-}
-
-/// Unique identifier of the backup.
-///
-/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-#[derive(Clone, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct BackupId(ObjectId);
-
-impl std::ops::Deref for BackupId {
-    type Target = ObjectId;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<str> for BackupId {
-    #[inline]
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<std::path::Path> for BackupId {
-    #[inline]
-    fn as_ref(&self) -> &std::path::Path {
-        self.0.as_ref()
-    }
-}
-
-impl std::fmt::Debug for BackupId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl std::fmt::Display for BackupId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl std::str::FromStr for BackupId {
-    type Err = <ObjectId as std::str::FromStr>::Err;
-
-    #[inline]
-    fn from_str(str: &str) -> Result<Self, Self::Err> {
-        ObjectId::from_str(str).map(Self)
-    }
-}
-
-impl BackupId {
-    /// Push a new extension to the backup ID (keeps existing ones).
+    /// Unique identifier of the backup.
     ///
-    /// ```
-    /// # use prose_backup::BackupId;
-    /// # use std::str::FromStr as _;
-    /// let backup_id = BackupId::from_str("test.foo.bar").unwrap();
-    /// let other_backup_id = backup_id.with_extension("baz");
-    /// assert_eq!(other_backup_id.as_str(), "test.foo.bar.baz");
-    /// ```
-    pub fn with_extension(&self, extension: &'static str) -> ObjectId {
-        debug_assert!(!extension.starts_with('.'));
-        assert!(!extension.ends_with('.'));
+    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
+    #[derive(Clone, PartialEq, Eq)]
+    #[repr(transparent)]
+    pub struct BackupId(ObjectId);
 
-        ObjectId(format!("{self}.{extension}"))
+    impl<'a> From<BackupIdComponents<'a>> for BackupId {
+        fn from(components: BackupIdComponents<'a>) -> Self {
+            Self(ObjectId::from(components))
+        }
+    }
+
+    impl std::ops::Deref for BackupId {
+        type Target = ObjectId;
+
+        #[inline]
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl AsRef<str> for BackupId {
+        #[inline]
+        fn as_ref(&self) -> &str {
+            self.0.as_ref()
+        }
+    }
+
+    impl AsRef<std::path::Path> for BackupId {
+        #[inline]
+        fn as_ref(&self) -> &std::path::Path {
+            self.0.as_ref()
+        }
+    }
+
+    impl std::fmt::Debug for BackupId {
+        #[inline]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Debug::fmt(&self.0, f)
+        }
+    }
+
+    impl std::fmt::Display for BackupId {
+        #[inline]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Display::fmt(&self.0, f)
+        }
+    }
+
+    impl std::str::FromStr for BackupId {
+        type Err = <ObjectId as std::str::FromStr>::Err;
+
+        #[inline]
+        fn from_str(str: &str) -> Result<Self, Self::Err> {
+            ObjectId::from_str(str).map(Self)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_backup_file_name_components_parsing() -> Result<(), anyhow::Error> {
-        use crate::BackupFileNameComponents;
+    fn test_backup_id_components_parsing() -> Result<(), anyhow::Error> {
+        use crate::BackupIdComponents;
         use std::borrow::Cow;
 
-        let components = BackupFileNameComponents::parse(
-            "prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp",
-        )?;
+        let components =
+            BackupIdComponents::parse("prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp")?;
         assert_eq!(
             components,
-            BackupFileNameComponents {
+            BackupIdComponents {
                 prefix: Cow::Borrowed("prose-backup"),
                 created_at: time::UtcDateTime::UNIX_EPOCH + time::Duration::seconds(1772432392),
                 description: Cow::Borrowed("Automatic backup"),

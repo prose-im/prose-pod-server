@@ -17,7 +17,7 @@ use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
 use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
-use crate::{BackupFileNameComponents, CreateBackupError};
+use crate::{BackupIdComponents, CreateBackupError};
 
 pub use self::ArchivingContext as Context;
 use self::errors::*;
@@ -223,7 +223,7 @@ impl From<std::io::Error> for ExtractionError {
 
 pub(crate) fn extract<'a>(
     VerificationOutput { backup_path, .. }: &VerificationOutput,
-    parsed_backup_name: &BackupFileNameComponents<'_>,
+    parsed_backup_id: &BackupIdComponents<'_>,
     blueprints: &'a HashMap<u8, ArchiveBlueprint>,
     decryption_context: &DecryptionContext,
     decryption_report: &mut DecryptionReport,
@@ -240,7 +240,7 @@ pub(crate) fn extract<'a>(
     let compressed_archive_reader = decryption::reader(
         backup_reader,
         &decryption_context,
-        &parsed_backup_name,
+        &parsed_backup_id,
         &mut stats.decryption_stats,
         decryption_report,
     )?;

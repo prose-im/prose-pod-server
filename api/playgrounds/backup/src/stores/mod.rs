@@ -76,6 +76,37 @@ pub trait ObjectStore: Send + Sync {
     #[must_use]
     async fn delete_all(&self, prefix: &str) -> Result<BulkDeleteOutput, anyhow::Error>;
 }
+/// Unique identifier of an object.
+///
+/// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`,
+/// `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
+#[derive(Clone, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ObjectId(String);
+
+impl<'a> From<crate::BackupIdComponents<'a>> for ObjectId {
+    fn from(components: crate::BackupIdComponents<'a>) -> Self {
+        Self(components.to_string())
+    }
+}
+
+impl ObjectId {
+    /// Push a new extension to the backup ID (keeps existing ones).
+    ///
+    /// ```
+    /// # use prose_backup::BackupId;
+    /// # use std::str::FromStr as _;
+    /// let backup_id = BackupId::from_str("test.foo.bar").unwrap();
+    /// let other_backup_id = backup_id.with_extension("baz");
+    /// assert_eq!(other_backup_id.as_str(), "test.foo.bar.baz");
+    /// ```
+    pub fn with_extension(&self, extension: &'static str) -> Self {
+        debug_assert!(!extension.starts_with('.'));
+        assert!(!extension.ends_with('.'));
+
+        Self(format!("{self}.{extension}"))
+    }
+}
 
 pub struct ObjectMetadata {
     pub file_name: String,
@@ -122,3 +153,51 @@ pub trait Finalizable {
 }
 
 pub trait ObjectWriter: std::io::Write + Finalizable + Send + Sync {}
+
+// MARK: - Boilerplate
+
+impl std::ops::Deref for ObjectId {
+    type Target = String;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for ObjectId {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<std::path::Path> for ObjectId {
+    #[inline]
+    fn as_ref(&self) -> &std::path::Path {
+        self.0.as_ref()
+    }
+}
+
+impl std::fmt::Debug for ObjectId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for ObjectId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::str::FromStr for ObjectId {
+    type Err = std::convert::Infallible;
+
+    #[inline]
+    fn from_str(str: &str) -> Result<Self, Self::Err> {
+        Ok(Self(str.to_owned()))
+    }
+}

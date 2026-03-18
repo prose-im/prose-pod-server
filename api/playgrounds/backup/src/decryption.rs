@@ -23,10 +23,7 @@ pub struct DecryptionReport {
 pub(crate) fn reader<'ctx: 'report, 'report, R>(
     backup_reader: R,
     context: &'ctx DecryptionContext,
-    parsed_backup_name @ crate::BackupFileNameComponents {
-        extensions,
-        ..
-    }: &crate::BackupFileNameComponents,
+    parsed_backup_id @ crate::BackupIdComponents { extensions, .. }: &crate::BackupIdComponents,
     stats: &mut crate::stats::ReadStats,
     report: &'report mut DecryptionReport,
 ) -> Result<impl std::io::Read, anyhow::Error>
@@ -35,7 +32,7 @@ where
 {
     if extensions.ends_with(".pgp") {
         if let Some(context) = context.pgp.as_ref() {
-            let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_name, report)?;
+            let decryptor = pgp::decryptor(backup_reader, context, parsed_backup_id, report)?;
 
             let decryptor = crate::stats::MeteredStream::new(decryptor, stats);
 
@@ -80,7 +77,7 @@ pub mod pgp {
     pub(crate) fn decryptor<'ctx: 'report, 'report, R>(
         backup_reader: R,
         context: &'ctx PgpDecryptionContext,
-        crate::BackupFileNameComponents { created_at, .. }: &crate::BackupFileNameComponents,
+        crate::BackupIdComponents { created_at, .. }: &crate::BackupIdComponents,
         report: &'report mut DecryptionReport,
     ) -> Result<impl std::io::Read, anyhow::Error>
     where
