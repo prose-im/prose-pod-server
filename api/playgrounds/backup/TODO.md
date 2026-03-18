@@ -18,7 +18,7 @@ Low priority (unordered):
   - PGP now configured, malicious actor plants signatures for old unsigned
     backups, rendering them unrestorable.
 
-## Backlog
+## Backlog (planned)
 
 High priority (ordered):
 
@@ -49,3 +49,5 @@ Low priority (unordered):
 - Recover a recently deleted backup.
   - Do not delete objects directly, but rather create a delete marker and truly
     delete only after some (configurable) time.
+- Add more storage providers.
+  - Take inspiration from <https://crates.io/crates/zesty-backup>.

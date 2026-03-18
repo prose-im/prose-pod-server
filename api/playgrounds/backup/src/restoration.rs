@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use tempfile::TempDir;
+use anyhow::Context as _;
 
 use crate::archiving::{ArchiveBlueprint, ExtractionOutput};
 
@@ -36,6 +36,18 @@ pub(crate) fn restore<'a>(
                 });
             }
         };
+    }
+
+    let entries = std::fs::read_dir(tmp_dir.path())
+        .context("Failed reading extraction temporary directory")?;
+    for entry in entries {
+        match entry {
+            Ok(entry) => {
+                let file_name = entry.file_name();
+                tracing::warn!("Extracted unknown entry {file_name:?}.")
+            }
+            Err(err) => tracing::error!("{err:?}"),
+        }
     }
 
     Ok(RestorationOutput)
@@ -76,8 +88,11 @@ pub enum RestorationError {
 
     #[error("Move failed")]
     MoveFailed {
-        tmp_dir: TempDir,
+        tmp_dir: tempfile::TempDir,
         #[source]
         source: anyhow::Error,
     },
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }

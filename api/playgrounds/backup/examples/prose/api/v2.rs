@@ -9,7 +9,9 @@
 use std::path::Path;
 
 use anyhow::Context;
-use prose_backup::{BackupConfig, BackupFileName, BackupService, archiving::ArchiveBlueprint};
+use prose_backup::{
+    BackupConfig, BackupFileName, BackupService, ExtractionSuccess, archiving::ArchiveBlueprint,
+};
 use tokio::sync::RwLock;
 
 use crate::common::{lifecycle::EXAMPLE_TMPDIR_VAR_NAME, util::*};
@@ -62,7 +64,7 @@ impl ProsePodApi for ProsePodApiV2 {
 
     /// `PUT /backups/{backup_id}/restore`.
     async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
-        self.server_api.put_backup_restore(backup_id).await
+        self.server_api.put_backup_restore(backup_id, self).await
     }
 
     /// `GET /backups/{backup_id}/download-url`.
@@ -164,7 +166,11 @@ impl ProsePodServerApiV2 {
     }
 
     /// `PUT /backups/{backup_id}/restore`.
-    async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
+    async fn put_backup_restore(
+        &self,
+        backup_id: String,
+        prose_pod_api: &ProsePodApiV2,
+    ) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
         let backup_id = BackupFileName::try_from(backup_id)?;
@@ -175,9 +181,23 @@ impl ProsePodServerApiV2 {
             .get(&self.constants.backups_version)
             .unwrap();
 
+        let ExtractionSuccess {
+            extraction_output, ..
+        } = state.backup_service.extract_backup(&backup_id).await?;
+
+        let prose_pod_api_data_path = extraction_output
+            .tmp_dir
+            .path()
+            .join(PROSE_POD_API_ARCHIVE_KEY);
+        let prose_pod_api_data_file = std::fs::File::open(&prose_pod_api_data_path)?;
+
+        () = prose_pod_api.put_restore(prose_pod_api_data_file).await?;
+
+        std::fs::remove_file(prose_pod_api_data_path)?;
+
         let _response = state
             .backup_service
-            .restore_backup(&backup_id, blueprint)
+            .restore_extracted_backup(extraction_output, blueprint)
             .await?;
 
         Ok(())
@@ -223,6 +243,29 @@ impl ProsePodApiConstants {
         Self {
             backup_data_key_self: "self-data".to_owned(),
         }
+    }
+}
+
+impl ProsePodApiV2 {
+    async fn put_restore(&self, data: std::fs::File) -> Result<(), anyhow::Error> {
+        let mut archive = tar::Archive::new(data);
+
+        let tmpdir = tempfile::TempDir::with_prefix(env!("CARGO_CRATE_NAME"))?;
+
+        archive.unpack(tmpdir.path())?;
+
+        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
+
+        // NOTE: In the real codebase we’d do this atomically.
+        std::fs::remove_dir_all(&api_data_path)?;
+
+        std::fs::rename(
+            tmpdir.path().join(&self.constants.backup_data_key_self),
+            &api_data_path,
+        )?;
+
+        Ok(())
     }
 }
 

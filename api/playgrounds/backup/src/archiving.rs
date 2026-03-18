@@ -66,8 +66,8 @@ where
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BackupInternalMetadata {
-    version: u8,
+pub(crate) struct BackupInternalMetadata {
+    pub(crate) version: u8,
 }
 
 // MARK: - Archiving
@@ -182,6 +182,10 @@ pub struct ExtractionOutput<'a> {
     ///
     /// [`tmp_dir`]: ExtractionOutput::tmp_dir
     pub blueprint: &'a ArchiveBlueprint,
+
+    /// Metadata stored inside of the backup.
+    #[allow(dead_code)]
+    pub(crate) metadata: BackupInternalMetadata,
 }
 
 #[derive(Debug, Default)]
@@ -343,16 +347,10 @@ where
         for entry in extracted_files.into_iter() {
             match entry {
                 Ok(entry) => {
-                    let entry_name = entry.file_name();
-
                     // Mark path as visited.
-                    if !expected_paths.remove(&entry_name) {
-                        tracing::warn!(
-                            "Extracted unknown entry '{src}'.",
-                            src = entry_name.display()
-                        );
-                        continue;
-                    };
+                    // NOTE: Not warning if some path isn’t expected by the
+                    //   blueprint as there are legitimate use cases for it.
+                    expected_paths.remove(&entry.file_name());
                 }
                 Err(err) => tracing::error!("{err:?}"),
             }
@@ -365,7 +363,11 @@ where
         }
     }
 
-    Ok(ExtractionOutput { tmp_dir, blueprint })
+    Ok(ExtractionOutput {
+        tmp_dir,
+        blueprint,
+        metadata,
+    })
 }
 
 fn append_data<W: std::io::Write>(

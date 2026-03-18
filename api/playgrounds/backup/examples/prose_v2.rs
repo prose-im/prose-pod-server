@@ -40,7 +40,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     let dashboard = Dashboard::new(Arc::clone(&api));
 
     let backups = dashboard.show_backups().await?;
-    debug_assert_eq!(backups.len(), 0);
+    let backup_count_before = backups.len();
 
     let backup_details = dashboard.create_backup("Example 1").await?;
     debug_assert_eq!(backup_details.description.as_str(), "Example 1");
@@ -48,7 +48,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     // TODO: Register cleanup function.
 
     let backups = dashboard.show_backups().await?;
-    debug_assert_eq!(backups.len(), 1);
+    debug_assert_eq!(backups.len(), backup_count_before + 1);
 
     let backup_id = &backups[0].backup_id;
 
@@ -61,16 +61,22 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     // crate::common::util::press_enter_to_continue();
 
     // Modify some files to test that restoration works.
-    let env_path = context.tmpdir().path().join("etc/prose/prose.env");
-    std::fs::write(&env_path, "bar").context("Failed writing in env file")?;
+    override_files!([
+        "etc/prose/prose.env",
+        "var/lib/prose-pod-api/database.sqlite",
+    ], in: context.tmpdir(), to: "bar");
 
-    let env = std::fs::read_to_string(&env_path).context("Failed reading in env file")?;
-    assert_eq!(env.as_str(), "bar");
+    assert_file_contents!([
+        "etc/prose/prose.env",
+        "var/lib/prose-pod-api/database.sqlite",
+    ], in: context.tmpdir(), eq: "bar");
 
     () = dashboard.restore_backup(String::clone(&backup_id)).await?;
 
-    let env = std::fs::read_to_string(&env_path).context("Failed reading in env file")?;
-    assert_eq!(env.as_str(), "foo");
+    assert_file_contents!([
+        "etc/prose/prose.env",
+        "var/lib/prose-pod-api/database.sqlite",
+    ], in: context.tmpdir(), eq: "foo");
 
     () = dashboard.delete_backup(String::clone(&backup_id)).await?;
 
@@ -87,7 +93,7 @@ const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
     ("etc/prose/prose.lic", ""),
     ("etc/prose/prose.toml", ""),
     ("etc/prosody/prosody.cfg.lua", ""),
-    ("var/lib/prose-pod-api/database.sqlite", ""),
+    ("var/lib/prose-pod-api/database.sqlite", "foo"),
     ("var/lib/prose-pod-server/salt.bin", ""),
     ("var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
     ("var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
@@ -96,3 +102,24 @@ const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
     ("var/lib/prosody/example%2eorg/group_info/team.dat", ""),
     ("var/lib/prosody/example%2eorg/groups/team.dat", ""),
 ];
+
+macro_rules! override_files {
+    ($paths:expr, in: $tmpdir:expr, to: $contents:literal) => {
+        for path in $paths.iter() {
+            let path = $tmpdir.path().join(path);
+            std::fs::write(&path, $contents).context(format!("Failed writing in {path:?}"))?;
+        }
+    };
+}
+pub(crate) use override_files;
+
+macro_rules! assert_file_contents {
+    ($paths:expr, in: $tmpdir:expr, eq: $contents:literal) => {
+        for path in $paths.iter() {
+            let path = $tmpdir.path().join(path);
+            let env = std::fs::read_to_string(&path).context(format!("Failed reading {path:?}"))?;
+            assert_eq!(env.as_str(), $contents);
+        }
+    };
+}
+pub(crate) use assert_file_contents;

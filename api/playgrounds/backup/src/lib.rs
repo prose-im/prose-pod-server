@@ -567,6 +567,9 @@ impl BackupService {
             .map_err(CreateBackupError::UploadFailed)?;
         let backup_upload_duration = SystemTime::now().duration_since(start).unwrap_or_default();
 
+        let size_bytes = backup_stats.bytes_written;
+        tracing::info!("Created backup {backup_file_name:?} ({size_bytes}B).");
+
         // Construct the response.
         Ok(CreateBackupSuccess {
             backup: BackupDto {
@@ -574,7 +577,7 @@ impl BackupService {
                 description: description.to_owned(),
                 metadata: BackupMetadataPartialDto {
                     created_at: created_at.into(),
-                    size_bytes: backup_stats.bytes_written,
+                    size_bytes,
                     is_signed,
                     is_encrypted: self.encryption_context.is_some(),
                     can_be_restored: true,
@@ -952,6 +955,7 @@ mod restore {
             })
         }
 
+        #[inline]
         pub async fn restore_extracted_backup<'a>(
             &self,
             extraction_output: ExtractionOutput<'a>,
