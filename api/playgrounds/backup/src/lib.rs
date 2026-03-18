@@ -10,11 +10,11 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), anyhow::Error> {
-//!   let toml = unimplemented!();
+//!   let toml: toml::Table = unimplemented!();
 //!   let backup_config = BackupConfig::try_from(toml)?;
 //!
 //!   let blueprints = unimplemented!();
-//!   let service = BackupService::from_config(toml, blueprints)?;
+//!   let service = BackupService::from_config(&backup_config, blueprints)?;
 //!
 //!   let _backups = service.list_backups().await?;
 //! }
@@ -36,29 +36,15 @@ pub mod verification;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use composable_stream::*;
 pub use openpgp;
 pub use tokio;
 pub use toml;
 
-use crate::archiving::archive;
-use crate::compression::compress;
-use crate::encryption::encrypt;
-use crate::hashing::digest;
-use crate::signing::pgp::pgp_sign;
-use crate::stats::{WriteStats, meter_writes};
-#[cfg(feature = "destination_fs")]
-use crate::stores::FsStore;
-#[cfg(feature = "destination_s3")]
-use crate::stores::S3Store;
-use crate::stores::{CachedStore, ObjectStore};
-use crate::util::assert_impl;
-
 pub use self::config::BackupConfig;
+pub use self::create::*;
 pub use self::restore::*;
 
 // MARK: Service
@@ -74,11 +60,121 @@ pub struct BackupService {
     pub decryption_context: decryption::Context,
     pub download_config: config::DownloadConfig,
 
-    pub backup_store: CachedStore<Box<dyn ObjectStore>>,
-    pub check_store: Box<dyn ObjectStore>,
+    pub backup_store: stores::CachedStore<Box<dyn stores::ObjectStore>>,
+    pub check_store: Box<dyn stores::ObjectStore>,
 }
-assert_impl!(BackupService: Send);
-assert_impl!(BackupService: Sync);
+crate::util::assert_impl!(BackupService: Send);
+crate::util::assert_impl!(BackupService: Sync);
+
+impl BackupService {
+    /// Create a new backup and upload it to the store.
+    ///
+    /// Everything is done in a single stream of the following shape:
+    ///
+    /// ```text
+    ///                         ┌─/var/lib/prosody
+    ///                         ├─/etc/prosody
+    ///                         ├─/etc/prose
+    ///                         ├─/var/lib/prose-pod-server
+    ///                         ├─/var/lib/prose-pod-api
+    ///                         ├─…
+    ///                    ┌────┴────┐
+    ///                    │ Archive │
+    ///                    │  (tar)  │
+    ///                    └────┬────┘
+    ///                    ┌────┴─────┐
+    ///                    │ Compress │
+    ///                    │  (zstd)  │
+    ///                    └────┬─────┘
+    ///                         │ PGP encryption enabled?
+    ///                         ◇──────┐
+    ///                     Yes │      │ No
+    ///                    ┌────┴────┐ │
+    ///                    │ Encrypt │ │
+    ///                    │  (PGP)  │ │
+    ///                    └────┬────┘ │
+    ///                         ◇──────┘
+    ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━┯━╸
+    ///    ┌───┴────┐     ┌─────┴─────┐            │ PGP signing
+    ///    │ Upload │     │   Hash    │            │ enabled?
+    ///    │ backup │     │ (SHA 256) │            ◇───────┐
+    ///    │  (S3)  │     └─────┬─────┘        Yes │       │ No
+    ///    └───┬────┘  ┌────────┴─────────┐    ┌───┴───┐   ◯
+    ///        ◯       │ Upload integrity │    │ Sign  │
+    ///                │    check (S3)    │    │ (PGP) │
+    ///                └────────┬─────────┘    └───┬───┘
+    ///                         ◯            ┌─────┴─────┐
+    ///                                      │  Upload   │
+    ///                                      │ signature │
+    ///                                      │   (S3)    │
+    ///                                      └─────┬─────┘
+    ///                                            ◯
+    /// ```
+    #[inline]
+    pub async fn create_backup(
+        &self,
+        command: create::CreateBackupCommand<'_>,
+    ) -> Result<create::CreateBackupSuccess, create::CreateBackupError> {
+        crate::create::create_backup(self, command).await
+    }
+
+    /// List all backups, in alphabetically descending order.
+    #[inline]
+    pub async fn list_backups(
+        &self,
+    ) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
+        crate::read::list_backups(self).await
+    }
+
+    #[inline]
+    pub async fn get_details(
+        &self,
+        backup_file_name: &BackupFileName,
+    ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
+        crate::read::get_details(self, backup_file_name).await
+    }
+
+    /// Get a short-lived URL to download a backup.
+    #[inline]
+    pub async fn get_download_url(
+        &self,
+        backup_name: &BackupFileName,
+        ttl: std::time::Duration,
+    ) -> Result<String, anyhow::Error> {
+        crate::read::get_download_url(self, backup_name, ttl).await
+    }
+
+    #[inline]
+    pub async fn restore_backup(
+        &self,
+        backup_name: &BackupFileName,
+        blueprint: &archiving::ArchiveBlueprint,
+    ) -> Result<ExtractAndRestoreSuccess, restoration::RestorationError> {
+        crate::restore::restore_backup(self, backup_name, blueprint).await
+    }
+
+    #[inline]
+    pub async fn extract_backup<'a>(
+        &'a self,
+        backup_name: &BackupFileName,
+    ) -> Result<ExtractionSuccess<'a>, archiving::ExtractionError> {
+        crate::restore::extract_backup(self, backup_name).await
+    }
+
+    #[inline]
+    pub async fn restore_extracted_backup<'a>(
+        &self,
+        extraction_output: archiving::ExtractionOutput<'a>,
+        blueprint: &archiving::ArchiveBlueprint,
+    ) -> Result<restoration::RestorationOutput, restoration::RestorationError> {
+        crate::restore::restore_extracted_backup(extraction_output, blueprint).await
+    }
+
+    #[inline]
+    pub async fn delete_backup(&self, backup_name: &BackupFileName) -> Result<(), anyhow::Error> {
+        crate::delete::delete_backup(self, backup_name).await
+    }
+}
 
 impl BackupService {
     pub fn from_config(
@@ -112,9 +208,10 @@ impl BackupService {
     where
         P: openpgp::policy::Policy + 'static,
     {
-        use decryption::PgpDecryptionContext;
-        use signing::PgpSigningContext;
-        use verification::PgpVerificationContext;
+        use crate::decryption::PgpDecryptionContext;
+        use crate::signing::PgpSigningContext;
+        use crate::stores::*;
+        use crate::verification::PgpVerificationContext;
 
         let encryption_context = match &config.encryption {
             config::EncryptionConfig::Off => None,
@@ -197,7 +294,7 @@ impl BackupService {
             signing_context,
             verification_context,
             decryption_context,
-            backup_store: CachedStore::new(backup_store, Arc::default(), &config.caching),
+            backup_store: stores::CachedStore::new(backup_store, Arc::default(), &config.caching),
             check_store,
             download_config: config.download.to_owned(),
         })
@@ -345,136 +442,22 @@ pub mod dtos {
     }
 }
 
-// MARK: Create backup
+mod create {
+    use anyhow::Context as _;
+    use composable_stream::*;
 
-#[derive(Debug)]
-pub struct CreateBackupCommand<'a> {
-    /// Desired backup prefix (e.g. “prose-backup”).
-    pub prefix: &'a str,
+    use crate::archiving::{self, archive};
+    use crate::compression::compress;
+    use crate::dtos::{BackupDto, BackupMetadataPartialDto};
+    use crate::encryption::{self, encrypt};
+    use crate::hashing::digest;
+    use crate::signing::pgp::pgp_sign;
+    use crate::stats::{WriteStats, meter_writes};
+    use crate::stores::ObjectStore as _;
+    use crate::{BackupFileName, BackupName, BackupService};
 
-    /// Desired backup description (e.g. “Automatic backup”).
-    pub description: &'a str,
-
-    pub version: u8,
-
-    pub blueprint: &'a archiving::ArchiveBlueprint,
-
-    /// Some more data to insert in the archive before it’s built.
-    pub additional_archive_data: Vec<(String, bytes::Bytes)>,
-
-    /// Timestamp which should be associated with the backup.
-    ///
-    /// This is only useful in tests, as we have no way to read data as it was
-    /// at the previous date. It’s only metadata.
-    #[cfg(feature = "test")]
-    pub created_at: std::time::SystemTime,
-}
-
-impl<'a> CreateBackupCommand<'a> {
-    #[inline]
-    pub fn new(
-        prefix: &'a str,
-        description: &'a str,
-        version: u8,
-        blueprint: &'a archiving::ArchiveBlueprint,
-    ) -> Self {
-        Self {
-            prefix,
-            description,
-            version,
-            blueprint,
-            additional_archive_data: Vec::with_capacity(0),
-            #[cfg(feature = "test")]
-            created_at: std::time::SystemTime::now(),
-        }
-    }
-
-    #[cfg(feature = "test")]
-    #[inline]
-    pub fn created_at(mut self, created_at: std::time::SystemTime) -> Self {
-        self.created_at = created_at;
-        self
-    }
-}
-
-#[derive(Debug)]
-pub struct CreateBackupOutput {
-    /// Unique identifier (file name / object key) of the backup.
-    ///
-    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-    pub backup_id: BackupFileName,
-
-    /// Unique identifiers (file names / object keys) of backup digests
-    /// (cryptographic checksums).
-    ///
-    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
-    pub digest_ids: Vec<BackupFileName>,
-
-    /// Unique identifiers (file names / object keys) of backup signatures.
-    ///
-    /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sig`.
-    pub signature_ids: Vec<BackupFileName>,
-}
-
-#[derive(Debug)]
-pub struct CreateBackupStats {
-    pub backup_upload_duration: std::time::Duration,
-    pub checks_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
-}
-
-#[derive(Debug)]
-pub struct CreateBackupSuccess {
-    pub backup: BackupDto<BackupMetadataPartialDto>,
-    pub output: CreateBackupOutput,
-    pub stats: CreateBackupStats,
-}
-
-impl BackupService {
-    /// Create a new backup and upload it to the store.
-    ///
-    /// Everything is done in a single stream of the following shape:
-    ///
-    /// ```text
-    ///                         ┌─/var/lib/prosody
-    ///                         ├─/etc/prosody
-    ///                         ├─/etc/prose
-    ///                         ├─/var/lib/prose-pod-server
-    ///                         ├─/var/lib/prose-pod-api
-    ///                         ├─…
-    ///                    ┌────┴────┐
-    ///                    │ Archive │
-    ///                    │  (tar)  │
-    ///                    └────┬────┘
-    ///                    ┌────┴─────┐
-    ///                    │ Compress │
-    ///                    │  (zstd)  │
-    ///                    └────┬─────┘
-    ///                         │ PGP encryption enabled?
-    ///                         ◇──────┐
-    ///                     Yes │      │ No
-    ///                    ┌────┴────┐ │
-    ///                    │ Encrypt │ │
-    ///                    │  (PGP)  │ │
-    ///                    └────┬────┘ │
-    ///                         ◇──────┘
-    ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━┯━╸
-    ///    ┌───┴────┐     ┌─────┴─────┐            │ PGP signing
-    ///    │ Upload │     │   Hash    │            │ enabled?
-    ///    │ backup │     │ (SHA 256) │            ◇───────┐
-    ///    │  (S3)  │     └─────┬─────┘        Yes │       │ No
-    ///    └───┬────┘  ┌────────┴─────────┐    ┌───┴───┐   ◯
-    ///        ◯       │ Upload integrity │    │ Sign  │
-    ///                │    check (S3)    │    │ (PGP) │
-    ///                └────────┬─────────┘    └───┬───┘
-    ///                         ◯            ┌─────┴─────┐
-    ///                                      │  Upload   │
-    ///                                      │ signature │
-    ///                                      │   (S3)    │
-    ///                                      └─────┬─────┘
-    ///                                            ◯
-    /// ```
-    pub async fn create_backup(
-        &self,
+    pub(crate) async fn create_backup(
+        service: &BackupService,
         CreateBackupCommand {
             prefix,
             description,
@@ -494,7 +477,7 @@ impl BackupService {
 
         let backup_name = BackupName::new(prefix, description, &created_at);
 
-        let backup_file_name = match self.encryption_context {
+        let backup_file_name = match service.encryption_context {
             Some(encryption::EncryptionContext::Pgp { .. }) => {
                 backup_name.with_extension("tar.zst.pgp")
             }
@@ -502,7 +485,7 @@ impl BackupService {
         };
 
         // Try to open sink first, to abort early if something is wrong.
-        let upload_backup = self
+        let upload_backup = service
             .backup_store
             .writer(&backup_file_name)
             .await
@@ -511,15 +494,15 @@ impl BackupService {
         let start = SystemTime::now();
 
         let backup_writer = archive(&blueprint, version, &additional_archive_data)
-            .then(compress(&self.compression_config))
-            .then(eventually(self.encryption_context.as_ref(), |ctx| {
+            .then(compress(&service.compression_config))
+            .then(eventually(service.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
             }))
             // Record stats so we can know the final size of the backup.
             .then(meter_writes(WriteStats::new()))
-            .tee(digest(&self.hashing_config), Vec::<u8>::new())
+            .tee(digest(&service.hashing_config), Vec::<u8>::new())
             .opt_tee(
-                self.signing_context.pgp.as_ref(),
+                service.signing_context.pgp.as_ref(),
                 |ctx| pgp_sign(ctx, created_at),
                 Vec::<u8>::new(),
             )
@@ -536,7 +519,7 @@ impl BackupService {
         upload_integrity_check(
             digest?,
             backup_file_name.with_extension("sha256"),
-            &self,
+            &service,
             &mut checks_upload_durations,
             &mut digest_ids,
         )
@@ -554,7 +537,7 @@ impl BackupService {
                 //   we support, but if we ever add one that also uses the `.sig`
                 //   extension we can just use `.<protocol>.sig` for it.
                 backup_file_name.with_extension("sig"),
-                &self,
+                &service,
                 &mut checks_upload_durations,
                 &mut signature_ids,
             )
@@ -579,7 +562,7 @@ impl BackupService {
                     created_at: created_at.into(),
                     size_bytes,
                     is_signed,
-                    is_encrypted: self.encryption_context.is_some(),
+                    is_encrypted: service.encryption_context.is_some(),
                     can_be_restored: true,
                 },
             },
@@ -594,98 +577,175 @@ impl BackupService {
             },
         })
     }
-}
 
-async fn upload_integrity_check(
-    data: Vec<u8>,
-    key: BackupFileName,
-    service: &BackupService,
-    checks_upload_durations: &mut Vec<(BackupFileName, std::time::Duration)>,
-    uploaded: &mut Vec<BackupFileName>,
-) -> Result<(), CreateBackupError> {
-    use std::time::SystemTime;
+    async fn upload_integrity_check(
+        data: Vec<u8>,
+        key: BackupFileName,
+        service: &BackupService,
+        checks_upload_durations: &mut Vec<(BackupFileName, std::time::Duration)>,
+        uploaded: &mut Vec<BackupFileName>,
+    ) -> Result<(), CreateBackupError> {
+        use std::time::SystemTime;
 
-    let start = SystemTime::now();
+        let start = SystemTime::now();
 
-    let mut uploader = service
-        .check_store
-        .writer(&key)
-        .await
-        .map_err(CreateBackupError::CannotCreateSink)?;
+        let mut uploader = service
+            .check_store
+            .writer(&key)
+            .await
+            .map_err(CreateBackupError::CannotCreateSink)?;
 
-    let mut cursor = std::io::Cursor::new(data);
-    std::io::copy(&mut cursor, &mut uploader)
-        .context("`std::io::copy` failed")
-        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+        let mut cursor = std::io::Cursor::new(data);
+        std::io::copy(&mut cursor, &mut uploader)
+            .context("`std::io::copy` failed")
+            .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-    uploader
-        .finalize()
-        .context("`finalize` failed")
-        .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
+        uploader
+            .finalize()
+            .context("`finalize` failed")
+            .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-    checks_upload_durations.push((
-        key.clone(),
-        SystemTime::now().duration_since(start).unwrap(),
-    ));
-    uploaded.push(key);
+        checks_upload_durations.push((
+            key.clone(),
+            SystemTime::now().duration_since(start).unwrap(),
+        ));
+        uploaded.push(key);
 
-    Ok(())
-}
+        Ok(())
+    }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CreateBackupError {
-    #[error("Cannot create backup sink")]
-    CannotCreateSink(#[source] anyhow::Error),
+    #[derive(Debug)]
+    pub struct CreateBackupCommand<'a> {
+        /// Desired backup prefix (e.g. “prose-backup”).
+        pub prefix: &'a str,
 
-    #[error("Cannot archive")]
-    CannotArchive(#[from] archiving::errors::CannotArchive),
+        /// Desired backup description (e.g. “Automatic backup”).
+        pub description: &'a str,
 
-    #[error("Archiving failed")]
-    ArchivingFailed(#[source] anyhow::Error),
+        pub version: u8,
 
-    #[error("Cannot compress")]
-    CannotCompress(#[source] anyhow::Error),
+        pub blueprint: &'a archiving::ArchiveBlueprint,
 
-    #[error("Compression failed")]
-    CompressionFailed(#[source] anyhow::Error),
+        /// Some more data to insert in the archive before it’s built.
+        pub additional_archive_data: Vec<(String, bytes::Bytes)>,
 
-    #[error("Cannot encrypt")]
-    CannotEncrypt(#[source] anyhow::Error),
+        /// Timestamp which should be associated with the backup.
+        ///
+        /// This is only useful in tests, as we have no way to read data as it was
+        /// at the previous date. It’s only metadata.
+        #[cfg(feature = "test")]
+        pub created_at: std::time::SystemTime,
+    }
 
-    #[error("Encryption failed")]
-    EncryptionFailed(#[source] anyhow::Error),
+    impl<'a> CreateBackupCommand<'a> {
+        #[inline]
+        pub fn new(
+            prefix: &'a str,
+            description: &'a str,
+            version: u8,
+            blueprint: &'a archiving::ArchiveBlueprint,
+        ) -> Self {
+            Self {
+                prefix,
+                description,
+                version,
+                blueprint,
+                additional_archive_data: Vec::with_capacity(0),
+                #[cfg(feature = "test")]
+                created_at: std::time::SystemTime::now(),
+            }
+        }
 
-    #[error("Backup hashing failed")]
-    HashingFailed(#[source] anyhow::Error),
+        #[cfg(feature = "test")]
+        #[inline]
+        pub fn created_at(mut self, created_at: std::time::SystemTime) -> Self {
+            self.created_at = created_at;
+            self
+        }
+    }
 
-    #[error("Cannot sign")]
-    CannotSign(#[source] anyhow::Error),
+    #[derive(Debug)]
+    pub struct CreateBackupOutput {
+        /// Unique identifier (file name / object key) of the backup.
+        ///
+        /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
+        pub backup_id: BackupFileName,
 
-    #[error("Signing failed")]
-    SigningFailed(#[source] anyhow::Error),
+        /// Unique identifiers (file names / object keys) of backup digests
+        /// (cryptographic checksums).
+        ///
+        /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
+        pub digest_ids: Vec<BackupFileName>,
 
-    #[error("Failed uploading backup")]
-    UploadFailed(#[source] anyhow::Error),
+        /// Unique identifiers (file names / object keys) of backup signatures.
+        ///
+        /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sig`.
+        pub signature_ids: Vec<BackupFileName>,
+    }
 
-    #[error("Failed uploading backup integrity check")]
-    IntegrityCheckUploadFailed(#[source] anyhow::Error),
+    #[derive(Debug)]
+    pub struct CreateBackupStats {
+        pub backup_upload_duration: std::time::Duration,
+        pub checks_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
+    }
 
-    #[error(transparent)]
-    Other(anyhow::Error),
-}
+    #[derive(Debug)]
+    pub struct CreateBackupSuccess {
+        pub backup: BackupDto<BackupMetadataPartialDto>,
+        pub output: CreateBackupOutput,
+        pub stats: CreateBackupStats,
+    }
 
-impl From<Infallible> for CreateBackupError {
-    fn from(value: Infallible) -> Self {
-        match value {}
+    #[derive(Debug, thiserror::Error)]
+    pub enum CreateBackupError {
+        #[error("Cannot create backup sink")]
+        CannotCreateSink(#[source] anyhow::Error),
+
+        #[error("Cannot archive")]
+        CannotArchive(#[from] archiving::errors::CannotArchive),
+
+        #[error("Archiving failed")]
+        ArchivingFailed(#[source] anyhow::Error),
+
+        #[error("Cannot compress")]
+        CannotCompress(#[source] anyhow::Error),
+
+        #[error("Compression failed")]
+        CompressionFailed(#[source] anyhow::Error),
+
+        #[error("Cannot encrypt")]
+        CannotEncrypt(#[source] anyhow::Error),
+
+        #[error("Encryption failed")]
+        EncryptionFailed(#[source] anyhow::Error),
+
+        #[error("Backup hashing failed")]
+        HashingFailed(#[source] anyhow::Error),
+
+        #[error("Cannot sign")]
+        CannotSign(#[source] anyhow::Error),
+
+        #[error("Signing failed")]
+        SigningFailed(#[source] anyhow::Error),
+
+        #[error("Failed uploading backup")]
+        UploadFailed(#[source] anyhow::Error),
+
+        #[error("Failed uploading backup integrity check")]
+        IntegrityCheckUploadFailed(#[source] anyhow::Error),
+
+        #[error(transparent)]
+        Other(anyhow::Error),
     }
 }
 
-// MARK: Read
+mod read {
+    use crate::dtos::*;
+    use crate::stores::ObjectStore as _;
+    use crate::{BackupFileName, BackupFileNameComponents, BackupService};
 
-impl BackupService {
-    /// List all backups, in alphabetically descending order.
-    pub async fn list_backups(
-        &self,
+    pub(crate) async fn list_backups(
+        service: &BackupService,
     ) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
         // NOTE: S3 lists objects in alphabetically ascending order and has
         //   no way to list in reverse order or list by “last modified” date
@@ -702,7 +762,7 @@ impl BackupService {
 
         use std::str::FromStr as _;
 
-        let backups = self.backup_store.list_all().await?;
+        let backups = service.backup_store.list_all().await?;
 
         // NOTE: S3 results are sorted in alphabetically ascending order,
         //   and backup names use Unix timestamps which are alphabetically
@@ -711,7 +771,7 @@ impl BackupService {
             return Ok(vec![]);
         };
 
-        let checks = self
+        let checks = service
             .check_store
             .list_all_after(&oldest_backup.file_name)
             .await?
@@ -719,7 +779,7 @@ impl BackupService {
             .map(|meta| meta.file_name)
             .collect::<Vec<_>>();
 
-        let signing_is_mandatory = self.signing_context.is_signing_mandatory;
+        let signing_is_mandatory = service.signing_context.is_signing_mandatory;
 
         let mut dtos: Vec<BackupDto<BackupMetadataPartialDto>> = Vec::with_capacity(backups.len());
 
@@ -767,8 +827,8 @@ impl BackupService {
         Ok(dtos)
     }
 
-    pub async fn get_details(
-        &self,
+    pub(crate) async fn get_details(
+        service: &BackupService,
         backup_file_name: &BackupFileName,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
         use crate::archiving::{ExtractionStats, extract};
@@ -778,7 +838,7 @@ impl BackupService {
         let parsed_backup_name = BackupFileNameComponents::parse(&backup_file_name)?;
 
         let mut verification_report = VerificationReport::default();
-        let verification_result = self
+        let verification_result = service
             .download_backup_and_check_integrity(
                 &backup_file_name,
                 parsed_backup_name.created_at,
@@ -795,8 +855,8 @@ impl BackupService {
                 let extraction_result = extract(
                     &verification_output,
                     &parsed_backup_name,
-                    &self.archiving_context.blueprints,
-                    &self.decryption_context,
+                    &service.archiving_context.blueprints,
+                    &service.decryption_context,
                     &mut decryption_report,
                     &mut extraction_stats,
                 );
@@ -818,7 +878,7 @@ impl BackupService {
             }
         }
 
-        let metadata = self.backup_store.metadata(&backup_file_name).await?;
+        let metadata = service.backup_store.metadata(&backup_file_name).await?;
 
         let is_signed = verification_report.is_signed;
         let is_intact = verification_report.is_intact;
@@ -849,31 +909,27 @@ impl BackupService {
         Ok(dto)
     }
 
-    /// Get a short-lived URL to download a backup.
-    pub async fn get_download_url(
-        &self,
+    pub(crate) async fn get_download_url(
+        service: &BackupService,
         backup_name: &BackupFileName,
         ttl: std::time::Duration,
     ) -> Result<String, anyhow::Error> {
         // Apply max TTL from configuration.
-        let ttl = ttl.clamp(std::time::Duration::ZERO, self.download_config.url_max_ttl);
+        let ttl = ttl.clamp(
+            std::time::Duration::ZERO,
+            service.download_config.url_max_ttl,
+        );
 
-        self.backup_store.download_url(&backup_name, &ttl).await
+        service.backup_store.download_url(&backup_name, &ttl).await
     }
 }
 
-// MARK: Restore
-
 mod restore {
-    use crate::{
-        BackupFileName, BackupFileNameComponents, BackupService,
-        archiving::{
-            ArchiveBlueprint, ExtractionError, ExtractionOutput, ExtractionStats, extract,
-        },
-        decryption::DecryptionReport,
-        restoration::{RestorationError, RestorationOutput, restore},
-        verification::VerificationReport,
-    };
+    use crate::archiving::*;
+    use crate::decryption::*;
+    use crate::restoration::*;
+    use crate::verification::*;
+    use crate::{BackupFileName, BackupFileNameComponents, BackupService};
 
     #[derive(Debug)]
     pub struct ExtractionSuccess<'a> {
@@ -890,137 +946,124 @@ mod restore {
         pub restoration_output: RestorationOutput,
     }
 
-    impl BackupService {
-        pub async fn restore_backup(
-            &self,
-            backup_name: &BackupFileName,
-            blueprint: &ArchiveBlueprint,
-        ) -> Result<ExtractAndRestoreSuccess, RestorationError> {
-            let ExtractionSuccess {
-                verification_report,
-                decryption_report,
-                extraction_output,
-                extraction_stats,
-            } = self.extract_backup(backup_name).await?;
+    pub(crate) async fn restore_backup(
+        service: &BackupService,
+        backup_name: &BackupFileName,
+        blueprint: &ArchiveBlueprint,
+    ) -> Result<ExtractAndRestoreSuccess, RestorationError> {
+        let ExtractionSuccess {
+            verification_report,
+            decryption_report,
+            extraction_output,
+            extraction_stats,
+        } = service.extract_backup(backup_name).await?;
 
-            let restoration_output = self
-                .restore_extracted_backup(extraction_output, blueprint)
-                .await?;
+        let restoration_output = service
+            .restore_extracted_backup(extraction_output, blueprint)
+            .await?;
 
-            Ok(ExtractAndRestoreSuccess {
-                verification_report,
-                decryption_report,
-                extraction_stats,
-                restoration_output,
-            })
-        }
+        Ok(ExtractAndRestoreSuccess {
+            verification_report,
+            decryption_report,
+            extraction_stats,
+            restoration_output,
+        })
+    }
 
-        pub async fn extract_backup<'a>(
-            &'a self,
-            backup_name: &BackupFileName,
-        ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
-            // Parse backup name first.
-            // Avoids unnecessary I/O if malformed.
-            let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
-                BackupFileNameComponents::parse(&backup_name)?;
+    pub(crate) async fn extract_backup<'a>(
+        service: &'a BackupService,
+        backup_name: &BackupFileName,
+    ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
+        // Parse backup name first.
+        // Avoids unnecessary I/O if malformed.
+        let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
+            BackupFileNameComponents::parse(&backup_name)?;
 
-            let mut verification_report = VerificationReport::default();
-            let verification_output = self
-                .download_backup_and_check_integrity(
-                    &backup_name,
-                    created_at,
-                    &mut verification_report,
-                )
-                .await?;
+        let mut verification_report = VerificationReport::default();
+        let verification_output = service
+            .download_backup_and_check_integrity(&backup_name, created_at, &mut verification_report)
+            .await?;
 
-            let mut decryption_report = DecryptionReport::default();
-            let mut extraction_stats = ExtractionStats::default();
-            let extraction_output = extract(
-                &verification_output,
-                &parsed_backup_name,
-                &self.archiving_context.blueprints,
-                &self.decryption_context,
-                &mut decryption_report,
-                &mut extraction_stats,
-            )?;
+        let mut decryption_report = DecryptionReport::default();
+        let mut extraction_stats = ExtractionStats::default();
+        let extraction_output = extract(
+            &verification_output,
+            &parsed_backup_name,
+            &service.archiving_context.blueprints,
+            &service.decryption_context,
+            &mut decryption_report,
+            &mut extraction_stats,
+        )?;
 
-            // TODO: Cache?
-            drop(verification_output.tmp_dir);
+        // TODO: Cache?
+        drop(verification_output.tmp_dir);
 
-            Ok(ExtractionSuccess {
-                verification_report,
-                decryption_report,
-                extraction_output,
-                extraction_stats,
-            })
-        }
+        Ok(ExtractionSuccess {
+            verification_report,
+            decryption_report,
+            extraction_output,
+            extraction_stats,
+        })
+    }
 
-        #[inline]
-        pub async fn restore_extracted_backup<'a>(
-            &self,
-            extraction_output: ExtractionOutput<'a>,
-            blueprint: &ArchiveBlueprint,
-        ) -> Result<RestorationOutput, RestorationError> {
-            restore(extraction_output, blueprint)
-        }
+    #[inline]
+    pub(crate) async fn restore_extracted_backup<'a>(
+        extraction_output: ExtractionOutput<'a>,
+        blueprint: &ArchiveBlueprint,
+    ) -> Result<RestorationOutput, RestorationError> {
+        restore(extraction_output, blueprint)
     }
 }
 
-// MARK: Restore
-
 mod delete {
-    use crate::{
-        BackupFileName, BackupService,
-        stores::{BulkDeleteOutput, ObjectStore as _},
-    };
+    use crate::stores::{BulkDeleteOutput, ObjectStore as _};
+    use crate::{BackupFileName, BackupService};
 
-    impl BackupService {
-        // NOTE: If using Object Lock, this method exits successfully and
-        //   backups / integrity checks remain stored until locks are removed.
-        pub async fn delete_backup(
-            &self,
-            backup_name: &BackupFileName,
-        ) -> Result<(), anyhow::Error> {
-            // Delete the backup object.
-            let deleted_state = self.backup_store.delete(&backup_name).await?;
-            match deleted_state {
-                crate::stores::DeletedState::Deleted => {}
-                crate::stores::DeletedState::MarkedForDeletion => tracing::warn!(
-                    "Backup `{backup_name}` not deleted, but marked for deletion \
-                    once object locks are removed."
-                ),
-            }
-            tracing::info!("Object `{backup_name}` deleted.");
-
-            // Delete all associated integrity checks.
-            {
-                let BulkDeleteOutput {
-                    deleted,
-                    marked_for_deletion,
-                    errors,
-                } = self.check_store.delete_all(&backup_name).await?;
-
-                // Log successes.
-                for key in deleted {
-                    tracing::info!("Object `{key}` deleted.");
-                }
-
-                // Warn if a deletion only yielded a marker.
-                for key in marked_for_deletion {
-                    tracing::warn!(
-                        "Object `{key}` not deleted, but marked for deletion \
-                        once object locks are removed."
-                    );
-                }
-
-                // Log errors.
-                for error in errors {
-                    tracing::warn!("{error:#}");
-                }
-            }
-
-            Ok(())
+    // NOTE: If using Object Lock, this method exits successfully and
+    //   backups / integrity checks remain stored until locks are removed.
+    pub(crate) async fn delete_backup(
+        service: &BackupService,
+        backup_name: &BackupFileName,
+    ) -> Result<(), anyhow::Error> {
+        // Delete the backup object.
+        let deleted_state = service.backup_store.delete(&backup_name).await?;
+        match deleted_state {
+            crate::stores::DeletedState::Deleted => {}
+            crate::stores::DeletedState::MarkedForDeletion => tracing::warn!(
+                "Backup `{backup_name}` not deleted, but marked for deletion \
+                once object locks are removed."
+            ),
         }
+        tracing::info!("Object `{backup_name}` deleted.");
+
+        // Delete all associated integrity checks.
+        {
+            let BulkDeleteOutput {
+                deleted,
+                marked_for_deletion,
+                errors,
+            } = service.check_store.delete_all(&backup_name).await?;
+
+            // Log successes.
+            for key in deleted {
+                tracing::info!("Object `{key}` deleted.");
+            }
+
+            // Warn if a deletion only yielded a marker.
+            for key in marked_for_deletion {
+                tracing::warn!(
+                    "Object `{key}` not deleted, but marked for deletion \
+                    once object locks are removed."
+                );
+            }
+
+            // Log errors.
+            for error in errors {
+                tracing::warn!("{error:#}");
+            }
+        }
+
+        Ok(())
     }
 }
 

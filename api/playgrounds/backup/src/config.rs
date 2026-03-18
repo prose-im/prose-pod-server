@@ -438,7 +438,6 @@ impl TryFrom<Figment> for BackupConfig {
     }
 }
 
-#[cfg(feature = "test")]
 impl TryFrom<toml::Table> for BackupConfig {
     type Error = anyhow::Error;
 
@@ -561,7 +560,7 @@ mod tests {
                 [storage.backups]
                 mode = "foo"
             },
-            "unknown variant: found `foo`, expected ``s3` or `fs`` for key \"default.storage.backups.mode\" in TOML source string"
+            "unknown variant: found `foo`, expected `one of `S3`, `s3`, `fs`` for key \"default.storage.backups.mode\" in TOML source string"
         );
     }
 }

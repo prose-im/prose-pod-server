@@ -65,12 +65,22 @@ fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt::time::Uptime;
 
+    let mut level = "info";
+
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--trace" => level = "trace",
+            "--debug" => level = "debug",
+            arg => panic!("Unknown arg: {arg:?}"),
+        }
+    }
+
     tracing_subscriber::fmt()
         .compact()
         .with_timer(Uptime::default())
-        .with_target(false)
+        .with_target(true)
         .with_env_filter(EnvFilter::new(format!(
-            "{this}=trace,prose_backup=trace,info",
+            "{this}={level},prose_backup={level},info",
             this = env!("CARGO_CRATE_NAME")
         )))
         .init();

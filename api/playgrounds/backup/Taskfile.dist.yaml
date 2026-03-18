@@ -5,11 +5,12 @@ version: "3"
 tasks:
   doc:open:
     desc: Build and open Cargo docs.
+    aliases: [doc]
     cmd: cargo doc --no-deps -F destination_all --lib --open
 
   example:*:
     desc: Run an example.
-    cmd: cargo run -F example --example {{ index .MATCH 0 }}
+    cmd: cargo run -F example --example {{ index .MATCH 0 }}{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
     dotenv: [test.env]
 
   test:
@@ -31,6 +32,7 @@ tasks:
 
   dev:doc:
     desc: Rebuild Cargo docs on source file changes.
+    aliases: [doc:watch]
     preconditions:
       - sh: command -v cargo-watch >/dev/null 2>&1
         msg: "Install `cargo-watch` using `cargo install cargo-watch`."

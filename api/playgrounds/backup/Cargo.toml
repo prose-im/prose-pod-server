@@ -55,7 +55,7 @@ name = "prose_backup"
 
 [features]
 default = ["destination_s3"]
-test = ["figment/toml", "toml/display"]
+test = ["example", "figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
 destination_all = ["destination_fs", "destination_s3"]
 destination_fs = []
