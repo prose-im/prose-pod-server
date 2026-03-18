@@ -7,7 +7,7 @@
 
 mod cache;
 #[cfg(feature = "destination_fs")]
-pub mod file;
+pub mod fs;
 #[cfg(feature = "destination_s3")]
 pub mod s3;
 
@@ -20,7 +20,7 @@ mod prelude {
 
 pub use self::cache::CachedStore;
 #[cfg(feature = "destination_fs")]
-pub use self::file::FsStore;
+pub use self::fs::FsStore;
 use self::prelude::*;
 #[cfg(feature = "destination_s3")]
 pub use self::s3::S3Store;

@@ -62,7 +62,7 @@ destination_fs = []
 destination_s3 = ["dep:s3"]
 
 [[test]]
-name = "example1"
+name = "happy_path"
 required-features = ["test", "destination_fs"]
 
 [[test]]

@@ -20,7 +20,7 @@ use toml::toml;
 use crate::common::{log_error, prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn s3_basic() -> Result<(), anyhow::Error> {
+async fn s3_happy_path() -> Result<(), anyhow::Error> {
     let mut context = init();
     let TestContext {
         now,
