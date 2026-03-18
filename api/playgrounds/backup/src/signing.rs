@@ -123,7 +123,7 @@ pub mod pgp {
                 .for_signing()
                 .secret()
                 .next()
-                .context("No signing key")?
+                .context("No signing-capable secret key material")?
                 .key()
                 .to_owned()
                 .into_keypair()?;

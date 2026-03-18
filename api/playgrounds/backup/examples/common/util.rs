@@ -12,3 +12,10 @@ macro_rules! env_required {
     };
 }
 pub(crate) use env_required;
+
+#[allow(dead_code)]
+pub fn press_enter_to_continue() {
+    tracing::info!("Press [Enter] to continue…");
+    let mut buffer = String::new();
+    std::io::stdin().read_line(&mut buffer).unwrap();
+}

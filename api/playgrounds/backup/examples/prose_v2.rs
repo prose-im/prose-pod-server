@@ -15,8 +15,10 @@ mod prose;
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use tokio::sync::RwLock;
 
+use crate::common::lifecycle::{ExampleContext, keep_tmpdir};
 use crate::prose::api::ProsePodApi;
 use crate::prose::dashboard::Dashboard;
 
@@ -26,6 +28,12 @@ use crate::prose::dashboard::Dashboard;
 async fn main() -> Result<(), anyhow::Error> {
     let context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
 
+    try_main(&context)
+        .await
+        .inspect_err(|_| keep_tmpdir(&context.tmpdir))
+}
+
+async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     let api = prose::api::start_v2()?;
     let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
 
@@ -48,13 +56,25 @@ async fn main() -> Result<(), anyhow::Error> {
     debug_assert!(details.is_encrypted);
 
     let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
-    // TODO: Test that the URL works.
+    // Manually test that the URL works (it does).
+    // tracing::info!("Download URL: {download_url}");
+    // crate::common::util::press_enter_to_continue();
+
+    // Modify some files to test that restoration works.
+    let env_path = context.tmpdir().path().join("etc/prose/prose.env");
+    std::fs::write(&env_path, "bar").context("Failed writing in env file")?;
+
+    let env = std::fs::read_to_string(&env_path).context("Failed reading in env file")?;
+    assert_eq!(env.as_str(), "bar");
 
     () = dashboard.restore_backup(String::clone(&backup_id)).await?;
 
+    let env = std::fs::read_to_string(&env_path).context("Failed reading in env file")?;
+    assert_eq!(env.as_str(), "foo");
+
     () = dashboard.delete_backup(String::clone(&backup_id)).await?;
 
-    todo!()
+    Ok(())
 }
 
 /// The fake files to create at the start of this example.
@@ -63,7 +83,7 @@ async fn main() -> Result<(), anyhow::Error> {
 #[rustfmt::skip]
 const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
     ("etc/prose/compose.yaml", ""),
-    ("etc/prose/prose.env", ""),
+    ("etc/prose/prose.env", "foo"),
     ("etc/prose/prose.lic", ""),
     ("etc/prose/prose.toml", ""),
     ("etc/prosody/prosody.cfg.lua", ""),

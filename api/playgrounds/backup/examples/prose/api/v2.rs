@@ -78,6 +78,11 @@ impl ProsePodApi for ProsePodApiV2 {
 }
 
 pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
+    let tmpdir_path = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+
+    init_tsks(&tmpdir_path).context("Failed creating tsks")?;
+    init_prose_config(&tmpdir_path).context("Failed creating prose.toml")?;
+
     let server_api = {
         let constants = ProsePodServerApiConstants::v2();
         let state = ProsePodServerState::new_v2(&constants)?;
@@ -162,7 +167,20 @@ impl ProsePodServerApiV2 {
     async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
-        todo!()
+        let backup_id = BackupFileName::try_from(backup_id)?;
+
+        let blueprint = self
+            .constants
+            .backup_blueprints
+            .get(&self.constants.backups_version)
+            .unwrap();
+
+        let _response = state
+            .backup_service
+            .restore_backup(&backup_id, blueprint)
+            .await?;
+
+        Ok(())
     }
 
     /// `GET /backups/{backup_id}/download-url`.
@@ -246,7 +264,6 @@ fn blueprint_v2(root: impl AsRef<Path>) -> ArchiveBlueprint {
     ArchiveBlueprint::from_iter(
         [
             ("prose-pod-server-data", "var/lib/prose-pod-server"),
-            ("prose-pod-api-data", "var/lib/prose-pod-api"),
             ("prosody-data", "var/lib/prosody"),
             ("prose-config", "etc/prose"),
             ("prosody-config", "etc/prosody"),
@@ -263,7 +280,7 @@ struct ProsePodServerConfig {
     backups: BackupConfig,
 }
 
-fn load_config() -> Result<ProsePodServerConfig, anyhow::Error> {
+fn load_config(path: impl AsRef<Path>) -> Result<ProsePodServerConfig, anyhow::Error> {
     use figment::Figment;
 
     fn default_config_static() -> toml::Table {
@@ -299,12 +316,11 @@ fn load_config() -> Result<ProsePodServerConfig, anyhow::Error> {
         Ok(figment)
     }
 
-    pub fn figment() -> Figment {
+    pub fn figment_at_path(path: impl AsRef<Path>) -> Figment {
         use figment::providers::*;
 
         default_figment()
-            // NOTE: Normally we’d read a file here,
-            //   but we won’t to simplify this example.
+            .merge(Toml::file(path))
             .merge(Env::prefixed("PROSE_").split("__"))
     }
 
@@ -322,19 +338,15 @@ fn load_config() -> Result<ProsePodServerConfig, anyhow::Error> {
         };
     }
     unsafe {
-        std::env::set_var("PROSE_BACKUPS__STORAGE__BACKUPS__MODE", "S3");
         map_env!("S3_BUCKET_NAME_BACKUPS" -> "PROSE_BACKUPS__STORAGE__BACKUPS__S3__BUCKET_NAME");
-
-        std::env::set_var("PROSE_BACKUPS__STORAGE__CHECKS__MODE", "S3");
         map_env!("S3_BUCKET_NAME_CHECKS" -> "PROSE_BACKUPS__STORAGE__CHECKS__S3__BUCKET_NAME");
-
         map_env!("S3_REGION" -> "PROSE_BACKUPS__S3__REGION");
         map_env!("S3_ENDPOINT_URL" -> "PROSE_BACKUPS__S3__ENDPOINT_URL");
         map_env!("S3_ACCESS_KEY" -> "PROSE_BACKUPS__S3__ACCESS_KEY");
         map_env!("S3_SECRET_KEY" -> "PROSE_BACKUPS__S3__SECRET_KEY");
     };
 
-    try_from(figment())
+    try_from(figment_at_path(path))
 }
 
 // MARK: API state
@@ -349,7 +361,10 @@ pub struct ProsePodServerState {
 
 impl ProsePodServerState {
     fn new_v2(constants: &ProsePodServerApiConstants) -> Result<Self, anyhow::Error> {
-        let config = load_config()?;
+        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+        let config_path = Path::new(&fs_root).join("etc/prose/prose.toml");
+
+        let config = load_config(&config_path)?;
         // tracing::debug!("Parsed config: {api_config:#?}");
 
         let backup_service =

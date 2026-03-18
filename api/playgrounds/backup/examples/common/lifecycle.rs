@@ -3,7 +3,12 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{io::Write, path::Path, time::SystemTime};
+use std::{
+    io::Write,
+    path::Path,
+    sync::{Arc, RwLock, RwLockReadGuard},
+    time::SystemTime,
+};
 
 use anyhow::Context as _;
 
@@ -26,7 +31,16 @@ pub fn init<const N: usize>(
 
     init_fs_tree(tmpdir.path(), fs_tree).context("Failed creating fake filesystem")?;
 
-    let fixme = "Init certs";
+    let tmpdir = Arc::new(RwLock::new(tmpdir));
+
+    let old_panic_hook = std::panic::take_hook();
+    std::panic::set_hook({
+        let tmpdir = Arc::clone(&tmpdir);
+        Box::new(move |info| {
+            keep_tmpdir(&tmpdir);
+            old_panic_hook(info)
+        })
+    });
 
     Ok(ExampleContext {
         start,
@@ -37,8 +51,14 @@ pub fn init<const N: usize>(
 
 pub struct ExampleContext {
     pub start: SystemTime,
-    pub tmpdir: tempfile::TempDir,
+    pub tmpdir: Arc<RwLock<tempfile::TempDir>>,
     pub cleanup_functions: Vec<std::pin::Pin<Box<dyn Future<Output = ()> + Send>>>,
+}
+
+impl ExampleContext {
+    pub fn tmpdir<'a>(&'a self) -> RwLockReadGuard<'a, tempfile::TempDir> {
+        self.tmpdir.read().unwrap()
+    }
 }
 
 fn init_tracing() {
@@ -98,4 +118,13 @@ fn init_fs_tree<const N: usize>(
     }
 
     Ok(())
+}
+
+pub fn keep_tmpdir(tmpdir: &RwLock<tempfile::TempDir>) {
+    let mut tmpdir = tmpdir.write().unwrap();
+    tmpdir.disable_cleanup(true);
+    tracing::info!(
+        "Kept fake fs root for investigation. You can find it at {path:?}.",
+        path = tmpdir.path()
+    );
 }
