@@ -22,6 +22,12 @@ Low priority (unordered):
 
 High priority (ordered):
 
+1. Support custom object prefix (use case: S3 directory-style prefix).
+1. Ensure the API works if backups and checks are in the same bucket.
+1. Crash if same bucket + prefix is used for backups and checks.
+   - Or support this use case.
+     - Then provide a convenience configuration key to avoid needing to
+       configure both `storage.backups` and `storage.checks`.
 1. Test atomicity of restores.
 
 Medium priority (unordered):
@@ -30,7 +36,6 @@ Medium priority (unordered):
 - Cache S3 requests.
   - Also cache metadata when listing objects (it should already be present).
     - Or always return metadata directly; actually that would be better.
-- Only allow one restore at a time.
 - Type errors more granularly.
 - Test that permissions are correctly kept when restoring a backup.
 
@@ -46,6 +51,7 @@ Low priority (unordered):
 - Return all layer sizes when getting backup details (?).
 - Return stats after restore (?).
 - Stream stats when restoring.
+- Stream stats when creating a backup.
 - Recover a recently deleted backup.
   - Do not delete objects directly, but rather create a delete marker and truly
     delete only after some (configurable) time.
