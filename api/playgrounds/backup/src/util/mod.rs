@@ -4,17 +4,17 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod measurements;
-#[cfg(feature = "destination_fs")]
+#[cfg(feature = "provider_fs")]
 mod octal;
 pub mod serde;
 
 pub use measurements::BytesAmount;
-#[cfg(feature = "destination_fs")]
+#[cfg(feature = "provider_fs")]
 pub use octal::Octal;
 
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.
-#[cfg(any(feature = "destination_s3", test))]
+#[cfg(any(feature = "provider_s3", test))]
 pub fn saturating_i64_to_u64(value: i64) -> u64 {
     value.max(0) as u64
 }

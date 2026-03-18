@@ -6,7 +6,7 @@ tasks:
   doc:open:
     desc: Build and open Cargo docs.
     aliases: [doc]
-    cmd: cargo doc --no-deps -F destination_all --lib --open
+    cmd: cargo doc --no-deps -F all_providers --lib --open
 
   example:*:
     desc: Run an example.
@@ -17,7 +17,7 @@ tasks:
     desc: Run all tests.
     cmds:
       - rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
-      - cargo test --no-default-features -F test -F destination_all {{ .CLI_ARGS }}
+      - cargo test --no-default-features -F test -F all_providers {{ .CLI_ARGS }}
     dotenv: [test.env]
 
   ci:
@@ -25,7 +25,7 @@ tasks:
     cmds:
       - cargo fmt --check
       - cargo clippy
-      - cargo test --no-default-features -F test -F destination_all -- --skip s3
+      - cargo test --no-default-features -F test -F all_providers -- --skip s3
       - cargo test --doc -p composable-stream -F doc
       - cargo check --release --lib
     dotenv: [test.env]
@@ -38,4 +38,4 @@ tasks:
         msg: "Install `cargo-watch` using `cargo install cargo-watch`."
     cmds:
       - task: doc:open
-      - cmd: cargo watch -x 'doc --no-deps -F destination_all --lib'
+      - cmd: cargo watch -x 'doc --no-deps -F all_providers --lib'

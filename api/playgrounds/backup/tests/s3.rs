@@ -49,11 +49,11 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         pgp.tsk = "sign.pgp"
 
         [storage.backups]
-        mode = "s3"
+        provider = "s3"
         s3.bucket_name = bucket_name_backups
 
         [storage.checks]
-        mode = "s3"
+        provider = "s3"
         s3.bucket_name = bucket_name_checks
 
         [s3]
@@ -197,11 +197,11 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     tracing::info!("Create config");
     let backup_config = BackupConfig::try_from(toml! {
         [storage.backups]
-        mode = "s3"
+        provider = "s3"
         s3.bucket_name = bucket_name_backups
 
         [storage.checks]
-        mode = "s3"
+        provider = "s3"
         s3.bucket_name = bucket_name_checks
         s3.object_lock_mode = "governance"
         s3.object_lock_duration = "PT5M"

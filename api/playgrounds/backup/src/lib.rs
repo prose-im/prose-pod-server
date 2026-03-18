@@ -269,17 +269,17 @@ impl BackupService {
         }
 
         let backup_store: Box<dyn ObjectStore> = match config.storage.backups {
-            #[cfg(feature = "destination_s3")]
+            #[cfg(feature = "provider_s3")]
             config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
-            #[cfg(feature = "destination_fs")]
+            #[cfg(feature = "provider_fs")]
             config::StorageSubconfig::Fs { ref config } => {
                 Box::new(FsStore::try_from_config(config, 0o600)?)
             }
         };
         let check_store: Box<dyn ObjectStore> = match config.storage.checks {
-            #[cfg(feature = "destination_s3")]
+            #[cfg(feature = "provider_s3")]
             config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
-            #[cfg(feature = "destination_fs")]
+            #[cfg(feature = "provider_fs")]
             config::StorageSubconfig::Fs { ref config } => {
                 Box::new(FsStore::try_from_config(config, 0o600)?)
             }

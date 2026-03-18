@@ -23,7 +23,7 @@ pub mod iso8601_duration {
     }
 }
 
-#[cfg(feature = "destination_s3")]
+#[cfg(feature = "provider_s3")]
 pub mod s3 {
     use super::*;
 

@@ -51,11 +51,11 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
             pgp.tsk = "sign.pgp"
 
             [storage.backups]
-            mode = "fs"
+            provider = "fs"
             fs.directory = backup_store_path
 
             [storage.checks]
-            mode = "fs"
+            provider = "fs"
             fs.directory = check_store_path
         };
 

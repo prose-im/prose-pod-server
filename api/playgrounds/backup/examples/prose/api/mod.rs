@@ -117,10 +117,10 @@ fn init_prose_config(fs_root: impl AsRef<std::path::Path>) -> Result<(), anyhow:
         pgp.tsk = pgp_tsk_path
 
         [backups.storage.backups]
-        mode = "s3"
+        provider = "s3"
 
         [backups.storage.checks]
-        mode = "s3"
+        provider = "s3"
     };
 
     let config_path = fs_root.join("etc/prose/prose.toml");

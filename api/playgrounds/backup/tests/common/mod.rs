@@ -6,7 +6,7 @@
 pub mod blueprints;
 pub mod pgp;
 pub mod print;
-#[cfg(feature = "destination_s3")]
+#[cfg(feature = "provider_s3")]
 pub mod s3;
 pub mod test_lifecycle;
 

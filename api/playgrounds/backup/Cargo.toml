@@ -54,20 +54,20 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 name = "prose_backup"
 
 [features]
-default = ["destination_s3"]
+default = ["provider_s3"]
 test = ["example", "figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
-destination_all = ["destination_fs", "destination_s3"]
-destination_fs = []
-destination_s3 = ["dep:s3"]
+all_providers = ["provider_fs", "provider_s3"]
+provider_fs = []
+provider_s3 = ["dep:s3"]
 
 [[test]]
 name = "happy_path"
-required-features = ["test", "destination_fs"]
+required-features = ["test", "provider_fs"]
 
 [[test]]
 name = "s3"
-required-features = ["test", "destination_s3"]
+required-features = ["test", "provider_s3"]
 
 [lints.clippy]
 collapsible_if = "allow" # Style preference.

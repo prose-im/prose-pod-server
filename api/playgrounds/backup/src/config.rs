@@ -69,12 +69,12 @@ use figment::Figment;
 ///
 /// // Where to store backups.
 /// [storage.backups]
-/// mode = "s3"
+/// provider = "s3"
 /// s3.bucket_name = "prose-backups"
 ///
 /// // Where to store backup integrity checks.
 /// [storage.checks]
-/// mode = "s3"
+/// provider = "s3"
 /// // This bucket SHOULD have Object Lock enabled (see <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html>).
 /// // If using Object Lock, you should also enable some bucket-level
 /// // configuration to automatically cleanup objects and delete markers
@@ -124,13 +124,13 @@ pub struct BackupConfig {
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
-    #[cfg(feature = "destination_s3")]
+    #[cfg(feature = "provider_s3")]
     #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in figment).
-    #[cfg(feature = "destination_fs")]
+    #[cfg(feature = "provider_fs")]
     #[doc(hidden)]
     pub fs: AlwaysNone,
 }
@@ -161,7 +161,7 @@ pub fn default_config_static() -> toml::Table {
         url_max_ttl = "PT5M"
     };
 
-    #[cfg(feature = "destination_fs")]
+    #[cfg(feature = "provider_fs")]
     static_defaults.extend(toml! {
         [storage.backups]
         fs.overwrite = false
@@ -206,18 +206,18 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
         ));
     }
 
-    for mode in ["s3", "fs"] {
-        if let Ok(default) = figment.extract_inner::<figment::value::Value>(mode) {
+    for provider in ["s3", "fs"] {
+        if let Ok(default) = figment.extract_inner::<figment::value::Value>(provider) {
             figment = figment
                 .merge(Serialized::default(
-                    &format!("storage.backups.{mode}"),
+                    &format!("storage.backups.{provider}"),
                     default.clone(),
                 ))
                 .merge(Serialized::default(
-                    &format!("storage.checks.{mode}"),
+                    &format!("storage.checks.{provider}"),
                     default,
                 ))
-                .remove(mode);
+                .remove(provider);
         }
     }
 
@@ -323,16 +323,16 @@ pub struct StorageConfig {
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
-#[serde(tag = "mode")]
+#[serde(tag = "provider")]
 pub enum StorageSubconfig {
-    #[cfg(feature = "destination_s3")]
+    #[cfg(feature = "provider_s3")]
     #[serde(rename = "s3", alias = "S3")]
     S3 {
         #[serde(rename = "s3")]
         config: StorageS3Config,
     },
 
-    #[cfg(feature = "destination_fs")]
+    #[cfg(feature = "provider_fs")]
     #[serde(rename = "fs")]
     Fs {
         #[serde(rename = "fs")]
@@ -340,7 +340,7 @@ pub enum StorageSubconfig {
     },
 }
 
-#[cfg(feature = "destination_s3")]
+#[cfg(feature = "provider_s3")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -369,7 +369,7 @@ pub struct StorageS3Config {
     pub object_lock_legal_hold_status: Option<s3::types::ObjectLockLegalHoldStatus>,
 }
 
-#[cfg(feature = "destination_s3")]
+#[cfg(feature = "provider_s3")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -383,7 +383,7 @@ pub struct S3ObjectLockConfig {
     pub duration: std::time::Duration,
 }
 
-#[cfg(feature = "destination_fs")]
+#[cfg(feature = "provider_fs")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -544,13 +544,13 @@ mod tests {
             toml: {
                 [storage.backups]
             },
-            "missing field `mode` for key \"default.storage.backups\" in TOML source string"
+            "missing field `provider` for key \"default.storage.backups\" in TOML source string"
         );
 
         assert_error!(
             toml: {
                 [storage.backups]
-                mode = "s3"
+                provider = "s3"
             },
             "missing field `s3` for key \"default.storage.backups\" in TOML source string"
         );
@@ -558,9 +558,9 @@ mod tests {
         assert_error!(
             toml: {
                 [storage.backups]
-                mode = "foo"
+                provider = "foo"
             },
-            "unknown variant: found `foo`, expected `one of `S3`, `s3`, `fs`` for key \"default.storage.backups.mode\" in TOML source string"
+            "unknown variant: found `foo`, expected `one of `S3`, `s3`, `fs`` for key \"default.storage.backups.provider\" in TOML source string"
         );
     }
 }
