@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use prose_backup::{
-    BackupConfig, BackupFileName, BackupService, ExtractionSuccess, archiving::ArchiveBlueprint,
+    BackupConfig, BackupId, BackupService, ExtractionSuccess, archiving::ArchiveBlueprint,
 };
 use tokio::sync::RwLock;
 
@@ -147,7 +147,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupFileName::try_from(&backup_id)?;
+        let backup_id = BackupId::try_from(&backup_id)?;
 
         let backup = state.backup_service.get_details(&backup_id).await?;
 
@@ -158,7 +158,7 @@ impl ProsePodServerApiV2 {
     async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupFileName::try_from(&backup_id)?;
+        let backup_id = BackupId::try_from(&backup_id)?;
 
         state.backup_service.delete_backup(&backup_id).await?;
 
@@ -173,7 +173,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupFileName::try_from(backup_id)?;
+        let backup_id = BackupId::try_from(backup_id)?;
 
         let blueprint = self
             .constants
@@ -211,7 +211,7 @@ impl ProsePodServerApiV2 {
     ) -> Result<String, anyhow::Error> {
         let state = self.state().await;
 
-        let backup_id = BackupFileName::try_from(&backup_id)?;
+        let backup_id = BackupId::try_from(&backup_id)?;
 
         let backup = state
             .backup_service

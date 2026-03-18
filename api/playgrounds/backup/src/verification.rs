@@ -92,7 +92,7 @@ impl BackupService {
     #[inline]
     pub async fn download_backup_and_check_integrity(
         &self,
-        backup_name: &crate::BackupFileName,
+        backup_id: &crate::BackupId,
         created_at: impl Into<std::time::SystemTime>,
         report: &mut VerificationReport,
     ) -> Result<VerificationOutput, VerificationError> {
@@ -106,7 +106,7 @@ impl BackupService {
             .context("Failed creating a temporary directory to download the backup in")
             .map_err(VerificationError::Other)?;
         let tmp_dir = Arc::new(tmp_dir);
-        let backup_path = tmp_dir.path().join(&backup_name);
+        let backup_path = tmp_dir.path().join(&backup_id);
 
         let mut backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.
@@ -129,7 +129,7 @@ impl BackupService {
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
         // unnecessary network calls (potentially billed) and computation.
-        let mut backup_reader = match self.backup_store.reader(&backup_name).await {
+        let mut backup_reader = match self.backup_store.reader(&backup_id).await {
             Ok(reader) => reader,
             Err(ReadObjectError::ObjectNotFound(err)) => {
                 return Err(VerificationError::BackupNotFound(err));
@@ -148,7 +148,7 @@ impl BackupService {
                 break 'pgp_sig;
             };
 
-            let check_name = backup_name.with_extension("sig");
+            let check_name = backup_id.with_extension("sig");
 
             let reader = self
                 .check_store
@@ -196,7 +196,7 @@ impl BackupService {
 
             // Read the backup to a temporary file.
             std::io::copy(&mut backup_reader, &mut backup_file)
-                .context(format!("Failed reading backup: `{backup_name}`"))
+                .context(format!("Failed reading backup: `{backup_id}`"))
                 .map_err(VerificationError::Other)?;
 
             // Verify the signature.
@@ -214,7 +214,7 @@ impl BackupService {
             report.signing_keys = pgp_report.signing_keys;
 
             self.backup_store
-                .cache(backup_name.to_string(), Arc::clone(&tmp_dir))
+                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
                 .await;
 
             // Don’t process any other integrity check.
@@ -233,7 +233,7 @@ impl BackupService {
             use composable_stream::TeeStream;
             use sha2::{Digest as _, Sha256};
 
-            let check_name = backup_name.with_extension("sha256");
+            let check_name = backup_id.with_extension("sha256");
 
             let reader = self
                 .check_store
@@ -280,7 +280,7 @@ impl BackupService {
             // SHA-256 hasher in parallel.
             let mut tee_writer = TeeStream::new(backup_file, verifier);
             std::io::copy(&mut backup_reader, &mut tee_writer)
-                .context(format!("Failed reading backup: `{backup_name}`"))
+                .context(format!("Failed reading backup: `{backup_id}`"))
                 .map_err(VerificationError::Other)?;
 
             let TeeStream {
@@ -301,7 +301,7 @@ impl BackupService {
             report.is_intact = true;
 
             self.backup_store
-                .cache(backup_name.to_string(), Arc::clone(&tmp_dir))
+                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
                 .await;
 
             // Don’t process any other integrity check.

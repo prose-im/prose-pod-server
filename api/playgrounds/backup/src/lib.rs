@@ -129,36 +129,36 @@ impl BackupService {
     #[inline]
     pub async fn get_details(
         &self,
-        backup_file_name: &BackupFileName,
+        backup_id: &BackupId,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
-        crate::read::get_details(self, backup_file_name).await
+        crate::read::get_details(self, backup_id).await
     }
 
     /// Get a short-lived URL to download a backup.
     #[inline]
     pub async fn get_download_url(
         &self,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
         ttl: std::time::Duration,
     ) -> Result<String, anyhow::Error> {
-        crate::read::get_download_url(self, backup_name, ttl).await
+        crate::read::get_download_url(self, backup_id, ttl).await
     }
 
     #[inline]
     pub async fn restore_backup(
         &self,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
         blueprint: &archiving::ArchiveBlueprint,
     ) -> Result<ExtractAndRestoreSuccess, restoration::RestorationError> {
-        crate::restore::restore_backup(self, backup_name, blueprint).await
+        crate::restore::restore_backup(self, backup_id, blueprint).await
     }
 
     #[inline]
     pub async fn extract_backup<'a>(
         &'a self,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
     ) -> Result<ExtractionSuccess<'a>, archiving::ExtractionError> {
-        crate::restore::extract_backup(self, backup_name).await
+        crate::restore::extract_backup(self, backup_id).await
     }
 
     #[inline]
@@ -171,8 +171,8 @@ impl BackupService {
     }
 
     #[inline]
-    pub async fn delete_backup(&self, backup_name: &BackupFileName) -> Result<(), anyhow::Error> {
-        crate::delete::delete_backup(self, backup_name).await
+    pub async fn delete_backup(&self, backup_id: &BackupId) -> Result<(), anyhow::Error> {
+        crate::delete::delete_backup(self, backup_id).await
     }
 }
 
@@ -309,14 +309,14 @@ pub mod dtos {
     //!
     //! [Data Transfer Objects]: https://en.wikipedia.org/wiki/Data_transfer_object "“Data transfer object” on Wikipedia"
 
-    use crate::{BackupFileName, verification::PgpSignatureReport};
+    use crate::{BackupId, verification::PgpSignatureReport};
 
     #[derive(Debug)]
     pub struct BackupDto<Metadata> {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-        pub id: BackupFileName,
+        pub id: BackupId,
 
         /// Description of the backup.
         ///
@@ -454,7 +454,7 @@ mod create {
     use crate::signing::pgp::pgp_sign;
     use crate::stats::{WriteStats, meter_writes};
     use crate::stores::ObjectStore as _;
-    use crate::{BackupFileName, BackupName, BackupService};
+    use crate::{BackupId, BackupName, BackupService};
 
     pub(crate) async fn create_backup(
         service: &BackupService,
@@ -477,7 +477,7 @@ mod create {
 
         let backup_name = BackupName::new(prefix, description, &created_at);
 
-        let backup_file_name = match service.encryption_context {
+        let backup_id = match service.encryption_context {
             Some(encryption::EncryptionContext::Pgp { .. }) => {
                 backup_name.with_extension("tar.zst.pgp")
             }
@@ -487,7 +487,7 @@ mod create {
         // Try to open sink first, to abort early if something is wrong.
         let upload_backup = service
             .backup_store
-            .writer(&backup_file_name)
+            .writer(&backup_id)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
@@ -512,20 +512,20 @@ mod create {
 
         let (backup_upload, backup_stats) = backup_upload?;
 
-        let mut digest_ids: Vec<BackupFileName> = Vec::new();
-        let mut checks_upload_durations: Vec<(BackupFileName, std::time::Duration)> = Vec::new();
+        let mut digest_ids: Vec<BackupId> = Vec::new();
+        let mut checks_upload_durations: Vec<(BackupId, std::time::Duration)> = Vec::new();
 
         // Upload SHA-256 digest.
         upload_integrity_check(
             digest?,
-            backup_file_name.with_extension("sha256"),
+            backup_id.with_extension("sha256"),
             &service,
             &mut checks_upload_durations,
             &mut digest_ids,
         )
         .await?;
 
-        let mut signature_ids: Vec<BackupFileName> = Vec::new();
+        let mut signature_ids: Vec<BackupId> = Vec::new();
 
         let is_signed = pgp_signature.is_some();
 
@@ -536,7 +536,7 @@ mod create {
                 // NOTE: OpenPGP will likely forever be the only signing protocol
                 //   we support, but if we ever add one that also uses the `.sig`
                 //   extension we can just use `.<protocol>.sig` for it.
-                backup_file_name.with_extension("sig"),
+                backup_id.with_extension("sig"),
                 &service,
                 &mut checks_upload_durations,
                 &mut signature_ids,
@@ -551,12 +551,12 @@ mod create {
         let backup_upload_duration = SystemTime::now().duration_since(start).unwrap_or_default();
 
         let size_bytes = backup_stats.bytes_written;
-        tracing::info!("Created backup {backup_file_name:?} ({size_bytes}B).");
+        tracing::info!("Created backup {backup_id:?} ({size_bytes}B).");
 
         // Construct the response.
         Ok(CreateBackupSuccess {
             backup: BackupDto {
-                id: backup_file_name.clone(),
+                id: backup_id.clone(),
                 description: description.to_owned(),
                 metadata: BackupMetadataPartialDto {
                     created_at: created_at.into(),
@@ -567,7 +567,7 @@ mod create {
                 },
             },
             output: CreateBackupOutput {
-                backup_id: backup_file_name,
+                backup_id,
                 digest_ids,
                 signature_ids,
             },
@@ -580,10 +580,10 @@ mod create {
 
     async fn upload_integrity_check(
         data: Vec<u8>,
-        key: BackupFileName,
+        check_id: BackupId,
         service: &BackupService,
-        checks_upload_durations: &mut Vec<(BackupFileName, std::time::Duration)>,
-        uploaded: &mut Vec<BackupFileName>,
+        checks_upload_durations: &mut Vec<(BackupId, std::time::Duration)>,
+        uploaded: &mut Vec<BackupId>,
     ) -> Result<(), CreateBackupError> {
         use std::time::SystemTime;
 
@@ -591,7 +591,7 @@ mod create {
 
         let mut uploader = service
             .check_store
-            .writer(&key)
+            .writer(&check_id)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
@@ -606,10 +606,10 @@ mod create {
             .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
         checks_upload_durations.push((
-            key.clone(),
+            check_id.clone(),
             SystemTime::now().duration_since(start).unwrap(),
         ));
-        uploaded.push(key);
+        uploaded.push(check_id);
 
         Ok(())
     }
@@ -669,24 +669,24 @@ mod create {
         /// Unique identifier (file name / object key) of the backup.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-        pub backup_id: BackupFileName,
+        pub backup_id: BackupId,
 
         /// Unique identifiers (file names / object keys) of backup digests
         /// (cryptographic checksums).
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
-        pub digest_ids: Vec<BackupFileName>,
+        pub digest_ids: Vec<BackupId>,
 
         /// Unique identifiers (file names / object keys) of backup signatures.
         ///
         /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sig`.
-        pub signature_ids: Vec<BackupFileName>,
+        pub signature_ids: Vec<BackupId>,
     }
 
     #[derive(Debug)]
     pub struct CreateBackupStats {
         pub backup_upload_duration: std::time::Duration,
-        pub checks_upload_durations: Vec<(BackupFileName, std::time::Duration)>,
+        pub checks_upload_durations: Vec<(BackupId, std::time::Duration)>,
     }
 
     #[derive(Debug)]
@@ -742,7 +742,7 @@ mod create {
 mod read {
     use crate::dtos::*;
     use crate::stores::ObjectStore as _;
-    use crate::{BackupFileName, BackupFileNameComponents, BackupService};
+    use crate::{BackupFileNameComponents, BackupId, BackupService};
 
     pub(crate) async fn list_backups(
         service: &BackupService,
@@ -791,7 +791,7 @@ mod read {
 
             let can_be_restored = (!signing_is_mandatory) || is_signed;
 
-            let backup_file_name = match BackupFileName::from_str(&backup_file_name) {
+            let backup_id = match BackupId::from_str(&backup_file_name) {
                 Ok(name) => name,
                 Err(err) => {
                     tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
@@ -803,10 +803,10 @@ mod read {
                 created_at,
                 description,
                 ..
-            } = match BackupFileNameComponents::parse(&backup_file_name) {
+            } = match BackupFileNameComponents::parse(&backup_id) {
                 Ok(components) => components,
                 Err(err) => {
-                    tracing::warn!("Skipping `{backup_file_name}`: {err:?}");
+                    tracing::warn!("Skipping `{backup_id}`: {err:?}");
                     continue;
                 }
             };
@@ -820,7 +820,7 @@ mod read {
                     can_be_restored,
                 },
                 description: description.into_owned(),
-                id: backup_file_name,
+                id: backup_id,
             });
         }
 
@@ -829,18 +829,18 @@ mod read {
 
     pub(crate) async fn get_details(
         service: &BackupService,
-        backup_file_name: &BackupFileName,
+        backup_id: &BackupId,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
         use crate::archiving::{ExtractionStats, extract};
         use crate::decryption::DecryptionReport;
         use crate::verification::VerificationReport;
 
-        let parsed_backup_name = BackupFileNameComponents::parse(&backup_file_name)?;
+        let parsed_backup_name = BackupFileNameComponents::parse(&backup_id)?;
 
         let mut verification_report = VerificationReport::default();
         let verification_result = service
             .download_backup_and_check_integrity(
-                &backup_file_name,
+                &backup_id,
                 parsed_backup_name.created_at,
                 &mut verification_report,
             )
@@ -878,11 +878,11 @@ mod read {
             }
         }
 
-        let metadata = service.backup_store.metadata(&backup_file_name).await?;
+        let metadata = service.backup_store.metadata(&backup_id).await?;
 
         let is_signed = verification_report.is_signed;
         let is_intact = verification_report.is_intact;
-        let is_encrypted: bool = backup_file_name.ends_with(".pgp");
+        let is_encrypted: bool = backup_id.ends_with(".pgp");
 
         let dto = BackupDto {
             metadata: BackupMetadataFullDto {
@@ -903,7 +903,7 @@ mod read {
                 is_encryption_valid,
             },
             description: parsed_backup_name.description.into_owned(),
-            id: backup_file_name.to_owned(),
+            id: backup_id.to_owned(),
         };
 
         Ok(dto)
@@ -911,7 +911,7 @@ mod read {
 
     pub(crate) async fn get_download_url(
         service: &BackupService,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
         ttl: std::time::Duration,
     ) -> Result<String, anyhow::Error> {
         // Apply max TTL from configuration.
@@ -920,7 +920,7 @@ mod read {
             service.download_config.url_max_ttl,
         );
 
-        service.backup_store.download_url(&backup_name, &ttl).await
+        service.backup_store.download_url(&backup_id, &ttl).await
     }
 }
 
@@ -929,7 +929,7 @@ mod restore {
     use crate::decryption::*;
     use crate::restoration::*;
     use crate::verification::*;
-    use crate::{BackupFileName, BackupFileNameComponents, BackupService};
+    use crate::{BackupFileNameComponents, BackupId, BackupService};
 
     #[derive(Debug)]
     pub struct ExtractionSuccess<'a> {
@@ -948,7 +948,7 @@ mod restore {
 
     pub(crate) async fn restore_backup(
         service: &BackupService,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
         blueprint: &ArchiveBlueprint,
     ) -> Result<ExtractAndRestoreSuccess, RestorationError> {
         let ExtractionSuccess {
@@ -956,7 +956,7 @@ mod restore {
             decryption_report,
             extraction_output,
             extraction_stats,
-        } = service.extract_backup(backup_name).await?;
+        } = service.extract_backup(backup_id).await?;
 
         let restoration_output = service
             .restore_extracted_backup(extraction_output, blueprint)
@@ -972,16 +972,16 @@ mod restore {
 
     pub(crate) async fn extract_backup<'a>(
         service: &'a BackupService,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
     ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
         // Parse backup name first.
         // Avoids unnecessary I/O if malformed.
         let parsed_backup_name @ BackupFileNameComponents { created_at, .. } =
-            BackupFileNameComponents::parse(&backup_name)?;
+            BackupFileNameComponents::parse(&backup_id)?;
 
         let mut verification_report = VerificationReport::default();
         let verification_output = service
-            .download_backup_and_check_integrity(&backup_name, created_at, &mut verification_report)
+            .download_backup_and_check_integrity(&backup_id, created_at, &mut verification_report)
             .await?;
 
         let mut decryption_report = DecryptionReport::default();
@@ -1017,24 +1017,24 @@ mod restore {
 
 mod delete {
     use crate::stores::{BulkDeleteOutput, ObjectStore as _};
-    use crate::{BackupFileName, BackupService};
+    use crate::{BackupId, BackupService};
 
     // NOTE: If using Object Lock, this method exits successfully and
     //   backups / integrity checks remain stored until locks are removed.
     pub(crate) async fn delete_backup(
         service: &BackupService,
-        backup_name: &BackupFileName,
+        backup_id: &BackupId,
     ) -> Result<(), anyhow::Error> {
         // Delete the backup object.
-        let deleted_state = service.backup_store.delete(&backup_name).await?;
+        let deleted_state = service.backup_store.delete(&backup_id).await?;
         match deleted_state {
             crate::stores::DeletedState::Deleted => {}
             crate::stores::DeletedState::MarkedForDeletion => tracing::warn!(
-                "Backup `{backup_name}` not deleted, but marked for deletion \
+                "Backup `{backup_id}` not deleted, but marked for deletion \
                 once object locks are removed."
             ),
         }
-        tracing::info!("Object `{backup_name}` deleted.");
+        tracing::info!("Object `{backup_id}` deleted.");
 
         // Delete all associated integrity checks.
         {
@@ -1042,7 +1042,7 @@ mod delete {
                 deleted,
                 marked_for_deletion,
                 errors,
-            } = service.check_store.delete_all(&backup_name).await?;
+            } = service.check_store.delete_all(&backup_id).await?;
 
             // Log successes.
             for key in deleted {
@@ -1190,13 +1190,11 @@ fn urlencode_file_name_component(str: &str) -> String {
 }
 
 impl BackupName {
-    pub fn with_extension(&self, extension: &'static str) -> BackupFileName {
+    pub fn with_extension(&self, extension: &'static str) -> BackupId {
         debug_assert!(!extension.starts_with('.'));
 
-        let suffix_start_idx = self.0.len();
-        BackupFileName {
+        BackupId {
             value: format!("{self}.{extension}"),
-            suffix_start_idx,
         }
     }
 }
@@ -1213,101 +1211,67 @@ impl std::fmt::Display for BackupName {
     }
 }
 
-/// Name of a backup file (base name with extensions).
+/// Unique identifier of the backup.
 ///
 /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
 #[derive(Clone)]
-pub struct BackupFileName {
+pub struct BackupId {
     value: String,
-
-    /// Index of the dot before the file extention.
-    suffix_start_idx: usize,
 }
 
-impl std::fmt::Debug for BackupFileName {
+impl std::fmt::Debug for BackupId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.value, f)
     }
 }
 
-impl std::fmt::Display for BackupFileName {
+impl std::fmt::Display for BackupId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.value, f)
     }
 }
 
-impl AsRef<std::path::Path> for BackupFileName {
+impl AsRef<std::path::Path> for BackupId {
     #[inline]
     fn as_ref(&self) -> &std::path::Path {
         self.value.as_ref()
     }
 }
 
-impl std::cmp::PartialEq for BackupFileName {
+impl std::cmp::PartialEq for BackupId {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum BackupFileNameError {
-    #[error("Backup file name has no extension.")]
-    NoExtension,
-}
+impl std::str::FromStr for BackupId {
+    type Err = std::convert::Infallible;
 
-impl std::str::FromStr for BackupFileName {
-    type Err = BackupFileNameError;
-
+    #[inline]
     fn from_str(file_name: &str) -> Result<Self, Self::Err> {
-        match file_name.find('.') {
-            Some(suffix_start_idx) => Ok(Self {
-                value: file_name.to_owned(),
-                suffix_start_idx,
-            }),
-            None => Err(BackupFileNameError::NoExtension),
-        }
+        Ok(Self {
+            value: file_name.to_owned(),
+        })
     }
 }
 
-impl BackupFileName {
+impl BackupId {
+    #[inline]
     pub fn try_from(str: impl AsRef<str>) -> Result<Self, <Self as std::str::FromStr>::Err> {
         std::str::FromStr::from_str(str.as_ref())
     }
 
-    /// Get the file base name.
+    /// Push a new extension to the backup ID (keeps existing ones).
     ///
     /// ```
-    /// # use prose_backup::BackupFileName;
+    /// # use prose_backup::BackupId;
     /// # use std::str::FromStr as _;
-    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
-    /// assert_eq!(file_name.basename(), "test");
-    /// ```
-    pub fn basename(&self) -> &str {
-        &self.value[..self.suffix_start_idx]
-    }
-
-    /// Get the extensions of the file name (no leading `.`).
-    ///
-    /// ```
-    /// # use prose_backup::BackupFileName;
-    /// # use std::str::FromStr as _;
-    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
-    /// assert_eq!(file_name.extension(), "foo.bar");
-    /// ```
-    pub fn extension(&self) -> &str {
-        &self.value[(self.suffix_start_idx + 1)..]
-    }
-
-    /// Push a new extension to the file name (keeps existing ones).
-    ///
-    /// ```
-    /// # use prose_backup::BackupFileName;
-    /// # use std::str::FromStr as _;
-    /// let file_name = BackupFileName::from_str("test.foo.bar").unwrap();
-    /// let other_file_name = file_name.with_extension("baz");
-    /// assert_eq!(other_file_name.extension(), "foo.bar.baz");
+    /// let backup_id = BackupId::from_str("test.foo.bar").unwrap();
+    /// let other_backup_id = backup_id.with_extension("baz");
+    /// assert_eq!(other_backup_id.as_str(), "test.foo.bar.baz");
     /// ```
     pub fn with_extension(&self, extension: &'static str) -> Self {
         debug_assert!(!extension.starts_with('.'));
@@ -1315,27 +1279,36 @@ impl BackupFileName {
 
         Self {
             value: format!("{self}.{extension}", self = self.value),
-            suffix_start_idx: self.suffix_start_idx,
         }
     }
 }
 
-impl std::ops::Deref for BackupFileName {
+impl std::ops::Deref for BackupId {
     type Target = str;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         self.value.as_str()
     }
 }
 
-impl AsRef<String> for BackupFileName {
+impl AsRef<String> for BackupId {
+    #[inline]
     fn as_ref(&self) -> &String {
         &self.value
     }
 }
 
-impl AsRef<str> for BackupFileName {
+impl AsRef<str> for BackupId {
+    #[inline]
     fn as_ref(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl BackupId {
+    #[inline]
+    pub fn as_str(&self) -> &str {
         self.value.as_str()
     }
 }
