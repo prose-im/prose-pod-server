@@ -13,7 +13,7 @@ use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
     ExtractAndRestoreSuccess, archiving,
     config::{S3ObjectLockConfig, StorageS3Config},
-    stores::{ObjectStore, S3Store},
+    stores::{ObjectId, ObjectStore, S3Store},
 };
 use toml::toml;
 
@@ -122,7 +122,7 @@ async fn s3_basic() -> Result<(), anyhow::Error> {
     context.cleanup_functions.push({
         let backup_store = backup_store.clone();
         let check_store = check_store.clone();
-        let created_backup_id = created_backup_id.clone();
+        let created_backup_id = ObjectId::from(&created_backup_id);
 
         Box::pin(async move {
             (backup_store.delete(&created_backup_id))
@@ -268,7 +268,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     context.cleanup_functions.push({
         let backup_store = backup_store.clone();
         let check_store = check_store.clone();
-        let created_backup_id = created_backup_id.clone();
+        let created_backup_id = ObjectId::from(&created_backup_id);
 
         Box::pin(async move {
             (backup_store.delete(&created_backup_id))

@@ -34,11 +34,9 @@ pub mod stores;
 mod util;
 pub mod verification;
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Context as _;
 pub use openpgp;
 pub use tokio;
 pub use toml;
@@ -444,13 +442,12 @@ pub mod dtos {
 }
 
 mod create {
-    use std::borrow::Cow;
-
     use anyhow::Context as _;
     use composable_stream::*;
 
     use crate::BackupService;
     use crate::archiving::{self, *};
+    use crate::backup_id::*;
     use crate::compression::*;
     use crate::dtos::*;
     use crate::encryption::*;
@@ -458,7 +455,6 @@ mod create {
     use crate::signing::pgp::*;
     use crate::stats::*;
     use crate::stores::*;
-    use crate::{BackupIdComponents, backup_id::*};
 
     pub(crate) async fn create_backup(
         service: &BackupService,
@@ -484,17 +480,18 @@ mod create {
             None => "tar.zst",
         };
 
-        let backup_id = BackupId::from(BackupIdComponents {
-            prefix: Cow::Borrowed(prefix),
+        let backup_id = BackupId {
+            prefix: Box::from(prefix),
             created_at: created_at.into(),
-            description: Cow::Borrowed(description),
-            extensions,
-        });
+            description: Box::from(description),
+            extensions: Box::from(extensions),
+        };
+        let raw_backup_id = ObjectId::from(&backup_id);
 
         // Try to open sink first, to abort early if something is wrong.
         let upload_backup = service
             .backup_store
-            .writer(&backup_id)
+            .writer(&raw_backup_id)
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
@@ -525,7 +522,7 @@ mod create {
         // Upload SHA-256 digest.
         upload_integrity_check(
             digest?,
-            backup_id.with_extension("sha256"),
+            raw_backup_id.with_extension("sha256"),
             &service,
             &mut checks_upload_durations,
             &mut digest_ids,
@@ -543,7 +540,7 @@ mod create {
                 // NOTE: OpenPGP will likely forever be the only signing protocol
                 //   we support, but if we ever add one that also uses the `.sig`
                 //   extension we can just use `.<protocol>.sig` for it.
-                backup_id.with_extension("sig"),
+                raw_backup_id.with_extension("sig"),
                 &service,
                 &mut checks_upload_durations,
                 &mut signature_ids,
@@ -747,10 +744,11 @@ mod create {
 }
 
 mod read {
+    use crate::BackupService;
     use crate::backup_id::*;
     use crate::dtos::*;
+    use crate::stores::ObjectId;
     use crate::stores::ObjectStore as _;
-    use crate::{BackupIdComponents, BackupService};
 
     pub(crate) async fn list_backups(
         service: &BackupService,
@@ -807,27 +805,15 @@ mod read {
                 }
             };
 
-            let BackupIdComponents {
-                created_at,
-                description,
-                ..
-            } = match BackupIdComponents::parse(&backup_id) {
-                Ok(components) => components,
-                Err(err) => {
-                    tracing::warn!("Skipping `{backup_id}`: {err:?}");
-                    continue;
-                }
-            };
-
             dtos.push(BackupDto {
                 metadata: BackupMetadataPartialDto {
-                    created_at,
+                    created_at: backup_id.created_at,
                     size_bytes: backup.size_bytes,
                     is_signed,
                     is_encrypted,
                     can_be_restored,
                 },
-                description: description.into_owned(),
+                description: backup_id.description.to_string(),
                 id: backup_id,
             });
         }
@@ -843,13 +829,11 @@ mod read {
         use crate::decryption::DecryptionReport;
         use crate::verification::VerificationReport;
 
-        let parsed_backup_id = BackupIdComponents::parse(&backup_id)?;
-
         let mut verification_report = VerificationReport::default();
         let verification_result = service
             .download_backup_and_check_integrity(
                 &backup_id,
-                parsed_backup_id.created_at,
+                backup_id.created_at,
                 &mut verification_report,
             )
             .await;
@@ -862,7 +846,7 @@ mod read {
             Ok(verification_output) => {
                 let extraction_result = extract(
                     &verification_output,
-                    &parsed_backup_id,
+                    &backup_id,
                     &service.archiving_context.blueprints,
                     &service.decryption_context,
                     &mut decryption_report,
@@ -886,15 +870,18 @@ mod read {
             }
         }
 
-        let metadata = service.backup_store.metadata(&backup_id).await?;
+        let metadata = service
+            .backup_store
+            .metadata(&ObjectId::from(backup_id))
+            .await?;
 
         let is_signed = verification_report.is_signed;
         let is_intact = verification_report.is_intact;
-        let is_encrypted: bool = backup_id.ends_with(".pgp");
+        let is_encrypted: bool = backup_id.extensions.as_ref() == "pgp";
 
         let dto = BackupDto {
             metadata: BackupMetadataFullDto {
-                created_at: parsed_backup_id.created_at,
+                created_at: backup_id.created_at,
                 size_bytes: metadata.size_bytes,
                 is_signed,
                 is_encrypted,
@@ -910,7 +897,7 @@ mod read {
                     .map(|(cert_fingerprint, _)| cert_fingerprint.to_spaced_hex()),
                 is_encryption_valid,
             },
-            description: parsed_backup_id.description.into_owned(),
+            description: backup_id.description.to_string(),
             id: backup_id.to_owned(),
         };
 
@@ -928,17 +915,20 @@ mod read {
             service.download_config.url_max_ttl,
         );
 
-        service.backup_store.download_url(&backup_id, &ttl).await
+        service
+            .backup_store
+            .download_url(&ObjectId::from(backup_id), &ttl)
+            .await
     }
 }
 
 mod restore {
+    use crate::BackupService;
     use crate::archiving::*;
     use crate::backup_id::*;
     use crate::decryption::*;
     use crate::restoration::*;
     use crate::verification::*;
-    use crate::{BackupIdComponents, BackupService};
 
     #[derive(Debug)]
     pub struct ExtractionSuccess<'a> {
@@ -983,21 +973,20 @@ mod restore {
         service: &'a BackupService,
         backup_id: &BackupId,
     ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
-        // Parse backup name first.
-        // Avoids unnecessary I/O if malformed.
-        let parsed_backup_id @ BackupIdComponents { created_at, .. } =
-            BackupIdComponents::parse(&backup_id)?;
-
         let mut verification_report = VerificationReport::default();
         let verification_output = service
-            .download_backup_and_check_integrity(&backup_id, created_at, &mut verification_report)
+            .download_backup_and_check_integrity(
+                &backup_id,
+                backup_id.created_at,
+                &mut verification_report,
+            )
             .await?;
 
         let mut decryption_report = DecryptionReport::default();
         let mut extraction_stats = ExtractionStats::default();
         let extraction_output = extract(
             &verification_output,
-            &parsed_backup_id,
+            &backup_id,
             &service.archiving_context.blueprints,
             &service.decryption_context,
             &mut decryption_report,
@@ -1035,6 +1024,8 @@ mod delete {
         service: &BackupService,
         backup_id: &BackupId,
     ) -> Result<(), anyhow::Error> {
+        let backup_id = ObjectId::from(backup_id);
+
         // Delete the backup object.
         let deleted_state = service.backup_store.delete(&backup_id).await?;
         match deleted_state {
@@ -1077,206 +1068,183 @@ mod delete {
     }
 }
 
-// MARK: File name serialization and deserialization
-
-#[derive(Debug)]
-#[cfg_attr(feature = "test", derive(PartialEq, Eq))]
-pub(crate) struct BackupIdComponents<'a> {
-    pub prefix: Cow<'a, str>,
-
-    pub created_at: time::UtcDateTime,
-
-    pub description: Cow<'a, str>,
-
-    pub extensions: &'a str,
-}
-
-impl<'a> BackupIdComponents<'a> {
-    fn parse(file_name: &'a str) -> Result<Self, anyhow::Error> {
-        let Some((prefix, rest)) = file_name.split_once('-') else {
-            anyhow::bail!("File `{file_name}` has no prefix.");
-        };
-
-        let Some((timestamp_str, rest)) = rest.split_once('-') else {
-            anyhow::bail!("File `{file_name}` is missing the timestamp prefix.");
-        };
-
-        let secs: i64 = timestamp_str
-            .parse()
-            .with_context(|| format!("Could not read integer from `{timestamp_str}`"))?;
-
-        let created_at = time::UtcDateTime::from_unix_timestamp(secs)
-            .context("Could not parse timestamp from file name")?;
-
-        let Some((description, extensions)) = rest.split_once('.') else {
-            anyhow::bail!("File `{file_name}` has no extension.");
-        };
-
-        // “URL decode” components.
-        let prefix = urlencoding::decode(prefix)
-            .with_context(|| format!("Backup prefix `{prefix}` contains invalid UTF-8"))?;
-        let description = urlencoding::decode(description).with_context(|| {
-            format!("Backup description `{description}` contains invalid UTF-8")
-        })?;
-
-        Ok(BackupIdComponents {
-            prefix,
-            created_at,
-            description,
-            extensions,
-        })
-    }
-}
-
-impl<'a> std::fmt::Display for BackupIdComponents<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            prefix,
-            created_at,
-            description,
-            extensions,
-        } = self;
-
-        // Arbitrary safety limits.
-        assert!(prefix.len() <= 256);
-        assert!(description.len() <= 256);
-        // NOTE: Provide default values instead of passing empty strings.
-        assert!(!prefix.is_empty());
-        assert!(!description.is_empty());
-
-        // “URL encode” components to get rid of spaces, emojis, etc.
-        let prefix = urlencode_file_name_component(&prefix);
-        let description = urlencode_file_name_component(&description);
-
-        // Unix timestamp with second precision as 10 chars covers 2001-09-09
-        // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
-        // For correctness, we’ll still format the number as 10 digits with
-        // leading zeros (even if not necessary).
-        let created_at = created_at.unix_timestamp();
-        assert!(created_at <= 9_999_999_999);
-        debug_assert!(created_at > 999_999_999);
-
-        write!(f, "{prefix}-{created_at:010}-{description}.{extensions}")
-    }
-}
-
-#[allow(clippy::let_and_return)]
-fn urlencode_file_name_component(str: &str) -> String {
-    let res = urlencoding::encode(str);
-
-    // Also percent-encode `-` to prevent incorrect splitting.
-    #[cfg(feature = "test")]
-    assert_eq!(
-        urlencoding::decode("test%2Dext"),
-        Ok(Cow::Borrowed("test-ext"))
-    );
-    let res = res.replace("-", "%2D");
-
-    // Also percent-encode `.` to prevent incorrect file extension parsing.
-    // WARN: Also prevents path traversal attacks. We should not be subject
-    //   to it given that backup IDs are object storage keys but better be safe
-    //   than sorry.
-    #[cfg(feature = "test")]
-    assert_eq!(
-        urlencoding::decode("test%2Eext"),
-        Ok(Cow::Borrowed("test.ext"))
-    );
-    let res = res.replace(".", "%2E");
-
-    // Also percent-encode `/` to prevent incorrect parsing of HTTP
-    // requests when a backup ID is used in the path.
-    #[cfg(feature = "test")]
-    debug_assert_eq!(
-        urlencoding::decode("test%2Ffoo"),
-        Ok(Cow::Borrowed("test/foo"))
-    );
-    let res = res.replace("/", "%2F");
-
-    res
-}
-
 mod backup_id {
-    use crate::{BackupIdComponents, stores::ObjectId};
+    //! Backup ID serialization and deserialization.
+
+    use anyhow::Context as _;
 
     /// Unique identifier of the backup.
     ///
     /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`.
-    #[derive(Clone, PartialEq, Eq)]
-    #[repr(transparent)]
-    pub struct BackupId(ObjectId);
+    #[derive(Clone)]
+    pub struct BackupId {
+        pub prefix: Box<str>,
 
-    impl<'a> From<BackupIdComponents<'a>> for BackupId {
-        fn from(components: BackupIdComponents<'a>) -> Self {
-            Self(ObjectId::from(components))
-        }
+        pub created_at: time::UtcDateTime,
+
+        pub description: Box<str>,
+
+        pub extensions: Box<str>,
     }
 
-    impl std::ops::Deref for BackupId {
-        type Target = ObjectId;
+    impl BackupId {
+        fn parse(str: &str) -> Result<Self, anyhow::Error> {
+            let Some((prefix, rest)) = str.split_once('-') else {
+                anyhow::bail!("File `{str}` has no prefix.");
+            };
 
-        #[inline]
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
+            let Some((timestamp_str, rest)) = rest.split_once('-') else {
+                anyhow::bail!("File `{str}` is missing the timestamp prefix.");
+            };
 
-    impl AsRef<str> for BackupId {
-        #[inline]
-        fn as_ref(&self) -> &str {
-            self.0.as_ref()
-        }
-    }
+            let secs: i64 = timestamp_str
+                .parse()
+                .with_context(|| format!("Could not read integer from `{timestamp_str}`"))?;
 
-    impl AsRef<std::path::Path> for BackupId {
-        #[inline]
-        fn as_ref(&self) -> &std::path::Path {
-            self.0.as_ref()
-        }
-    }
+            let created_at = time::UtcDateTime::from_unix_timestamp(secs)
+                .context("Could not parse timestamp from file name")?;
 
-    impl std::fmt::Debug for BackupId {
-        #[inline]
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Debug::fmt(&self.0, f)
+            let Some((description, extensions)) = rest.split_once('.') else {
+                anyhow::bail!("File `{str}` has no extension.");
+            };
+
+            // “URL decode” components.
+            let prefix = urlencoding::decode(prefix)
+                .with_context(|| format!("Backup prefix `{prefix}` contains invalid UTF-8"))?;
+            let description = urlencoding::decode(description).with_context(|| {
+                format!("Backup description `{description}` contains invalid UTF-8")
+            })?;
+
+            Ok(BackupId {
+                prefix: Box::from(prefix),
+                created_at,
+                description: Box::from(description),
+                extensions: Box::from(extensions),
+            })
         }
     }
 
     impl std::fmt::Display for BackupId {
-        #[inline]
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            std::fmt::Display::fmt(&self.0, f)
+            let Self {
+                prefix,
+                created_at,
+                description,
+                extensions,
+            } = self;
+
+            // Arbitrary safety limits.
+            assert!(prefix.len() <= 256);
+            assert!(description.len() <= 256);
+            // NOTE: Provide default values instead of passing empty strings.
+            assert!(!prefix.is_empty());
+            assert!(!description.is_empty());
+
+            // “URL encode” components to get rid of spaces, emojis, etc.
+            let prefix = urlencode_component(&prefix);
+            let description = urlencode_component(&description);
+
+            // Unix timestamp with second precision as 10 chars covers 2001-09-09
+            // to 2286-11-20 (<2001-09-09 needs 9 chars, >2286-11-20 needs 11).
+            // For correctness, we’ll still format the number as 10 digits with
+            // leading zeros (even if not necessary).
+            let created_at = created_at.unix_timestamp();
+            assert!(created_at <= 9_999_999_999);
+            debug_assert!(created_at > 999_999_999);
+
+            write!(f, "{prefix}-{created_at:010}-{description}.{extensions}")
         }
+    }
+
+    impl std::fmt::Debug for BackupId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Debug::fmt(&self.to_string(), f)
+        }
+    }
+
+    #[cfg(feature = "test")]
+    impl PartialEq for BackupId {
+        fn eq(&self, other: &Self) -> bool {
+            let Self {
+                prefix,
+                created_at,
+                description,
+                extensions,
+            } = self;
+
+            created_at.unix_timestamp() == other.created_at.unix_timestamp()
+                && *description == other.description
+                && *extensions == other.extensions
+                && *prefix == other.prefix
+        }
+    }
+
+    #[allow(clippy::let_and_return)]
+    fn urlencode_component(str: &str) -> String {
+        #[cfg(feature = "test")]
+        use std::borrow::Cow;
+
+        let res = urlencoding::encode(str);
+
+        // Also percent-encode `-` to prevent incorrect splitting.
+        #[cfg(feature = "test")]
+        assert_eq!(
+            urlencoding::decode("test%2Dext"),
+            Ok(Cow::Borrowed("test-ext"))
+        );
+        let res = res.replace("-", "%2D");
+
+        // Also percent-encode `.` to prevent incorrect file extension parsing.
+        // WARN: Also prevents path traversal attacks. We should not be subject
+        //   to it given that backup IDs are object storage keys but better be safe
+        //   than sorry.
+        #[cfg(feature = "test")]
+        assert_eq!(
+            urlencoding::decode("test%2Eext"),
+            Ok(Cow::Borrowed("test.ext"))
+        );
+        let res = res.replace(".", "%2E");
+
+        // Also percent-encode `/` to prevent incorrect parsing of HTTP
+        // requests when a backup ID is used in the path.
+        #[cfg(feature = "test")]
+        debug_assert_eq!(
+            urlencoding::decode("test%2Ffoo"),
+            Ok(Cow::Borrowed("test/foo"))
+        );
+        let res = res.replace("/", "%2F");
+
+        res
     }
 
     impl std::str::FromStr for BackupId {
-        type Err = <ObjectId as std::str::FromStr>::Err;
+        type Err = anyhow::Error;
 
         #[inline]
         fn from_str(str: &str) -> Result<Self, Self::Err> {
-            ObjectId::from_str(str).map(Self)
+            Self::parse(str)
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_backup_id_components_parsing() -> Result<(), anyhow::Error> {
-        use crate::BackupIdComponents;
-        use std::borrow::Cow;
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn test_backup_id_components_parsing() -> Result<(), anyhow::Error> {
+            use crate::BackupId;
 
-        let components =
-            BackupIdComponents::parse("prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp")?;
-        assert_eq!(
-            components,
-            BackupIdComponents {
-                prefix: Cow::Borrowed("prose-backup"),
-                created_at: time::UtcDateTime::UNIX_EPOCH + time::Duration::seconds(1772432392),
-                description: Cow::Borrowed("Automatic backup"),
-                extensions: "tar.zst.pgp",
-            }
-        );
+            let components =
+                BackupId::parse("prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp")?;
+            assert_eq!(
+                components,
+                BackupId {
+                    prefix: Box::from("prose-backup"),
+                    created_at: time::UtcDateTime::UNIX_EPOCH + time::Duration::seconds(1772432392),
+                    description: Box::from("Automatic backup"),
+                    extensions: Box::from("tar.zst.pgp"),
+                }
+            );
 
-        Ok(())
+            Ok(())
+        }
     }
 }

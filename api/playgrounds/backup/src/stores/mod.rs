@@ -84,8 +84,8 @@ pub trait ObjectStore: Send + Sync {
 #[repr(transparent)]
 pub struct ObjectId(String);
 
-impl<'a> From<crate::BackupIdComponents<'a>> for ObjectId {
-    fn from(components: crate::BackupIdComponents<'a>) -> Self {
+impl From<&crate::BackupId> for ObjectId {
+    fn from(components: &crate::BackupId) -> Self {
         Self(components.to_string())
     }
 }
@@ -94,11 +94,11 @@ impl ObjectId {
     /// Push a new extension to the backup ID (keeps existing ones).
     ///
     /// ```
-    /// # use prose_backup::BackupId;
+    /// # use prose_backup::stores::ObjectId;
     /// # use std::str::FromStr as _;
-    /// let backup_id = BackupId::from_str("test.foo.bar").unwrap();
-    /// let other_backup_id = backup_id.with_extension("baz");
-    /// assert_eq!(other_backup_id.as_str(), "test.foo.bar.baz");
+    /// let object_id = ObjectId::from("test.foo.bar");
+    /// let other_object_id = object_id.with_extension("baz");
+    /// assert_eq!(other_object_id.as_str(), "test.foo.bar.baz");
     /// ```
     pub fn with_extension(&self, extension: &'static str) -> Self {
         debug_assert!(!extension.starts_with('.'));
@@ -190,6 +190,20 @@ impl std::fmt::Display for ObjectId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl From<String> for ObjectId {
+    #[inline]
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl<'a> From<&'a str> for ObjectId {
+    #[inline]
+    fn from(str: &'a str) -> Self {
+        Self(str.to_owned())
     }
 }
 

@@ -9,7 +9,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::sync::Arc;
 
 use crate::BackupService;
-use crate::stores::{ObjectStore as _, ReadObjectError, ReadSizedObjectError};
+use crate::stores::{ObjectId, ObjectStore as _, ReadObjectError, ReadSizedObjectError};
 
 pub use self::VerificationContext as Context;
 
@@ -99,6 +99,8 @@ impl BackupService {
         use anyhow::{Context as _, anyhow};
         use std::io::Read as _;
 
+        let backup_id = ObjectId::from(backup_id);
+
         // Open local file paths.
         // If permissions are not sufficient, avoids unnecessary network
         // calls (potentially billed).
@@ -106,7 +108,7 @@ impl BackupService {
             .context("Failed creating a temporary directory to download the backup in")
             .map_err(VerificationError::Other)?;
         let tmp_dir = Arc::new(tmp_dir);
-        let backup_path = tmp_dir.path().join(backup_id);
+        let backup_path = tmp_dir.path().join(&backup_id);
 
         let mut backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.
