@@ -21,10 +21,7 @@ pub(crate) enum DigestWriter<W> {
 
 pub(crate) fn digest<W>(
     hashing_config: &HashingConfig,
-) -> ComposableStreamBuilder<
-    impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>,
-    impl FnOnce(DigestWriter<W>) -> Result<W, CreateBackupError>,
->
+) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>>
 where
     W: Write + Send + Sync,
 {
@@ -36,10 +33,6 @@ where
             config::HashingAlgorithm::Sha256 => {
                 Ok(DigestWriter::Sha256(Sha256DigestWriter::new(writer)))
             }
-        },
-
-        finalize: move |writer: DigestWriter<W>| {
-            writer.finalize().map_err(CreateBackupError::HashingFailed)
         },
     }
 }

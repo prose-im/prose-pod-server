@@ -75,10 +75,7 @@ pub mod pgp {
     pub(crate) fn pgp_sign<W>(
         context: &PgpSigningContext,
         time: SystemTime,
-    ) -> ComposableStreamBuilder<
-        impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>,
-        impl FnOnce(PgpSigner<W>) -> Result<W, CreateBackupError>,
-    >
+    ) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<PgpSigner<W>, CreateBackupError>>
     where
         W: Write + Send + Sync,
     {
@@ -87,10 +84,6 @@ pub mod pgp {
                 PgpSigner::try_new(writer, |writer| context.new_writer(writer, time).map(Some))
                     .context("Failed building OpenPGP signer")
                     .map_err(CreateBackupError::CannotSign)
-            },
-
-            finalize: move |writer: PgpSigner<W>| {
-                writer.finalize().map_err(CreateBackupError::SigningFailed)
             },
         }
     }

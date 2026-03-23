@@ -43,6 +43,10 @@ impl<Stream, Stats: StreamStats> MeteredStream<Stream, Stats> {
     pub fn into_inner(self) -> Stream {
         self.inner
     }
+
+    pub fn into_parts(self) -> (Stream, Stats) {
+        (self.inner, self.stats)
+    }
 }
 
 impl<Stream, Stats: StreamStats> Read for MeteredStream<Stream, Stats>
@@ -192,15 +196,11 @@ impl WriterStats for WriteStats {
 
 // MARK: Convenience helpers.
 
-pub(crate) fn meter_writes<W, MakeErr, FinalizeErr, Stats: WriterStats>(
+pub(crate) fn meter_writes<W, Err, Stats: WriterStats>(
     stats: Stats,
-) -> ComposableStreamBuilder<
-    impl FnOnce(W) -> Result<MeteredStream<W, Stats>, MakeErr>,
-    impl FnOnce(MeteredStream<W, Stats>) -> Result<(W, Stats), FinalizeErr>,
-> {
+) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<MeteredStream<W, Stats>, Err>> {
     ComposableStreamBuilder {
         make: move |writer: W| Ok(MeteredStream::new(writer, stats)),
-        finalize: move |writer: MeteredStream<W, Stats>| Ok((writer.inner, writer.stats)),
     }
 }
 

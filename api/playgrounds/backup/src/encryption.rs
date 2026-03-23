@@ -30,10 +30,7 @@ pub enum EncryptionWriter<'a, W> {
 pub(crate) fn encrypt<'a, W>(
     context: &'a EncryptionContext,
     created_at: SystemTime,
-) -> ComposableStreamBuilder<
-    impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CreateBackupError>,
-    impl FnOnce(EncryptionWriter<'a, W>) -> Result<W, CreateBackupError>,
->
+) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<EncryptionWriter<'a, W>, CreateBackupError>>
 where
     W: Write + Send + Sync,
 {
@@ -53,12 +50,6 @@ where
 
                 Ok(EncryptionWriter::Pgp(pgp_writer))
             }
-        },
-
-        finalize: move |writer: EncryptionWriter<'a, W>| match writer {
-            EncryptionWriter::Pgp(pgp_writer) => pgp_writer
-                .finalize()
-                .map_err(CreateBackupError::EncryptionFailed),
         },
     }
 }

@@ -124,10 +124,7 @@ pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
     additional_data: &[(String, bytes::Bytes)],
-) -> ComposableStreamBuilder<
-    impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>,
-    impl FnOnce(tar::Builder<W>) -> Result<W, CreateBackupError>,
-> {
+) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>> {
     ComposableStreamBuilder {
         make: move |writer: W| {
             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
@@ -139,14 +136,6 @@ pub(crate) fn archive<W: Write>(
                 .map_err(CreateBackupError::ArchivingFailed)?;
 
             Ok(builder)
-        },
-
-        finalize: move |writer: tar::Builder<W>| {
-            writer
-                // NOTE: Flushes the stream if needed.
-                .into_inner()
-                .context("Could not init archive")
-                .map_err(CreateBackupError::ArchivingFailed)
         },
     }
 }

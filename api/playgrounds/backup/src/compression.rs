@@ -15,22 +15,12 @@ use crate::config::CompressionConfig;
 
 pub(crate) fn compress<'a, W: Write>(
     config: &CompressionConfig,
-) -> ComposableStreamBuilder<
-    impl FnOnce(W) -> Result<zstd::Encoder<'a, W>, CreateBackupError>,
-    impl FnOnce(zstd::Encoder<'a, W>) -> Result<W, CreateBackupError>,
-> {
+) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<zstd::Encoder<'a, W>, CreateBackupError>> {
     ComposableStreamBuilder {
         make: move |writer: W| {
             zstd::Encoder::new(writer, config.zstd_compression_level)
                 .context("Could not build zstd encoder")
                 .map_err(CreateBackupError::CannotCompress)
-        },
-
-        finalize: move |writer: zstd::Encoder<'a, W>| {
-            writer
-                .finish()
-                .map_err(anyhow::Error::new)
-                .map_err(CreateBackupError::CompressionFailed)
         },
     }
 }

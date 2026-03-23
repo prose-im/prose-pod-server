@@ -512,18 +512,56 @@ mod create {
             )
             .build(upload_backup)?;
 
-        let (left, pgp_signature) = backup_writer.finalize();
+        let TeeStream {
+            w1: archive_writer,
+            w2: pgp_signing_writer_opt,
+        } = backup_writer;
 
-        let (backup_upload, digest) = left?;
+        let compression_writer = archive_writer
+            // NOTE: Flushes the stream if needed.
+            .into_inner()
+            .context("Could not init archive")
+            .map_err(CreateBackupError::ArchivingFailed)?;
 
-        let (backup_upload, backup_stats) = backup_upload?;
+        let encryption_writer_opt = compression_writer
+            .finish()
+            .map_err(anyhow::Error::new)
+            .map_err(CreateBackupError::CompressionFailed)?;
+
+        let metered_tee2 = match encryption_writer_opt {
+            Either::A(EncryptionWriter::Pgp(pgp_writer)) => pgp_writer
+                .finalize()
+                .map_err(CreateBackupError::EncryptionFailed)?,
+            Either::B(writer) => writer,
+        };
+
+        let (tee2, backup_stats) = metered_tee2.into_parts();
+
+        let TeeStream {
+            w1: backup_upload,
+            w2: digest_writer,
+        } = tee2;
+
+        let digest = digest_writer
+            .finalize()
+            .map_err(CreateBackupError::HashingFailed)?;
+
+        let pgp_signature = match pgp_signing_writer_opt {
+            Some(writer) => {
+                let signature = writer
+                    .finalize()
+                    .map_err(CreateBackupError::SigningFailed)?;
+                Some(signature)
+            }
+            None => None,
+        };
 
         let mut digest_ids: Vec<ObjectId> = Vec::new();
         let mut checks_upload_durations: Vec<(ObjectId, std::time::Duration)> = Vec::new();
 
         // Upload SHA-256 digest.
         upload_integrity_check(
-            digest?,
+            digest,
             raw_backup_id.with_extension("sha256"),
             &service,
             &mut checks_upload_durations,
@@ -538,7 +576,7 @@ mod create {
         // Upload OpenPGP signature.
         if let Some(pgp_signature) = pgp_signature {
             upload_integrity_check(
-                pgp_signature?,
+                pgp_signature,
                 // NOTE: OpenPGP will likely forever be the only signing protocol
                 //   we support, but if we ever add one that also uses the `.sig`
                 //   extension we can just use `.<protocol>.sig` for it.

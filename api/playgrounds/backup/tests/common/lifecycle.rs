@@ -126,8 +126,6 @@ fn init_shared_data() -> Result<(), anyhow::Error> {
 
     let test_data_dir = Path::new(TEST_DATA_DIR);
 
-    update_mode_recursive(&test_data_dir, &|mode| mode | 0o200)?;
-
     mkdir("foo")?;
     touch("foo/a")?;
     touch("foo/b")?;
@@ -146,46 +144,6 @@ fn init_shared_data() -> Result<(), anyhow::Error> {
             .current_dir(test_data_dir)
             .output()
             .unwrap();
-    }
-
-    update_mode_recursive(&test_data_dir, &|mode| mode & !0o222)?;
-
-    Ok(())
-}
-
-fn update_mode_recursive(
-    path: impl AsRef<std::path::Path>,
-    update: &impl Fn(u32) -> u32,
-) -> Result<(), anyhow::Error> {
-    use anyhow::Context as _;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let path = path.as_ref();
-
-    let metadata = fs::metadata(path).context(format!(
-        "Failed getting metadata for '{path}'",
-        path = path.display()
-    ))?;
-    let mut perms = metadata.permissions();
-    let mode = perms.mode();
-
-    // Remove write permissions for everyone.
-    perms.set_mode(update(mode));
-    fs::set_permissions(path, perms).context(format!(
-        "Failed setting permissions for '{path}'",
-        path = path.display()
-    ))?;
-
-    // Recursively set permissions.
-    if metadata.is_dir() {
-        for entry in fs::read_dir(path).context(format!(
-            "Failed reading dir at '{path}'",
-            path = path.display()
-        ))? {
-            let entry = entry.context("Bad entry")?;
-            update_mode_recursive(entry.path(), update)?;
-        }
     }
 
     Ok(())

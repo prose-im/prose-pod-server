@@ -22,23 +22,19 @@ use crate::{ComposableStreamBuilder, Either};
 ///
 /// See also: [`optionally`].
 #[inline]
-pub fn eventually<T, A, B, MakeErr, FinalizeErr, M1, F1>(
+pub fn eventually<T, A, B, Err, M1>(
     cond: Option<T>,
-    other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M1, F1>,
-) -> ComposableStreamBuilder<
-    impl FnOnce(A) -> Result<Either<B, A>, MakeErr>,
-    impl FnOnce(Either<B, A>) -> Result<A, FinalizeErr>,
->
+    other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M1>,
+) -> ComposableStreamBuilder<impl FnOnce(A) -> Result<Either<B, A>, Err>>
 where
-    M1: FnOnce(A) -> Result<B, MakeErr>,
-    F1: FnOnce(B) -> Result<A, FinalizeErr>,
+    M1: FnOnce(A) -> Result<B, Err>,
 {
-    let (make_b_opt, finalize_b_opt) = match cond {
+    let make_b_opt = match cond {
         Some(t) => {
-            let other: ComposableStreamBuilder<M1, F1> = other_builder(t);
-            (Some(other.make), Some(other.finalize))
+            let other: ComposableStreamBuilder<M1> = other_builder(t);
+            Some(other.make)
         }
-        None => (None, None),
+        None => None,
     };
 
     ComposableStreamBuilder {
@@ -48,20 +44,6 @@ where
                 Ok(Either::A(b))
             }
             None => Ok(Either::B(a)),
-        },
-
-        finalize: move |e: Either<B, A>| match e {
-            Either::A(b) => match finalize_b_opt {
-                Some(finalize_b) => finalize_b(b),
-                // NOTE: It’d be tempting to return two different
-                //   `ComposableStreamBuilder` depending on `cond` to
-                //   avoid this `unreachable`, but because we return
-                //   anonymous closures Rust doesn’t allow it.
-                // TODO: Add benchmarks, then see if we can change the
-                //   whole API to use boxed closures.
-                None => unreachable!(),
-            },
-            Either::B(a) => Ok(a),
         },
     }
 }
@@ -81,23 +63,19 @@ where
 ///
 /// See also: [`eventually`].
 #[inline]
-pub fn optionally<T, A, B, Out, MakeErr, FinalizeErr, M1, F1>(
+pub fn optionally<T, A, B, Err, M1>(
     cond: Option<T>,
-    other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M1, F1>,
-) -> ComposableStreamBuilder<
-    impl FnOnce(A) -> Result<Option<B>, MakeErr>,
-    impl FnOnce(Option<B>) -> Result<Option<Out>, FinalizeErr>,
->
+    other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M1>,
+) -> ComposableStreamBuilder<impl FnOnce(A) -> Result<Option<B>, Err>>
 where
-    M1: FnOnce(A) -> Result<B, MakeErr>,
-    F1: FnOnce(B) -> Result<Out, FinalizeErr>,
+    M1: FnOnce(A) -> Result<B, Err>,
 {
-    let (make_b_opt, finalize_b_opt) = match cond {
+    let make_b_opt = match cond {
         Some(t) => {
-            let other: ComposableStreamBuilder<M1, F1> = other_builder(t);
-            (Some(other.make), Some(other.finalize))
+            let other: ComposableStreamBuilder<M1> = other_builder(t);
+            Some(other.make)
         }
-        None => (None, None),
+        None => None,
     };
 
     ComposableStreamBuilder {
@@ -106,20 +84,6 @@ where
                 let b: B = make_b(a)?;
                 Ok(Some(b))
             }
-            None => Ok(None),
-        },
-
-        finalize: move |opt: Option<B>| match opt {
-            Some(b) => match finalize_b_opt {
-                Some(finalize_b) => finalize_b(b).map(Some),
-                // NOTE: It’d be tempting to return two different
-                //   `ComposableStreamBuilder` depending on `cond` to
-                //   avoid this `unreachable`, but because we return
-                //   anonymous closures Rust doesn’t allow it.
-                // TODO: Add benchmarks, then see if we can change the
-                //   whole API to use boxed closures.
-                None => unreachable!(),
-            },
             None => Ok(None),
         },
     }

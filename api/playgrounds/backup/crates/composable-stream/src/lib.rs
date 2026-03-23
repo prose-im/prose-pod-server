@@ -28,25 +28,22 @@ pub use self::tee::*;
 
 // MARK: - Builder
 
-pub struct ComposableStreamBuilder<Make, Finalize> {
+pub struct ComposableStreamBuilder<Make> {
     pub make: Make,
-    pub finalize: Finalize,
 }
 
 #[inline]
-pub fn builder<S, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
+pub fn builder<S, Err>() -> ComposableStreamBuilder<
     // NOTE: We need `S -> S` here as this layer will be
     //   the outer-most layer when building the final stream.
-    impl FnOnce(S) -> Result<S, MakeErr>,
-    impl FnOnce(S) -> Result<S, FinalizeErr>,
+    impl FnOnce(S) -> Result<S, Err>,
 > {
     ComposableStreamBuilder {
         make: move |stream: S| Ok(stream),
-        finalize: move |stream: S| Ok(stream),
     }
 }
 
-impl<M, F> ComposableStreamBuilder<M, F> {
+impl<M> ComposableStreamBuilder<M> {
     /// Given a `W -> Bar<Baz<W>>` builder, augment a `W -> Foo<W>` so it
     /// becomes `W -> Foo<Bar<Baz<W>>>`. For example:
     ///
@@ -59,7 +56,6 @@ impl<M, F> ComposableStreamBuilder<M, F> {
     ///     path: impl AsRef<std::path::Path>,
     /// ) -> composable_stream::Builder<
     ///     impl FnOnce(W) -> Result<tar::Builder<W>, anyhow::Error>,
-    ///     impl FnOnce(tar::Builder<W>) -> Result<W, anyhow::Error>,
     /// > {
     ///     composable_stream::Builder {
     ///         make: move |writer: W| {
@@ -67,23 +63,16 @@ impl<M, F> ComposableStreamBuilder<M, F> {
     ///             builder.append_path(path)?;
     ///             Ok(builder)
     ///         },
-    ///         finalize: move |writer: tar::Builder<W>| {
-    ///             writer.into_inner().context("Failed archiving")
-    ///         },
     ///     }
     /// }
     ///
     /// fn compress<W: Write>(level: i32) -> composable_stream::Builder<
     ///     impl FnOnce(W) -> Result<zstd::Encoder<'static, W>, anyhow::Error>,
-    ///     impl FnOnce(zstd::Encoder<'static, W>) -> Result<W, anyhow::Error>,
     /// > {
     ///     composable_stream::Builder {
     ///         make: move |writer: W| {
     ///             zstd::Encoder::new(writer, level)
     ///                 .context("Failed creating zstd encoder")
-    ///         },
-    ///         finalize: move |writer: zstd::Encoder<'static, W>| {
-    ///             writer.finish().context("Failed compressing with zstd")
     ///         },
     ///     }
     /// }
@@ -95,36 +84,29 @@ impl<M, F> ComposableStreamBuilder<M, F> {
     ///     .then(compress(3)) // W₂ -> zstd::Encoder<tar::Builder<W₂>>
     ///     .build(out)?; // zstd::Encoder<tar::Builder<File>>
     ///
-    /// let _file: std::fs::File = writer.finalize()?;
+    /// let _file: std::fs::File = writer
+    ///     .into_inner()
+    ///     .context("Failed archiving")?
+    ///     .finish()
+    ///     .context("Failed compressing with zstd")?;
+    /// #
     /// #     Ok(())
     /// # }
     /// ```
     #[inline]
-    pub fn then<A, B, C, Out, MakeErr, FinalizeErr>(
+    pub fn then<A, B, C, Err>(
         self,
-        other: ComposableStreamBuilder<
-            impl FnOnce(A) -> Result<B, MakeErr>,
-            impl FnOnce(B) -> Result<Out, FinalizeErr>,
-        >,
-    ) -> ComposableStreamBuilder<
-        impl FnOnce(A) -> Result<C, MakeErr>,
-        impl FnOnce(C) -> Result<Out, FinalizeErr>,
-    >
+        other: ComposableStreamBuilder<impl FnOnce(A) -> Result<B, Err>>,
+    ) -> ComposableStreamBuilder<impl FnOnce(A) -> Result<C, Err>>
     where
-        M: FnOnce(B) -> Result<C, MakeErr>,
-        F: FnOnce(C) -> Result<B, FinalizeErr>,
+        M: FnOnce(B) -> Result<C, Err>,
     {
-        let Self { make, finalize, .. } = self;
+        let Self { make, .. } = self;
 
         ComposableStreamBuilder {
             make: move |a: A| {
                 let b: B = (other.make)(a)?;
                 make(b)
-            },
-
-            finalize: move |c: C| {
-                let b: B = finalize(c)?;
-                (other.finalize)(b)
             },
         }
     }
@@ -132,37 +114,19 @@ impl<M, F> ComposableStreamBuilder<M, F> {
 
 // MARK: - Build
 
-impl<M, F> ComposableStreamBuilder<M, F> {
+impl<M> ComposableStreamBuilder<M> {
     #[inline]
-    pub fn build<A, C, Out, Err>(self, stream: A) -> Result<FinalizableStream<C, F>, Err>
+    pub fn build<A, Res>(self, stream: A) -> Res
     where
-        M: FnOnce(A) -> Result<C, Err>,
-        F: FnOnce(C) -> Out,
+        M: FnOnce(A) -> Res,
     {
-        let Self { make, finalize, .. } = self;
-
-        make(stream).map(move |stream| FinalizableStream { stream, finalize })
-    }
-}
-
-pub struct FinalizableStream<S, F> {
-    pub stream: S,
-    finalize: F,
-}
-
-impl<S, F> FinalizableStream<S, F> {
-    #[inline]
-    pub fn finalize<Out>(self) -> Out
-    where
-        F: FnOnce(S) -> Out,
-    {
-        (self.finalize)(self.stream)
+        (self.make)(stream)
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{convert::Infallible, io::Write};
+    use std::io::Write;
 
     use super::*;
 
@@ -170,9 +134,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_build() -> Result<(), std::io::Error> {
-        let writer = source(&[1, 2, 3]).build(Vec::<u8>::new())?;
-
-        let res = writer.finalize().unwrap_or_else(unreachable);
+        let res = source(&[1, 2, 3]).build(Vec::<u8>::new())?;
 
         assert_eq!(res.as_slice(), [1, 2, 3]);
 
@@ -181,14 +143,9 @@ pub(crate) mod tests {
 
     #[test]
     fn test_then() -> Result<(), std::io::Error> {
-        let writer = source(&[1, 2, 3])
-            .then(ComposableStreamBuilder {
-                make: Ok,
-                finalize: Ok,
-            })
+        let res: Vec<u8> = source(&[1, 2, 3])
+            .then(ComposableStreamBuilder { make: Ok })
             .build(Vec::<u8>::new())?;
-
-        let res = writer.finalize().unwrap_or_else(unreachable);
 
         assert_eq!(res.as_slice(), [1, 2, 3]);
 
@@ -197,9 +154,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_then_add_one() -> Result<(), std::io::Error> {
-        let writer = source(&[1, 2, 3]).then(add_one()).build(Vec::<u8>::new())?;
+        let writer: AddOneWriter<Vec<u8>> =
+            source(&[1, 2, 3]).then(add_one()).build(Vec::<u8>::new())?;
 
-        let res = writer.finalize().unwrap_or_else(unreachable);
+        let res = writer.into_inner();
 
         assert_eq!(res.as_slice(), [2, 3, 4]);
 
@@ -208,13 +166,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_then_ordering() -> Result<(), std::io::Error> {
-        let writer: FinalizableStream<TimesTwoWriter<AddOneWriter<Vec<u8>>>, _> =
-            source(&[1, 2, 3])
-                .then(times_two())
-                .then(add_one())
-                .build(Vec::<u8>::new())?;
+        let writer: TimesTwoWriter<AddOneWriter<Vec<u8>>> = source(&[1, 2, 3])
+            .then(times_two())
+            .then(add_one())
+            .build(Vec::<u8>::new())?;
 
-        let res = writer.finalize().unwrap_or_else(unreachable);
+        let res = writer.into_inner().into_inner();
 
         assert_eq!(res.as_slice(), [3, 5, 7]);
 
@@ -223,16 +180,12 @@ pub(crate) mod tests {
 
     fn source<W: Write>(
         data: &[u8],
-    ) -> ComposableStreamBuilder<
-        impl FnOnce(W) -> Result<W, std::io::Error>,
-        impl FnOnce(W) -> Result<W, Infallible>,
-    > {
+    ) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<W, std::io::Error>> {
         ComposableStreamBuilder {
             make: move |mut writer: W| {
                 writer.write_all(data)?;
                 Ok(writer)
             },
-            finalize: Ok,
         }
     }
 
@@ -259,13 +212,16 @@ pub(crate) mod tests {
             }
         }
 
-        pub fn add_one<W: Write, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
-            impl FnOnce(W) -> Result<AddOneWriter<W>, MakeErr>,
-            impl FnOnce(AddOneWriter<W>) -> Result<W, FinalizeErr>,
-        > {
+        impl<W: Write> AddOneWriter<W> {
+            pub fn into_inner(self) -> W {
+                self.0
+            }
+        }
+
+        pub fn add_one<W: Write, Err>()
+        -> ComposableStreamBuilder<impl FnOnce(W) -> Result<AddOneWriter<W>, Err>> {
             ComposableStreamBuilder {
                 make: move |writer: W| Ok(AddOneWriter(writer)),
-                finalize: move |writer: AddOneWriter<W>| Ok(writer.0),
             }
         }
 
@@ -283,13 +239,16 @@ pub(crate) mod tests {
             }
         }
 
-        pub fn times_two<W: Write, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
-            impl FnOnce(W) -> Result<TimesTwoWriter<W>, MakeErr>,
-            impl FnOnce(TimesTwoWriter<W>) -> Result<W, FinalizeErr>,
-        > {
+        impl<W: Write> TimesTwoWriter<W> {
+            pub fn into_inner(self) -> W {
+                self.0
+            }
+        }
+
+        pub fn times_two<W: Write, Err>()
+        -> ComposableStreamBuilder<impl FnOnce(W) -> Result<TimesTwoWriter<W>, Err>> {
             ComposableStreamBuilder {
                 make: move |writer: W| Ok(TimesTwoWriter(writer)),
-                finalize: move |writer: TimesTwoWriter<W>| Ok(writer.0),
             }
         }
     }
