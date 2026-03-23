@@ -48,34 +48,34 @@ impl<M1, F1> ComposableStreamBuilder<M1, F1> {
     ///
     /// [tee-wiki]: https://en.wikipedia.org/wiki/Tee_(command)
     #[inline]
-    pub fn tee<A1, B1, A2, B2, Out1, Out2, MakeErr, FinalizeErr1, FinalizeErr2>(
+    pub fn tee<B1, A2, B2, C, Res2, MakeErr, FinalizeErr1>(
         self,
         other: ComposableStreamBuilder<
             impl FnOnce(A2) -> Result<B2, MakeErr>,
-            impl FnOnce(B2) -> Result<Out2, FinalizeErr2>,
+            impl FnOnce(B2) -> Res2,
         >,
-        writer: A2,
+        a2: A2,
     ) -> ComposableStreamBuilder<
-        impl FnOnce(A1) -> Result<TeeStream<B1, B2>, MakeErr>,
-        impl FnOnce(TeeStream<B1, B2>) -> (Result<Out1, FinalizeErr1>, Result<Out2, FinalizeErr2>),
+        impl FnOnce(B1) -> Result<C, MakeErr>,
+        impl FnOnce(C) -> Result<(B1, Res2), FinalizeErr1>,
     >
     where
-        M1: FnOnce(A1) -> Result<B1, MakeErr>,
-        F1: FnOnce(B1) -> Result<Out1, FinalizeErr1>,
+        M1: FnOnce(TeeStream<B1, B2>) -> Result<C, MakeErr>,
+        F1: FnOnce(C) -> Result<TeeStream<B1, B2>, FinalizeErr1>,
     {
         let Self { make, finalize, .. } = self;
 
         ComposableStreamBuilder {
-            make: move |a1: A1| {
-                let b1: B1 = make(a1)?;
-                let b2: B2 = (other.make)(writer)?;
-                Ok(TeeStream::new(b1, b2))
+            make: move |b1: B1| {
+                let b2: B2 = (other.make)(a2)?;
+                let tee: TeeStream<B1, B2> = TeeStream::new(b1, b2);
+                make(tee)
             },
 
-            finalize: move |tee: TeeStream<B1, B2>| {
-                let res1: Result<Out1, FinalizeErr1> = finalize(tee.w1);
-                let res2: Result<Out2, FinalizeErr2> = (other.finalize)(tee.w2);
-                (res1, res2)
+            finalize: move |c: C| {
+                let tee: TeeStream<B1, B2> = finalize(c)?;
+                let res2: Res2 = (other.finalize)(tee.w2);
+                Ok((tee.w1, res2))
             },
         }
     }
@@ -83,28 +83,28 @@ impl<M1, F1> ComposableStreamBuilder<M1, F1> {
     /// Same as [`tee`], but forks into the passed stream instead of using
     /// a stream builder.
     #[inline]
-    pub fn tee_into<A1, B1, B2, Out1, MakeErr, FinalizeErr>(
+    pub fn tee_into<B1, B2, C, MakeErr, FinalizeErr>(
         self,
         b2: B2,
     ) -> ComposableStreamBuilder<
-        impl FnOnce(A1) -> Result<TeeStream<B1, B2>, MakeErr>,
-        impl FnOnce(TeeStream<B1, B2>) -> (Result<Out1, FinalizeErr>, B2),
+        impl FnOnce(B1) -> Result<C, MakeErr>,
+        impl FnOnce(C) -> Result<(B1, B2), FinalizeErr>,
     >
     where
-        M1: FnOnce(A1) -> Result<B1, MakeErr>,
-        F1: FnOnce(B1) -> Result<Out1, FinalizeErr>,
+        M1: FnOnce(TeeStream<B1, B2>) -> Result<C, MakeErr>,
+        F1: FnOnce(C) -> Result<TeeStream<B1, B2>, FinalizeErr>,
     {
         let Self { make, finalize, .. } = self;
 
         ComposableStreamBuilder {
-            make: move |a1: A1| {
-                let b1: B1 = make(a1)?;
-                Ok(TeeStream::new(b1, b2))
+            make: move |b1: B1| {
+                let tee: TeeStream<B1, B2> = TeeStream::new(b1, b2);
+                make(tee)
             },
 
-            finalize: move |tee: TeeStream<B1, B2>| {
-                let res1: Result<Out1, FinalizeErr> = finalize(tee.w1);
-                (res1, tee.w2)
+            finalize: move |c: C| {
+                let tee = finalize(c)?;
+                Ok((tee.w1, tee.w2))
             },
         }
     }
@@ -228,5 +228,114 @@ where
         self.w1.flush()?;
         self.w2.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{convert::Infallible, io::Write};
+
+    use crate::tests::util::*;
+
+    use super::*;
+
+    #[test]
+    fn test_tee_stream() -> Result<(), std::io::Error> {
+        let mut tee = TeeStream::new(Vec::<u8>::new(), Vec::<u8>::new());
+
+        tee.write_all(&[1, 2, 3])?;
+
+        assert_eq!(tee.w1.as_slice(), [1, 2, 3]);
+        assert_eq!(tee.w2.as_slice(), [1, 2, 3]);
+
+        Ok(())
+    }
+
+    // #[test]
+    // fn test_compose_source_then_tee() -> Result<(), std::io::Error> {
+    //     let out2 = times_two().build(Vec::<u8>::new())?;
+    //     let tee = source(&[1, 2, 3])
+    //         .then(tee(out2.stream))
+    //         .then(add_one())
+    //         .build(Vec::<u8>::new())?;
+
+    //     let (res1, res2) = tee.finalize().unwrap_or_else(unreachable);
+
+    //     assert_eq!(res1.as_slice(), [2, 3, 4]);
+    //     assert_eq!(res2.as_slice(), [2, 4, 6]);
+
+    //     Ok(())
+    // }
+
+    #[test]
+    fn test_compose_source_tee_into() -> Result<(), std::io::Error> {
+        let out2 = times_two::<_, Infallible, Infallible>()
+            .build(Vec::<u8>::new())
+            .unwrap_or_else(unreachable);
+        let tee = source(&[1, 2, 3])
+            .then(add_one())
+            .tee_into(out2.stream)
+            .build(Vec::<u8>::new())?;
+
+        let (res1, res2) = tee.finalize().unwrap_or_else(unreachable);
+        let res2 = (out2.finalize)(res2).unwrap_or_else(unreachable);
+
+        assert_eq!(res1.as_slice(), [2, 3, 4]);
+        assert_eq!(res2.as_slice(), [4, 6, 8]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compose_source_tee() -> Result<(), std::io::Error> {
+        let tee = source(&[1, 2, 3])
+            .then(add_one())
+            .tee(times_two(), Vec::<u8>::new())
+            .build(Vec::<u8>::new())?;
+
+        let (res1, res2) = tee.finalize().unwrap_or_else(unreachable);
+        let res2 = res2.unwrap_or_else(unreachable);
+
+        assert_eq!(res1.as_slice(), [2, 3, 4]);
+        assert_eq!(res2.as_slice(), [4, 6, 8]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compose_builder_tee() -> Result<(), std::io::Error> {
+        let mut tee: crate::FinalizableStream<Tee<Vec<u8>, Vec<u8>>, _> =
+            crate::builder::<_, Infallible, Infallible>()
+                .tee(
+                    crate::builder::<_, Infallible, Infallible>(),
+                    Vec::<u8>::new(),
+                )
+                .build(Vec::<u8>::new())
+                .unwrap_or_else(unreachable);
+
+        tee.stream.write_all(&[1, 2, 3])?;
+
+        let (res1, res2) = tee.finalize().unwrap_or_else(unreachable);
+        let res2 = res2.unwrap_or_else(unreachable);
+
+        assert_eq!(res1.as_slice(), [1, 2, 3]);
+        assert_eq!(res2.as_slice(), [1, 2, 3]);
+
+        Ok(())
+    }
+
+    fn source<W: Write>(
+        data: &[u8],
+    ) -> ComposableStreamBuilder<
+        impl FnOnce(W) -> Result<W, std::io::Error>,
+        impl FnOnce(W) -> Result<W, Infallible>,
+    > {
+        ComposableStreamBuilder {
+            make: move |mut writer: W| {
+                writer.write_all(data)?;
+                Ok(writer)
+            },
+            finalize: Ok,
+        }
     }
 }

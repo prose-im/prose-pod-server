@@ -26,6 +26,7 @@ None.
 
 **Low priority (unordered):**
 
+- Drop `w1` and `w2` in `TeeStream` in favor of anonymous parameters.
 - Support forking to _n_ writers.
 - Add `std::io::Read`-like `chain`ing.
 

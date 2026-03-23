@@ -15,27 +15,15 @@ use crate::common::prelude::*;
 pub const BLUEPRINT_LOCAL_DATA: u8 = 1;
 pub const BLUEPRINT_POD_API_DEMO: u8 = 2;
 
+#[rustfmt::skip]
 pub fn test_blueprints() -> HashMap<u8, ArchiveBlueprint> {
     BlueprintsBuilder::new()
         .insert(
             BLUEPRINT_LOCAL_DATA,
             [
-                (
-                    "prosody-data",
-                    Path::new(TEST_DATA_DIR).join("var/lib/prosody"),
-                ),
-                (
-                    "prose-pod-server-data",
-                    Path::new(TEST_DATA_DIR).join("var/lib/prose-pod-server"),
-                ),
-                (
-                    "prose-pod-api-data",
-                    Path::new(TEST_DATA_DIR).join("var/lib/prose-pod-api"),
-                ),
-                (
-                    "prosody-config",
-                    Path::new(TEST_DATA_DIR).join("etc/prosody"),
-                ),
+                ("foo-data", "foo"),
+                ("bar-data", "bar"),
+                ("baz-data", "baz"),
             ]
             .into_iter(),
         )

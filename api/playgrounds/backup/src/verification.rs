@@ -292,8 +292,17 @@ impl BackupService {
                 w2: verifier,
             } = tee_writer;
 
+            assert_eq!(Sha256::new().finalize(), Sha256::new().finalize());
+            tracing::debug!(
+                "Empty hash: {:?}",
+                AsRef::<[u8]>::as_ref(&Sha256::new().finalize())
+            );
+
+            let computed_hash = verifier.finalize();
+            assert_eq!(computed_hash.as_ref(), expected_hash);
+
             // Verify the checksum.
-            if verifier.finalize().as_ref() != expected_hash {
+            if computed_hash.as_ref() != expected_hash {
                 return Err(VerificationError::InvalidChecksum(anyhow!(
                     "Invalid SHA-256 checksum (verify): `{check_name}`."
                 )));

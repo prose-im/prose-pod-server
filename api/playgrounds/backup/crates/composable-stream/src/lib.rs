@@ -159,3 +159,138 @@ impl<S, F> FinalizableStream<S, F> {
         (self.finalize)(self.stream)
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::{convert::Infallible, io::Write};
+
+    use super::*;
+
+    use self::util::*;
+
+    #[test]
+    fn test_build() -> Result<(), std::io::Error> {
+        let writer = source(&[1, 2, 3]).build(Vec::<u8>::new())?;
+
+        let res = writer.finalize().unwrap_or_else(unreachable);
+
+        assert_eq!(res.as_slice(), [1, 2, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_then() -> Result<(), std::io::Error> {
+        let writer = source(&[1, 2, 3])
+            .then(ComposableStreamBuilder {
+                make: Ok,
+                finalize: Ok,
+            })
+            .build(Vec::<u8>::new())?;
+
+        let res = writer.finalize().unwrap_or_else(unreachable);
+
+        assert_eq!(res.as_slice(), [1, 2, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_then_add_one() -> Result<(), std::io::Error> {
+        let writer = source(&[1, 2, 3]).then(add_one()).build(Vec::<u8>::new())?;
+
+        let res = writer.finalize().unwrap_or_else(unreachable);
+
+        assert_eq!(res.as_slice(), [2, 3, 4]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_then_ordering() -> Result<(), std::io::Error> {
+        let writer: FinalizableStream<TimesTwoWriter<AddOneWriter<Vec<u8>>>, _> =
+            source(&[1, 2, 3])
+                .then(times_two())
+                .then(add_one())
+                .build(Vec::<u8>::new())?;
+
+        let res = writer.finalize().unwrap_or_else(unreachable);
+
+        assert_eq!(res.as_slice(), [3, 5, 7]);
+
+        Ok(())
+    }
+
+    fn source<W: Write>(
+        data: &[u8],
+    ) -> ComposableStreamBuilder<
+        impl FnOnce(W) -> Result<W, std::io::Error>,
+        impl FnOnce(W) -> Result<W, Infallible>,
+    > {
+        ComposableStreamBuilder {
+            make: move |mut writer: W| {
+                writer.write_all(data)?;
+                Ok(writer)
+            },
+            finalize: Ok,
+        }
+    }
+
+    pub(crate) mod util {
+        use std::io::Write;
+
+        use crate::ComposableStreamBuilder;
+
+        pub fn unreachable<T>(err: std::convert::Infallible) -> T {
+            match err {}
+        }
+
+        #[derive(Debug, Default)]
+        pub struct AddOneWriter<W: Write>(W);
+
+        impl<W: Write> Write for AddOneWriter<W> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .write(buf.iter().map(|n| n + 1).collect::<Vec<u8>>().as_slice())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.flush()
+            }
+        }
+
+        pub fn add_one<W: Write, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
+            impl FnOnce(W) -> Result<AddOneWriter<W>, MakeErr>,
+            impl FnOnce(AddOneWriter<W>) -> Result<W, FinalizeErr>,
+        > {
+            ComposableStreamBuilder {
+                make: move |writer: W| Ok(AddOneWriter(writer)),
+                finalize: move |writer: AddOneWriter<W>| Ok(writer.0),
+            }
+        }
+
+        #[derive(Debug, Default)]
+        pub struct TimesTwoWriter<W: Write>(W);
+
+        impl<W: Write> Write for TimesTwoWriter<W> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .write(buf.iter().map(|n| n * 2).collect::<Vec<u8>>().as_slice())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.flush()
+            }
+        }
+
+        pub fn times_two<W: Write, MakeErr, FinalizeErr>() -> ComposableStreamBuilder<
+            impl FnOnce(W) -> Result<TimesTwoWriter<W>, MakeErr>,
+            impl FnOnce(TimesTwoWriter<W>) -> Result<W, FinalizeErr>,
+        > {
+            ComposableStreamBuilder {
+                make: move |writer: W| Ok(TimesTwoWriter(writer)),
+                finalize: move |writer: TimesTwoWriter<W>| Ok(writer.0),
+            }
+        }
+    }
+}

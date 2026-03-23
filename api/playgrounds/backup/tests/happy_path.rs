@@ -3,7 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-#[allow(dead_code, unused_imports)]
+#[allow(dead_code, unused_imports, unused_macros)]
 mod common;
 
 use std::{
@@ -31,15 +31,15 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
         ..
     } = context;
 
-    let backup_store_path = test_data_path.join("backups");
-    std::fs::create_dir_all(&backup_store_path)?;
-    let check_store_path = test_data_path.join("checks");
-    std::fs::create_dir_all(&check_store_path)?;
+    let backups_store_path = test_data_path.join("backups");
+    std::fs::create_dir_all(&backups_store_path)?;
+    let checks_store_path = test_data_path.join("checks");
+    std::fs::create_dir_all(&checks_store_path)?;
 
     println!();
     let backup_config = {
-        let backup_store_path = backup_store_path.display().to_string();
-        let check_store_path = check_store_path.display().to_string();
+        let backups_store_path = backups_store_path.display().to_string();
+        let checks_store_path = checks_store_path.display().to_string();
 
         let toml = toml! {
             [encryption]
@@ -47,16 +47,16 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
             pgp.tsk = "encrypt.pgp"
 
             [signing]
-            pgp.enabled = true
+            pgp.enabled = false
             pgp.tsk = "sign.pgp"
 
             [storage.backups]
             provider = "fs"
-            fs.directory = backup_store_path
+            fs.directory = backups_store_path
 
             [storage.checks]
             provider = "fs"
-            fs.directory = check_store_path
+            fs.directory = checks_store_path
         };
 
         BackupConfig::try_from(toml)

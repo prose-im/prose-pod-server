@@ -512,7 +512,9 @@ mod create {
             )
             .build(upload_backup)?;
 
-        let ((backup_upload, digest), pgp_signature) = backup_writer.finalize();
+        let (left, pgp_signature) = backup_writer.finalize();
+
+        let (backup_upload, digest) = left?;
 
         let (backup_upload, backup_stats) = backup_upload?;
 
@@ -747,8 +749,7 @@ mod read {
     use crate::BackupService;
     use crate::backup_id::*;
     use crate::dtos::*;
-    use crate::stores::ObjectId;
-    use crate::stores::ObjectStore as _;
+    use crate::stores::*;
 
     pub(crate) async fn list_backups(
         service: &BackupService,
@@ -768,7 +769,19 @@ mod read {
 
         use std::str::FromStr as _;
 
-        let backups = service.backup_store.list_all().await?;
+        /// Determines whether an object is a backup based on its name.
+        /// It’s not bulletproof and might break if we make changes to
+        /// compression or encryption but it’s good enough for now.
+        fn is_backup(metadata: &ObjectMetadata) -> bool {
+            metadata.file_name.ends_with(".zst") || metadata.file_name.ends_with(".zst.pgp")
+        }
+
+        // NOTE: If using the same bucket and prefix for both the backups and
+        //   integrity checks, `service.backup_store.list_all` will also return
+        //   integrity checks. We need to filter it.
+        let objects = service.backup_store.list_all().await?;
+
+        let backups = objects.into_iter().filter(is_backup).collect::<Vec<_>>();
 
         // NOTE: S3 results are sorted in alphabetically ascending order,
         //   and backup names use Unix timestamps which are alphabetically
@@ -777,13 +790,21 @@ mod read {
             return Ok(vec![]);
         };
 
-        let checks = service
-            .check_store
-            .list_all_after(&oldest_backup.file_name)
-            .await?
-            .into_iter()
-            .map(|meta| meta.file_name)
-            .collect::<Vec<_>>();
+        let checks = {
+            // NOTE: If using the same bucket and prefix for both the backups and
+            //   integrity checks, `service.backup_store.list_all` will also return
+            //   integrity checks. We need to filter it.
+            let objects = service
+                .check_store
+                .list_all_after(&oldest_backup.file_name)
+                .await?
+                .into_iter();
+
+            objects
+                .filter(|metadata| !is_backup(metadata))
+                .map(|meta| meta.file_name)
+                .collect::<Vec<_>>()
+        };
 
         let signing_is_mandatory = service.signing_context.is_signing_mandatory;
 
