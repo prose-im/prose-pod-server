@@ -512,10 +512,7 @@ mod create {
             )
             .build(upload_backup)?;
 
-        let TeeStream {
-            w1: archive_writer,
-            w2: pgp_signing_writer_opt,
-        } = backup_writer;
+        let Tee(archive_writer, pgp_signing_writer_opt) = backup_writer;
 
         let compression_writer = archive_writer
             // NOTE: Flushes the stream if needed.
@@ -537,10 +534,7 @@ mod create {
 
         let (tee2, backup_stats) = metered_tee2.into_parts();
 
-        let TeeStream {
-            w1: backup_upload,
-            w2: digest_writer,
-        } = tee2;
+        let Tee(backup_upload, digest_writer) = tee2;
 
         let digest = digest_writer
             .finalize()

@@ -13,24 +13,14 @@ pub use self::TeeStream as Tee;
 /// the naming and use cases.
 ///
 /// [tee-wiki]: https://en.wikipedia.org/wiki/Tee_(command)
-pub struct TeeStream<W1, W2> {
-    pub w1: W1,
-    pub w2: W2,
-}
-
-impl<W1, W2> TeeStream<W1, W2> {
-    #[inline]
-    pub fn new(w1: W1, w2: W2) -> Self {
-        Self { w1, w2 }
-    }
-}
+pub struct TeeStream<W1, W2>(pub W1, pub W2);
 
 #[inline]
 pub fn tee<B1, B2, Err>(
     b2: B2,
-) -> ComposableStreamBuilder<impl FnOnce(B1) -> Result<TeeStream<B1, B2>, Err>> {
+) -> ComposableStreamBuilder<impl FnOnce(B1) -> Result<Tee<B1, B2>, Err>> {
     ComposableStreamBuilder {
-        make: move |b1: B1| Ok(TeeStream::new(b1, b2)),
+        make: move |b1: B1| Ok(Tee(b1, b2)),
     }
 }
 
@@ -50,14 +40,14 @@ impl<M1> ComposableStreamBuilder<M1> {
         a2: A2,
     ) -> ComposableStreamBuilder<impl FnOnce(B1) -> Result<C, Err>>
     where
-        M1: FnOnce(TeeStream<B1, B2>) -> Result<C, Err>,
+        M1: FnOnce(Tee<B1, B2>) -> Result<C, Err>,
     {
         let Self { make, .. } = self;
 
         ComposableStreamBuilder {
             make: move |b1: B1| {
                 let b2: B2 = (other.make)(a2)?;
-                let tee: TeeStream<B1, B2> = TeeStream::new(b1, b2);
+                let tee: Tee<B1, B2> = Tee(b1, b2);
                 make(tee)
             },
         }
@@ -71,13 +61,13 @@ impl<M1> ComposableStreamBuilder<M1> {
         b2: B2,
     ) -> ComposableStreamBuilder<impl FnOnce(B1) -> Result<C, Err>>
     where
-        M1: FnOnce(TeeStream<B1, B2>) -> Result<C, Err>,
+        M1: FnOnce(Tee<B1, B2>) -> Result<C, Err>,
     {
         let Self { make, .. } = self;
 
         ComposableStreamBuilder {
             make: move |b1: B1| {
-                let tee: TeeStream<B1, B2> = TeeStream::new(b1, b2);
+                let tee: Tee<B1, B2> = Tee(b1, b2);
                 make(tee)
             },
         }
@@ -121,7 +111,7 @@ impl<M1> ComposableStreamBuilder<M1> {
                     None => None,
                 };
 
-                Ok(Tee::new(b1, b2_opt))
+                Ok(Tee(b1, b2_opt))
             },
         }
     }
@@ -143,7 +133,7 @@ impl<M1> ComposableStreamBuilder<M1> {
             make: move |a1: A1| {
                 let b1: B1 = make(a1)?;
                 let b2_opt: Option<B2> = cond.map(other_builder);
-                Ok(Tee::new(b1, b2_opt))
+                Ok(Tee(b1, b2_opt))
             },
         }
     }
@@ -151,22 +141,22 @@ impl<M1> ComposableStreamBuilder<M1> {
 
 // MARK: - Boilerplate
 
-impl<W1, W2> std::io::Write for TeeStream<W1, W2>
+impl<W1, W2> std::io::Write for Tee<W1, W2>
 where
     W1: std::io::Write,
     W2: std::io::Write,
 {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.w1.write(buf)?;
-        self.w2.write_all(&buf[..n])?;
+        let n = self.0.write(buf)?;
+        self.1.write_all(&buf[..n])?;
         Ok(n)
     }
 
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
-        self.w1.flush()?;
-        self.w2.flush()?;
+        self.0.flush()?;
+        self.1.flush()?;
         Ok(())
     }
 }
@@ -181,12 +171,14 @@ mod tests {
 
     #[test]
     fn test_tee_stream() -> Result<(), std::io::Error> {
-        let mut tee = TeeStream::new(Vec::<u8>::new(), Vec::<u8>::new());
+        let mut tee = Tee(Vec::<u8>::new(), Vec::<u8>::new());
 
         tee.write_all(&[1, 2, 3])?;
 
-        assert_eq!(tee.w1.as_slice(), [1, 2, 3]);
-        assert_eq!(tee.w2.as_slice(), [1, 2, 3]);
+        let Tee(res1, res2) = tee;
+
+        assert_eq!(res1.as_slice(), [1, 2, 3]);
+        assert_eq!(res2.as_slice(), [1, 2, 3]);
 
         Ok(())
     }
@@ -219,7 +211,7 @@ mod tests {
 
         let tee = writer.into_inner();
 
-        let (res1, out2) = (tee.w1, tee.w2);
+        let Tee(res1, out2) = tee;
         let res2 = out2.into_inner();
 
         assert_eq!(res1.as_slice(), [2, 3, 4]);
@@ -237,7 +229,7 @@ mod tests {
 
         let tee = writer.into_inner();
 
-        let (res1, out2) = (tee.w1, tee.w2);
+        let Tee(res1, out2) = tee;
         let res2 = out2.into_inner();
 
         assert_eq!(res1.as_slice(), [2, 3, 4]);
@@ -255,7 +247,7 @@ mod tests {
 
         tee.write_all(&[1, 2, 3])?;
 
-        let (res1, res2) = (tee.w1, tee.w2);
+        let Tee(res1, res2) = tee;
 
         assert_eq!(res1.as_slice(), [1, 2, 3]);
         assert_eq!(res2.as_slice(), [1, 2, 3]);

@@ -232,7 +232,7 @@ impl BackupService {
         }
 
         'sha256_check: {
-            use composable_stream::TeeStream;
+            use composable_stream::Tee;
             use sha2::{Digest as _, Sha256};
 
             let check_name = backup_id.with_extension("sha256");
@@ -280,17 +280,14 @@ impl BackupService {
 
             // Read the backup to a temporary file, but also feed it to the
             // SHA-256 hasher in parallel.
-            let mut tee_writer = TeeStream::new(backup_file, verifier);
+            let mut tee_writer = Tee(backup_file, verifier);
             std::io::copy(&mut backup_reader, &mut tee_writer)
                 .context(format!("Failed reading backup: `{backup_id}`"))
                 .map_err(VerificationError::Other)?;
 
-            let TeeStream {
-                // NOTE: It’s okay to drop the file as-is:
-                //   the OS will flush before closing the file.
-                w1: _backup_file,
-                w2: verifier,
-            } = tee_writer;
+            // NOTE: It’s okay to drop the file as-is:
+            //   the OS will flush before closing the file.
+            let Tee(_backup_file, verifier) = tee_writer;
 
             assert_eq!(Sha256::new().finalize(), Sha256::new().finalize());
             tracing::debug!(
