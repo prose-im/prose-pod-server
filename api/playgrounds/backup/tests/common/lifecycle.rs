@@ -11,7 +11,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::common::log_error;
+use crate::common::{fs::create_files, log_error};
 
 static INIT: Once = Once::new();
 
@@ -105,38 +105,24 @@ fn init_shared_data() -> Result<(), anyhow::Error> {
     fn exists(path: impl AsRef<Path>) -> bool {
         fs::exists(Path::new(TEST_DATA_DIR).join(path)).unwrap()
     }
-    fn mkdir(path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        let path = path.as_ref();
-        if !path.is_dir() {
-            fs::create_dir_all(Path::new(TEST_DATA_DIR).join(path)).context(format!(
-                "Failed creating dir at '{path}'",
-                path = path.display()
-            ))?;
-        }
-        Ok(())
-    }
-    fn touch(path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        let path = path.as_ref();
-        if !path.is_file() {
-            fs::File::create(Path::new(TEST_DATA_DIR).join(path)).context(format!(
-                "Failed creating file at '{path}'",
-                path = path.display()
-            ))?;
-        }
-        Ok(())
-    }
+
+    #[rustfmt::skip]
+    create_files(
+        TEST_DATA_DIR,
+        [
+            "foo/",
+            "foo/a",
+            "foo/b",
+            "bar/",
+            "bar/a",
+            "bar/b",
+            "baz/",
+        ]
+        .into_iter(),
+    )?;
 
     let test_data_dir = Path::new(TEST_DATA_DIR);
 
-    mkdir("foo")?;
-    touch("foo/a")?;
-    touch("foo/b")?;
-
-    mkdir("bar")?;
-    touch("bar/a")?;
-    touch("bar/b")?;
-
-    mkdir("baz")?;
     if !exists("baz/example.bin") {
         Command::new("dd")
             .arg("if=/dev/zero")

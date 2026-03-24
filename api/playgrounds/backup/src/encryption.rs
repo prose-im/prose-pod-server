@@ -71,6 +71,15 @@ where
     }
 }
 
+impl<'a, W> EncryptionWriter<'a, W> {
+    /// NOTE: Flushes the stream if needed.
+    pub fn into_inner(self) -> Result<W, anyhow::Error> {
+        match self {
+            EncryptionWriter::Pgp(writer) => writer.finalize(),
+        }
+    }
+}
+
 mod pgp {
     use std::io::Write;
 
@@ -99,9 +108,14 @@ mod pgp {
     }
 
     impl<'a, W> PgpEncryptedWriter<'a, W> {
+        /// NOTE: Flushes the stream if needed.
         pub fn finalize(mut self) -> Result<W, anyhow::Error> {
-            // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
-            self.with_message_mut(|message| message.take().unwrap().finalize())?;
+            self.with_message_mut(|message| {
+                // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
+                let message = message.take().unwrap();
+                // NOTE: Flushes the stream if needed.
+                message.finalize()
+            })?;
 
             Ok(self.into_heads().writer)
         }

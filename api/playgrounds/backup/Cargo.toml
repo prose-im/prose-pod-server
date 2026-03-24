@@ -62,12 +62,19 @@ provider_fs = []
 provider_s3 = ["dep:s3"]
 
 [[test]]
-name = "happy_path"
+name = "happy_paths"
+required-features = ["test", "provider_fs"]
+
+[[test]]
+name = "error_paths"
 required-features = ["test", "provider_fs"]
 
 [[test]]
 name = "s3"
 required-features = ["test", "provider_s3"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
 [lints.clippy]
 collapsible_if = "allow" # Style preference.

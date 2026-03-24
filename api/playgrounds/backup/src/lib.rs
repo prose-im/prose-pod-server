@@ -526,8 +526,8 @@ mod create {
             .map_err(CreateBackupError::CompressionFailed)?;
 
         let (Tee(backup_upload, digest_writer), backup_stats) = match encryption_writer_opt {
-            Either::A(EncryptionWriter::Pgp(pgp_writer)) => pgp_writer
-                .finalize()
+            Either::A(encryption_writer) => encryption_writer
+                .into_inner()
                 .map_err(CreateBackupError::EncryptionFailed)?,
             Either::B(writer) => writer,
         }

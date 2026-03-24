@@ -35,23 +35,19 @@ async fn single_store() -> Result<(), anyhow::Error> {
         ..
     } = context;
 
-    let store_path = test_data_path.join("store");
-    std::fs::create_dir_all(&store_path)?;
-
     println!();
     let backup_config = {
-        let backups_store_path = store_path.display().to_string();
-        let checks_store_path = store_path.display().to_string();
-
-        let toml = toml! {
+        let mut toml = toml! {
             [storage.backups]
             provider = "fs"
-            fs.directory = backups_store_path
+            fs.directory = "store"
 
             [storage.checks]
             provider = "fs"
-            fs.directory = checks_store_path
+            fs.directory = "store"
         };
+
+        map_storage_directories_in_test_dir(&mut toml, test_data_path)?;
 
         BackupConfig::try_from(toml)
     }?;
@@ -60,7 +56,7 @@ async fn single_store() -> Result<(), anyhow::Error> {
     let blueprints = test_blueprints();
     let local_data_blueprint = blueprints.get(&BLUEPRINT_LOCAL_DATA).unwrap();
     let blueprint = &local_data_blueprint.src_relative_to(Path::new(TEST_DATA_DIR));
-    let restore_blueprint = &local_data_blueprint.src_relative_to(Path::new(TEST_DATA_DIR));
+    let restore_blueprint = &local_data_blueprint.src_relative_to(test_data_path.join("restore"));
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([

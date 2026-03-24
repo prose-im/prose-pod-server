@@ -31,7 +31,8 @@ pub(crate) fn restore<'a>(
 
                 // Abort backup restoration.
                 return Err(RestorationError::MoveFailed {
-                    tmp_dir,
+                    from: src,
+                    to: dst.to_owned(),
                     source: anyhow::Error::new(err),
                 });
             }
@@ -71,12 +72,12 @@ fn revert(processed: Vec<(PathBuf, PathBuf, Option<crate::util::PathGuard>)>) {
 
         // Recover backed up file/directory.
         if let Some(original) = original {
-            fs::rename(&original, &replaced).unwrap_or_else(|err| {
+            if let Err(err) = fs::rename(&original, &replaced) {
                 tracing::error!(
                     "Could not recover `{path}`: {err:?}",
                     path = replaced.display()
                 )
-            });
+            };
         }
     }
 }
@@ -86,9 +87,10 @@ pub enum RestorationError {
     #[error("Extraction failed")]
     ExtractionFailed(#[from] crate::archiving::ExtractionError),
 
-    #[error("Move failed")]
+    #[error("Move failed from `{from}` to `{to}`")]
     MoveFailed {
-        tmp_dir: tempfile::TempDir,
+        from: PathBuf,
+        to: PathBuf,
         #[source]
         source: anyhow::Error,
     },

@@ -6,7 +6,7 @@
 use std::{
     fs::{self, File},
     os::unix::fs::{MetadataExt, OpenOptionsExt as _},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use anyhow::Context as _;
@@ -18,19 +18,13 @@ use super::prelude::*;
 /// Read and write backups on disk.
 pub struct FsStore {
     pub directory: PathBuf,
-    pub overwrite: bool,
-    pub mode: u32,
-}
 
-impl Default for FsStore {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            directory: PathBuf::new(),
-            overwrite: false,
-            mode: 0o600,
-        }
-    }
+    pub overwrite: bool,
+
+    /// Octal version `0o` of the desired mode.
+    ///
+    /// It is recommended to use `0o600`.
+    pub mode: u32,
 }
 
 impl FsStore {
@@ -283,43 +277,3 @@ impl super::Finalizable for File {
 }
 
 impl super::ObjectWriter for File {}
-
-// MARK: Builder
-
-pub struct FsStoreBuilder {
-    res: FsStore,
-}
-
-impl FsStore {
-    #[inline]
-    pub fn builder() -> FsStoreBuilder {
-        FsStoreBuilder {
-            res: Self::default(),
-        }
-    }
-}
-
-impl FsStoreBuilder {
-    #[inline]
-    pub fn overwrite(mut self, overwrite: bool) -> Self {
-        self.res.overwrite = overwrite;
-        self
-    }
-
-    #[inline]
-    pub fn mode(mut self, mode: u32) -> Self {
-        self.res.mode = mode;
-        self
-    }
-
-    #[inline]
-    pub fn directory(mut self, directory: impl AsRef<Path>) -> Self {
-        self.res.directory = directory.as_ref().to_path_buf();
-        self
-    }
-
-    #[inline]
-    pub fn build(self) -> FsStore {
-        self.res
-    }
-}

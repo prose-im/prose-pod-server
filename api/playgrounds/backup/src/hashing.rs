@@ -52,7 +52,11 @@ impl<W: Write> Write for DigestWriter<W> {
 }
 
 impl<W: Write> DigestWriter<W> {
-    pub fn finalize(self) -> Result<W, anyhow::Error> {
+    #[cfg_attr(not(coverage), allow(unused_mut))]
+    pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+        #[cfg(coverage)]
+        self.flush()?;
+
         match self {
             Self::Sha256(writer) => writer.finalize(),
         }
@@ -84,6 +88,8 @@ mod sha256 {
 
     impl<W: Write> Sha256DigestWriter<W> {
         pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+            self.flush()?;
+
             let hash = self.hasher.finalize();
             self.writer
                 .write_all(&hash)

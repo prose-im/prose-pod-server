@@ -23,7 +23,95 @@ use toml::toml;
 use crate::common::{prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn happy_path_fs() -> Result<(), anyhow::Error> {
+async fn happy_path_noenc_nosign() -> Result<(), anyhow::Error> {
+    let config = toml! {
+        [encryption]
+        mode = "off"
+
+        [signing]
+        pgp.enabled = false
+
+        [storage.backups]
+        provider = "fs"
+        fs.directory = "backups"
+
+        [storage.checks]
+        provider = "fs"
+        fs.directory = "checks"
+    };
+
+    test_happy_path_(config).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn happy_path_enc_pgp_nosign() -> Result<(), anyhow::Error> {
+    let config = toml! {
+        [encryption]
+        mode = "pgp"
+        pgp.tsk = "encrypt.pgp"
+
+        [signing]
+        pgp.enabled = false
+
+        [storage.backups]
+        provider = "fs"
+        fs.directory = "backups"
+
+        [storage.checks]
+        provider = "fs"
+        fs.directory = "checks"
+    };
+
+    test_happy_path_(config).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn happy_path_noenc_sign_pgp() -> Result<(), anyhow::Error> {
+    let config = toml! {
+        [encryption]
+        mode = "off"
+
+        [signing]
+        pgp.enabled = true
+        pgp.tsk = "sign.pgp"
+
+        [storage.backups]
+        provider = "fs"
+        fs.directory = "backups"
+
+        [storage.checks]
+        provider = "fs"
+        fs.directory = "checks"
+    };
+
+    test_happy_path_(config).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn happy_path_enc_pgp_sign_pgp() -> Result<(), anyhow::Error> {
+    let config = toml! {
+        [encryption]
+        mode = "pgp"
+        pgp.tsk = "encrypt.pgp"
+
+        [signing]
+        pgp.enabled = true
+        pgp.tsk = "sign.pgp"
+
+        [storage.backups]
+        provider = "fs"
+        fs.directory = "backups"
+
+        [storage.checks]
+        provider = "fs"
+        fs.directory = "checks"
+    };
+
+    test_happy_path_(config).await
+}
+
+/// Tests all features of the library, given a configuration.
+async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Error> {
     let context = init();
     let TestContext {
         now,
@@ -31,36 +119,10 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
         ..
     } = context;
 
-    let backups_store_path = test_data_path.join("backups");
-    std::fs::create_dir_all(&backups_store_path)?;
-    let checks_store_path = test_data_path.join("checks");
-    std::fs::create_dir_all(&checks_store_path)?;
+    map_storage_directories_in_test_dir(&mut config_toml, test_data_path)?;
 
     println!();
-    let backup_config = {
-        let backups_store_path = backups_store_path.display().to_string();
-        let checks_store_path = checks_store_path.display().to_string();
-
-        let toml = toml! {
-            [encryption]
-            mode = "pgp"
-            pgp.tsk = "encrypt.pgp"
-
-            [signing]
-            pgp.enabled = false
-            pgp.tsk = "sign.pgp"
-
-            [storage.backups]
-            provider = "fs"
-            fs.directory = backups_store_path
-
-            [storage.checks]
-            provider = "fs"
-            fs.directory = checks_store_path
-        };
-
-        BackupConfig::try_from(toml)
-    }?;
+    let backup_config = BackupConfig::try_from(config_toml).context("BackupConfig::try_from")?;
     tracing::info!("Parsed config: {backup_config:#?}");
 
     let blueprints = test_blueprints();

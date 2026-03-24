@@ -4,6 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub mod blueprints;
+pub mod fs;
 pub mod lifecycle;
 pub mod pgp;
 pub mod print;
@@ -13,6 +14,7 @@ pub mod s3;
 pub mod prelude {
     pub use super::blueprints::*;
     pub(crate) use super::env_required;
+    pub use super::fs::*;
     pub use super::lifecycle::*;
     pub use super::pgp::*;
     pub use super::unique_hex;

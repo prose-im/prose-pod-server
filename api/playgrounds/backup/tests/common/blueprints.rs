@@ -18,7 +18,7 @@ pub const BLUEPRINT_POD_API_DEMO: u8 = 2;
 #[rustfmt::skip]
 pub fn test_blueprints() -> HashMap<u8, ArchiveBlueprint> {
     BlueprintsBuilder::new()
-        .insert(
+        .insert_paths(
             BLUEPRINT_LOCAL_DATA,
             [
                 ("foo-data", "foo"),
@@ -27,7 +27,7 @@ pub fn test_blueprints() -> HashMap<u8, ArchiveBlueprint> {
             ]
             .into_iter(),
         )
-        .insert(
+        .insert_paths(
             BLUEPRINT_POD_API_DEMO,
             [
                 ("prosody-data", "prosody/data"),
@@ -64,7 +64,12 @@ impl BlueprintsBuilder {
         }
     }
 
-    pub fn insert<Dst, Src, I>(mut self, version: u8, paths: I) -> Self
+    pub fn insert(mut self, version: u8, blueprint: ArchiveBlueprint) -> Self {
+        self.res.insert(version, blueprint);
+        self
+    }
+
+    pub fn insert_paths<Dst, Src, I>(mut self, version: u8, paths: I) -> Self
     where
         I: Iterator<Item = (Dst, Src)>,
         Dst: ToString,
