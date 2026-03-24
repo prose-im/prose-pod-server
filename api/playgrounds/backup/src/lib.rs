@@ -497,7 +497,7 @@ mod create {
 
         let start = SystemTime::now();
 
-        let backup_writer = archive(&blueprint, version, &additional_archive_data)
+        let writer_chain = archive(&blueprint, version, &additional_archive_data)
             .then(compress(&service.compression_config))
             .then(eventually(service.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
@@ -512,7 +512,7 @@ mod create {
             )
             .build(upload_backup)?;
 
-        let Tee(archive_writer, pgp_signing_writer_opt) = backup_writer;
+        let Tee(archive_writer, pgp_signing_writer_opt) = writer_chain;
 
         let compression_writer = archive_writer
             // NOTE: Flushes the stream if needed.
@@ -525,30 +525,17 @@ mod create {
             .map_err(anyhow::Error::new)
             .map_err(CreateBackupError::CompressionFailed)?;
 
-        let metered_tee2 = match encryption_writer_opt {
+        let (Tee(backup_upload, digest_writer), backup_stats) = match encryption_writer_opt {
             Either::A(EncryptionWriter::Pgp(pgp_writer)) => pgp_writer
                 .finalize()
                 .map_err(CreateBackupError::EncryptionFailed)?,
             Either::B(writer) => writer,
-        };
-
-        let (tee2, backup_stats) = metered_tee2.into_parts();
-
-        let Tee(backup_upload, digest_writer) = tee2;
+        }
+        .into_parts();
 
         let digest = digest_writer
             .finalize()
             .map_err(CreateBackupError::HashingFailed)?;
-
-        let pgp_signature = match pgp_signing_writer_opt {
-            Some(writer) => {
-                let signature = writer
-                    .finalize()
-                    .map_err(CreateBackupError::SigningFailed)?;
-                Some(signature)
-            }
-            None => None,
-        };
 
         let mut digest_ids: Vec<ObjectId> = Vec::new();
         let mut checks_upload_durations: Vec<(ObjectId, std::time::Duration)> = Vec::new();
@@ -565,10 +552,14 @@ mod create {
 
         let mut signature_ids: Vec<ObjectId> = Vec::new();
 
-        let is_signed = pgp_signature.is_some();
+        let is_signed = pgp_signing_writer_opt.is_some();
 
         // Upload OpenPGP signature.
-        if let Some(pgp_signature) = pgp_signature {
+        if let Some(writer) = pgp_signing_writer_opt {
+            let pgp_signature = writer
+                .finalize()
+                .map_err(CreateBackupError::SigningFailed)?;
+
             upload_integrity_check(
                 pgp_signature,
                 // NOTE: OpenPGP will likely forever be the only signing protocol
