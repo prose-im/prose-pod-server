@@ -39,14 +39,12 @@ where
 
 impl<W: Write> Write for DigestWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        tracing::trace!("DigestWriter::write({})", buf.len());
         match self {
             Self::Sha256(writer) => writer.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        tracing::trace!("DigestWriter::flush()");
         match self {
             Self::Sha256(writer) => writer.flush(),
         }
@@ -55,7 +53,6 @@ impl<W: Write> Write for DigestWriter<W> {
 
 impl<W: Write> DigestWriter<W> {
     pub fn finalize(self) -> Result<W, anyhow::Error> {
-        tracing::trace!("DigestWriter::finalize()");
         match self {
             Self::Sha256(writer) => writer.finalize(),
         }
@@ -97,12 +94,10 @@ mod sha256 {
 
     impl<W: Write> Write for Sha256DigestWriter<W> {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            tracing::trace!("Sha256DigestWriter::write({})", buf.len());
             self.hasher.write(buf)
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            tracing::trace!("Sha256DigestWriter::flush()");
             self.hasher.flush()
         }
     }

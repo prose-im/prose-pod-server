@@ -419,8 +419,6 @@ impl S3Writer {
     }
 
     async fn flush_part(&mut self) -> Result<(), anyhow::Error> {
-        tracing::trace!(key = self.key, "S3Writer::flush_part");
-
         if self.buf.is_empty() {
             tracing::trace!(
                 key = self.key,
@@ -521,7 +519,6 @@ impl Write for S3Writer {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        tracing::trace!(key = self.key, "S3Writer::flush");
         Ok(())
     }
 }
