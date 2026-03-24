@@ -18,13 +18,20 @@ pub mod prelude {
     pub use super::unique_hex;
 }
 
-pub fn unique_hex() -> String {
-    let ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+// NOTE: Implementation cannot be time-based, even with nanosecond precision,
+//   as tests are ran concurrently and such conflicts happen (very often).
+//   When it does, one test cleaning up its temporary directory causes another
+//   to fail. We don’t want that.
+pub fn unique_hex() -> Result<String, std::io::Error> {
+    use std::io::Read as _;
 
-    format!("{:x}", ns)
+    let mut urandom = std::fs::File::open("/dev/urandom")?;
+    let mut buf = [0u8; 4]; // 4 bytes = 8 hex chars
+    urandom.read_exact(&mut buf)?;
+
+    let hex = buf.iter().map(|b| format!("{:02x}", b)).collect();
+
+    Ok(hex)
 }
 
 macro_rules! env_required {

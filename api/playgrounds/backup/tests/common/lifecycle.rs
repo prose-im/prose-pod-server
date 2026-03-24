@@ -32,7 +32,7 @@ pub fn init() -> TestContext {
         init_shared_data().unwrap();
     });
 
-    let test_id = format!("test-{id}", id = super::unique_hex());
+    let test_id = format!("test-{id}", id = super::unique_hex().unwrap());
     tracing::debug!("Test id: {test_id}");
 
     let test_data_path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(&test_id);
