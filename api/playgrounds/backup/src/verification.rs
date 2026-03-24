@@ -289,12 +289,6 @@ impl BackupService {
             //   the OS will flush before closing the file.
             let Tee(_backup_file, verifier) = tee_writer;
 
-            assert_eq!(Sha256::new().finalize(), Sha256::new().finalize());
-            tracing::debug!(
-                "Empty hash: {:?}",
-                AsRef::<[u8]>::as_ref(&Sha256::new().finalize())
-            );
-
             let computed_hash = verifier.finalize();
             assert_eq!(computed_hash.as_ref(), expected_hash);
 
