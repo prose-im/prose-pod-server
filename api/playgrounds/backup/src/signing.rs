@@ -46,8 +46,12 @@ pub mod pgp {
         signer: Option<openpgp::serialize::stream::Signer<'this>>,
     }
 
-    impl<W> PgpSigner<W> {
+    impl<W: Write> PgpSigner<W> {
+        #[cfg_attr(not(coverage), allow(unused_mut))]
         pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+            #[cfg(coverage)]
+            self.flush()?;
+
             // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
             // TODO: Try to `.build()` before? Would it work?
             //   Try and make sure nothing breaks.

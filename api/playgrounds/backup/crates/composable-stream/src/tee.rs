@@ -3,7 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use crate::ComposableStreamBuilder;
+use crate::{ComposableStreamBuilder, OptionalStream};
 
 pub use self::TeeStream as Tee;
 
@@ -79,14 +79,14 @@ impl<M1> ComposableStreamBuilder<M1> {
 impl<M1> ComposableStreamBuilder<M1> {
     /// Fork, or don’t. Second output will be optional.
     #[inline]
-    pub fn opt_tee<T, A1, B1, A2, B2, Err, M2>(
+    pub fn opt_tee<T, A1, A2, B2, C, Err, M2>(
         self,
         cond: Option<T>,
         other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M2>,
         stream: A2,
-    ) -> ComposableStreamBuilder<impl FnOnce(A1) -> Result<Tee<B1, Option<B2>>, Err>>
+    ) -> ComposableStreamBuilder<impl FnOnce(A1) -> Result<C, Err>>
     where
-        M1: FnOnce(A1) -> Result<B1, Err>,
+        M1: FnOnce(Tee<A1, OptionalStream<B2>>) -> Result<C, Err>,
         M2: FnOnce(A2) -> Result<B2, Err>,
     {
         let Self { make, .. } = self;
@@ -101,17 +101,17 @@ impl<M1> ComposableStreamBuilder<M1> {
 
         ComposableStreamBuilder {
             make: move |a1: A1| {
-                let b1: B1 = make(a1)?;
-
-                let b2_opt: Option<B2> = match make_b2_opt {
+                let b2_opt: OptionalStream<B2> = match make_b2_opt {
                     Some(make_b2) => {
                         let b2: B2 = make_b2(stream)?;
-                        Some(b2)
+                        OptionalStream::Some(b2)
                     }
-                    None => None,
+                    None => OptionalStream::None,
                 };
 
-                Ok(Tee(b1, b2_opt))
+                let tee = Tee(a1, b2_opt);
+
+                make(tee)
             },
         }
     }
@@ -123,7 +123,7 @@ impl<M1> ComposableStreamBuilder<M1> {
         self,
         cond: Option<T>,
         other_builder: impl FnOnce(T) -> B2,
-    ) -> ComposableStreamBuilder<impl FnOnce(A1) -> Result<Tee<B1, Option<B2>>, Err>>
+    ) -> ComposableStreamBuilder<impl FnOnce(A1) -> Result<Tee<B1, OptionalStream<B2>>, Err>>
     where
         M1: FnOnce(A1) -> Result<B1, Err>,
     {
@@ -132,7 +132,7 @@ impl<M1> ComposableStreamBuilder<M1> {
         ComposableStreamBuilder {
             make: move |a1: A1| {
                 let b1: B1 = make(a1)?;
-                let b2_opt: Option<B2> = cond.map(other_builder);
+                let b2_opt: OptionalStream<B2> = OptionalStream::map(cond, other_builder);
                 Ok(Tee(b1, b2_opt))
             },
         }

@@ -497,7 +497,7 @@ mod create {
 
         let start = SystemTime::now();
 
-        let writer_chain = archive(&blueprint, version, &additional_archive_data)
+        let archive_writer = archive(&blueprint, version, &additional_archive_data)
             .then(compress(&service.compression_config))
             .then(eventually(service.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
@@ -512,8 +512,6 @@ mod create {
             )
             .build(upload_backup)?;
 
-        let Tee(archive_writer, pgp_signing_writer_opt) = writer_chain;
-
         let compression_writer = archive_writer
             // NOTE: Flushes the stream if needed.
             .into_inner()
@@ -525,13 +523,14 @@ mod create {
             .map_err(anyhow::Error::new)
             .map_err(CreateBackupError::CompressionFailed)?;
 
-        let (Tee(backup_upload, digest_writer), backup_stats) = match encryption_writer_opt {
-            Either::A(encryption_writer) => encryption_writer
-                .into_inner()
-                .map_err(CreateBackupError::EncryptionFailed)?,
-            Either::B(writer) => writer,
-        }
-        .into_parts();
+        let (Tee(Tee(backup_upload, pgp_signing_writer_opt), digest_writer), backup_stats) =
+            match encryption_writer_opt {
+                Either::A(encryption_writer) => encryption_writer
+                    .into_inner()
+                    .map_err(CreateBackupError::EncryptionFailed)?,
+                Either::B(writer) => writer,
+            }
+            .into_parts();
 
         let digest = digest_writer
             .finalize()
@@ -555,7 +554,7 @@ mod create {
         let is_signed = pgp_signing_writer_opt.is_some();
 
         // Upload OpenPGP signature.
-        if let Some(writer) = pgp_signing_writer_opt {
+        if let OptionalStream::Some(writer) = pgp_signing_writer_opt {
             let pgp_signature = writer
                 .finalize()
                 .map_err(CreateBackupError::SigningFailed)?;
@@ -1273,6 +1272,7 @@ mod backup_id {
     #[cfg(test)]
     mod tests {
         #[test]
+        #[cfg(feature = "test")]
         fn test_backup_id_components_parsing() -> Result<(), anyhow::Error> {
             use crate::BackupId;
 

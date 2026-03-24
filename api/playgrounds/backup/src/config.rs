@@ -500,9 +500,11 @@ impl<'de> serde::Deserialize<'de> for AlwaysNone {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
+    #[cfg(feature = "test")]
     fn test_storage_errors() {
         use figment::providers::*;
         use toml::toml;

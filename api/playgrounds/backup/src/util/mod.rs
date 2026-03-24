@@ -182,6 +182,12 @@ macro_rules! assert_impl {
             assert_impl::<$ty>();
         };
     };
+    ($val:expr, $trait:path) => {
+        let _ = || {
+            fn assert_impl<T: $trait>(_val: T) {}
+            assert_impl($val);
+        };
+    };
 }
 pub(crate) use assert_impl;
 

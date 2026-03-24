@@ -5,6 +5,52 @@
 
 use crate::{ComposableStreamBuilder, Either};
 
+pub enum OptionalStream<S> {
+    None,
+    Some(S),
+}
+
+impl<S> OptionalStream<S> {
+    pub const fn is_some(&self) -> bool {
+        matches!(*self, Self::Some(_))
+    }
+
+    pub const fn is_none(&self) -> bool {
+        !self.is_some()
+    }
+
+    pub fn map<T, F>(option: Option<T>, f: F) -> Self
+    where
+        F: FnOnce(T) -> S,
+    {
+        match option {
+            Some(t) => Self::Some(f(t)),
+            None => Self::None,
+        }
+    }
+}
+
+impl<T> std::io::Write for OptionalStream<T>
+where
+    T: std::io::Write,
+{
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::None => Ok(buf.len()),
+            Self::Some(writer) => writer.write(buf),
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::None => Ok(()),
+            Self::Some(writer) => writer.flush(),
+        }
+    }
+}
+
 /// Add a layer, or don’t. Either way, you’ll get the same output type.
 ///
 /// ```text
@@ -66,7 +112,7 @@ where
 pub fn optionally<T, A, B, Err, M1>(
     cond: Option<T>,
     other_builder: impl FnOnce(T) -> ComposableStreamBuilder<M1>,
-) -> ComposableStreamBuilder<impl FnOnce(A) -> Result<Option<B>, Err>>
+) -> ComposableStreamBuilder<impl FnOnce(A) -> Result<OptionalStream<B>, Err>>
 where
     M1: FnOnce(A) -> Result<B, Err>,
 {
@@ -82,9 +128,9 @@ where
         make: move |a: A| match make_b_opt {
             Some(make_b) => {
                 let b: B = make_b(a)?;
-                Ok(Some(b))
+                Ok(OptionalStream::Some(b))
             }
-            None => Ok(None),
+            None => Ok(OptionalStream::None),
         },
     }
 }
