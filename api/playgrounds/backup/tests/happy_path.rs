@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
@@ -92,7 +92,8 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
                 .ok_or(anyhow!("Unknown cert: `{}`.", path.display()))
         },
         || pgp_policy.clone(),
-    )?;
+    )
+    .context("BackupService::from_config_custom")?;
 
     println!();
     let CreateBackupSuccess {
@@ -107,7 +108,10 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await?
+        service
+            .create_backup(command)
+            .await
+            .context("create_backup")?
     };
     let CreateBackupOutput {
         backup_id,
@@ -135,17 +139,21 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
     }
 
     println!();
-    let backups = service.list_backups().await?;
+    let backups = service.list_backups().await.context("list_backups")?;
     tracing::info!("Backups: {backups:#?}");
 
     println!();
-    let details = service.get_details(&backup_id).await?;
+    let details = service
+        .get_details(&backup_id)
+        .await
+        .context("get_details")?;
     tracing::info!("Backup details: {details:#?}");
 
     println!();
     let download_url = service
         .get_download_url(&backup_id, Duration::from_secs(3))
-        .await?;
+        .await
+        .context("get_download_url")?;
     tracing::info!("Download URL: <{download_url}>.");
 
     println!();
@@ -153,7 +161,10 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
         extraction_output,
         extraction_stats,
         ..
-    } = service.extract_backup(&backup_id).await?;
+    } = service
+        .extract_backup(&backup_id)
+        .await
+        .context("extract_backup")?;
     print_stats(
         &extraction_stats.raw_read_stats,
         &extraction_stats.decryption_stats,
@@ -164,10 +175,14 @@ async fn happy_path_fs() -> Result<(), anyhow::Error> {
     println!();
     service
         .restore_extracted_backup(extraction_output, &restore_blueprint)
-        .await?;
+        .await
+        .context("restore_extracted_backup")?;
 
     println!();
-    () = service.delete_backup(&backup_id).await?;
+    () = service
+        .delete_backup(&backup_id)
+        .await
+        .context("delete_backup")?;
 
     Ok(())
 }
