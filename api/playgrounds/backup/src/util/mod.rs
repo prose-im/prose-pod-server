@@ -29,13 +29,13 @@ pub fn safe_replace(
     use std::path::PathBuf;
 
     let backup = if fs::exists(dst)? {
-        let mut backup_path = dst.with_extension("bak");
+        let mut backup_path = dst.with_added_extension("bak");
 
         // If file already exists, switch to a unique name.
         if fs::exists(&backup_path)? {
             #[cold]
             fn use_unique_name(backup_path: &mut PathBuf, dst: &std::path::Path) {
-                *backup_path = dst.with_extension(format!("{}.bak", unix_timestamp()));
+                *backup_path = dst.with_added_extension(format!("{}.bak", unix_timestamp()));
             }
             use_unique_name(&mut backup_path, &dst)
         }
@@ -214,5 +214,65 @@ mod tests {
         assert_eq!(saturating_i64_to_u64(i64::MIN), 0);
         assert_eq!(i64::MAX, 9223372036854775807);
         assert_eq!(saturating_i64_to_u64(i64::MAX), 9223372036854775807);
+    }
+
+    /// Tests that `safe_replace` doesn’t fail if a `*.bak` file already exists.
+    #[test]
+    fn test_safe_replace_existing_bak() {
+        use std::collections::HashSet;
+        use std::ffi::OsString;
+        use std::fs;
+
+        let tmpdir = tempfile::TempDir::with_prefix(std::env!("CARGO_CRATE_NAME")).unwrap();
+        let tmp = tmpdir.path();
+
+        let dir_a = tmp.join("a");
+        fs::create_dir(&dir_a).unwrap();
+
+        let dir_b = tmp.join("b");
+        fs::create_dir(&dir_b).unwrap();
+
+        let dir_a_bak = dir_a.with_added_extension("bak");
+        fs::create_dir(&dir_a_bak).unwrap();
+        // NOTE: We need to create a file, because `fs::rename` doesn’t fail
+        //   when renaming to an existing, but empty, directory.
+        fs::write(dir_a_bak.join("foo"), "").unwrap();
+
+        fn assert_dirs<T: Into<OsString>>(
+            tmp: &std::path::Path,
+            expected: impl IntoIterator<Item = T>,
+        ) {
+            let dirs: HashSet<OsString> = fs::read_dir(tmp)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            let expected = HashSet::from_iter(expected.into_iter().map(Into::into));
+            assert_eq!(dirs, expected);
+        }
+
+        #[rustfmt::skip]
+        assert_dirs(tmp, ["a", "a.bak", "b"]);
+
+        let backup_opt = safe_replace(dir_b, &dir_a).unwrap();
+        assert!(matches!(backup_opt, Some(_)));
+
+        assert_dirs(
+            tmp,
+            [
+                OsString::from("a"),
+                OsString::from("a.bak"),
+                backup_opt
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_os_string(),
+            ],
+        );
+
+        drop(backup_opt);
+
+        #[rustfmt::skip]
+        assert_dirs(tmp, ["a", "a.bak"]);
     }
 }
