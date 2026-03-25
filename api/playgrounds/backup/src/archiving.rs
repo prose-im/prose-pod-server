@@ -37,19 +37,9 @@ pub struct ArchivingContext {
     pub blueprints: HashMap<u8, ArchiveBlueprint>,
 }
 
-#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ArchiveBlueprint {
     pub paths: Vec<(String, PathBuf)>,
-}
-
-impl ArchiveBlueprint {
-    // NOTE: The reason why we have this trivial constructor is so we can later
-    //   add non-breaking support for in-memory reads instead of forcing one
-    //   to store files.
-    pub fn from_paths(paths: Vec<(String, PathBuf)>) -> Self {
-        Self { paths }
-    }
 }
 
 impl<Dst, Src> FromIterator<(Dst, Src)> for ArchiveBlueprint

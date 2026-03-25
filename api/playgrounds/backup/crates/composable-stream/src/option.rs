@@ -11,14 +11,17 @@ pub enum OptionalStream<S> {
 }
 
 impl<S> OptionalStream<S> {
+    #[inline]
     pub const fn is_some(&self) -> bool {
         matches!(*self, Self::Some(_))
     }
 
+    #[inline]
     pub const fn is_none(&self) -> bool {
         !self.is_some()
     }
 
+    #[inline]
     pub fn map<T, F>(option: Option<T>, f: F) -> Self
     where
         F: FnOnce(T) -> S,

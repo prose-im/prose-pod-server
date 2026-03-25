@@ -3,6 +3,11 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+//! Tests happy paths of all features given multiple configurations.
+//!
+//! Essentially ensures that the library works as intended and all features it
+//! says are supported really are and work.
+
 #[allow(dead_code, unused_imports, unused_macros)]
 mod common;
 
