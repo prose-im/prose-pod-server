@@ -456,6 +456,7 @@ impl S3Writer {
         Ok(())
     }
 
+    /// NOTE: Flushes the stream if needed.
     pub async fn complete(mut self) -> Result<(), anyhow::Error> {
         self.flush_part().await?;
 
@@ -519,12 +520,20 @@ impl Write for S3Writer {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(self.flush_part())
+        })
+        .map_err(io::Error::other)
     }
 }
 
 impl super::Finalizable for S3Writer {
-    fn finalize(self: Box<Self>) -> Result<(), anyhow::Error> {
+    /// NOTE: Flushes the stream if needed.
+    #[cfg_attr(not(coverage), allow(unused_mut))]
+    fn finalize(mut self: Box<Self>) -> Result<(), anyhow::Error> {
+        #[cfg(coverage)]
+        self.flush()?;
+
         tokio::task::block_in_place(move || {
             tokio::runtime::Handle::current().block_on(self.complete())
         })

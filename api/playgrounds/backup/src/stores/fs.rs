@@ -64,26 +64,27 @@ impl FsStore {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModeResult {
     Ok,
     Warn,
     Err,
 }
 
-// TODO: Add tests.
 #[allow(clippy::if_same_then_else)]
 fn validate_mode(mode: &u32, min_permissions: &u32) -> ModeResult {
     if mode == min_permissions {
         // Exit early if exact match.
         ModeResult::Ok
     } else if mode & 0o117 != 0 {
+        // Prohibit `x` and `a:*`.
         ModeResult::Err
     } else if mode & min_permissions != *min_permissions {
+        // Reject if missing permissions.
         ModeResult::Err
-    } else if mode ^ min_permissions != 0 {
-        ModeResult::Warn
     } else {
-        ModeResult::Ok
+        // Warn if unnecessary permissions.
+        ModeResult::Warn
     }
 }
 
@@ -277,3 +278,44 @@ impl super::Finalizable for File {
 }
 
 impl super::ObjectWriter for File {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_mode() {
+        macro_rules! test {
+            ($a:expr, $b:expr, $res:ident) => {
+                assert_eq!(validate_mode(&$a, &$b), ModeResult::$res);
+            };
+        }
+
+        // Valid, recommended:
+        test!(0o600, 0o600, Ok);
+        // Prohibited `x`:
+        test!(0o700, 0o600, Err);
+        test!(0o610, 0o600, Err);
+        test!(0o601, 0o600, Err);
+        test!(0o602, 0o600, Err);
+        test!(0o604, 0o600, Err);
+        // Missing `u:r`:
+        test!(0o400, 0o600, Err);
+        // Not recommended `g`:
+        test!(0o620, 0o600, Warn);
+        test!(0o640, 0o600, Warn);
+
+        // === Decimals ===
+        test!(600, 0o600, Err);
+        test!(700, 0o600, Err);
+        test!(610, 0o600, Err);
+        test!(601, 0o600, Err);
+        test!(602, 0o600, Err);
+        test!(604, 0o600, Err);
+        // Unfortunately, this one results in a warning as it equals `0o620`.
+        // There’s nothing we can do about it.
+        test!(400, 0o600, Warn);
+        test!(620, 0o600, Err);
+        test!(640, 0o600, Err);
+    }
+}

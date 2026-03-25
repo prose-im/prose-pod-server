@@ -73,7 +73,14 @@ where
 
 impl<'a, W> EncryptionWriter<'a, W> {
     /// NOTE: Flushes the stream if needed.
-    pub fn into_inner(self) -> Result<W, anyhow::Error> {
+    #[cfg_attr(not(coverage), allow(unused_mut))]
+    pub fn into_inner(mut self) -> Result<W, anyhow::Error>
+    where
+        W: Write,
+    {
+        #[cfg(coverage)]
+        self.flush()?;
+
         match self {
             EncryptionWriter::Pgp(writer) => writer.finalize(),
         }
@@ -109,7 +116,13 @@ mod pgp {
 
     impl<'a, W> PgpEncryptedWriter<'a, W> {
         /// NOTE: Flushes the stream if needed.
-        pub fn finalize(mut self) -> Result<W, anyhow::Error> {
+        pub fn finalize(mut self) -> Result<W, anyhow::Error>
+        where
+            W: Write,
+        {
+            #[cfg(coverage)]
+            self.flush()?;
+
             self.with_message_mut(|message| {
                 // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
                 let message = message.take().unwrap();

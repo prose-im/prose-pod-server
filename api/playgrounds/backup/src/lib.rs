@@ -665,33 +665,6 @@ mod create {
         pub created_at: std::time::SystemTime,
     }
 
-    impl<'a> CreateBackupCommand<'a> {
-        #[inline]
-        pub fn new(
-            prefix: &'a str,
-            description: &'a str,
-            version: u8,
-            blueprint: &'a ArchiveBlueprint,
-        ) -> Self {
-            Self {
-                prefix,
-                description,
-                version,
-                blueprint,
-                additional_archive_data: Vec::with_capacity(0),
-                #[cfg(feature = "test")]
-                created_at: std::time::SystemTime::now(),
-            }
-        }
-
-        #[cfg(feature = "test")]
-        #[inline]
-        pub fn created_at(mut self, created_at: std::time::SystemTime) -> Self {
-            self.created_at = created_at;
-            self
-        }
-    }
-
     #[derive(Debug)]
     pub struct CreateBackupOutput {
         /// Unique identifier (file name / object key) of the backup.

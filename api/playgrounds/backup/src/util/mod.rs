@@ -3,134 +3,22 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+mod fs;
 mod measurements;
 #[cfg(feature = "provider_fs")]
 mod octal;
 pub mod serde;
 
-pub use measurements::BytesAmount;
+pub use self::fs::*;
+pub use self::measurements::BytesAmount;
 #[cfg(feature = "provider_fs")]
-pub use octal::Octal;
+pub use self::octal::Octal;
 
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.
 #[cfg(any(feature = "provider_s3", test))]
 pub fn saturating_i64_to_u64(value: i64) -> u64 {
     value.max(0) as u64
-}
-
-/// Renames a file/directory (moves it to a new location), temporarily backing
-/// it up and restoring it on failure (if applicable).
-pub fn safe_replace(
-    src: impl AsRef<std::path::Path>,
-    dst: &std::path::Path,
-) -> std::io::Result<Option<PathGuard>> {
-    use std::fs;
-    use std::path::PathBuf;
-
-    let backup = if fs::exists(dst)? {
-        let mut backup_path = dst.with_added_extension("bak");
-
-        // If file already exists, switch to a unique name.
-        if fs::exists(&backup_path)? {
-            #[cold]
-            fn use_unique_name(backup_path: &mut PathBuf, dst: &std::path::Path) {
-                *backup_path = dst.with_added_extension(format!("{}.bak", unix_timestamp()));
-            }
-            use_unique_name(&mut backup_path, &dst)
-        }
-
-        fs::rename(dst, &backup_path)?;
-
-        // WARN: We MUST create the `PathGuard` **after** running `fs::rename`.
-        //   If we create it before and `fs::rename` ends up failing because the
-        //   path already exists, `PathGuard::drop` would delete the wrong file!
-        Some(PathGuard::new(backup_path))
-    } else {
-        None
-    };
-
-    if let Some(parent) = dst.parent() {
-        if !fs::exists(parent)? {
-            fs::create_dir_all(parent)?;
-        }
-    }
-
-    match fs::rename(src, &dst) {
-        Ok(()) => {
-            // NOTE: Backup will automatically be cleaned up
-            //   when `backup` is dropped.
-            Ok(backup)
-        }
-        Err(err) => {
-            // Restore backup on failure.
-            if let Some(mut backup) = backup {
-                fs::rename(&backup, &dst)?;
-
-                // Defuse the `PathGuard` to avoid running its destructor.
-                backup.defuse();
-            }
-
-            Err(err)
-        }
-    }
-}
-
-/// Deletes a path (file or directory) when dropped.
-pub struct PathGuard {
-    path: std::path::PathBuf,
-    active: bool,
-}
-
-impl PathGuard {
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self { path, active: true }
-    }
-
-    pub fn defuse(&mut self) {
-        self.active = false;
-    }
-}
-
-impl std::ops::Deref for PathGuard {
-    type Target = std::path::PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
-
-impl AsRef<std::path::Path> for PathGuard {
-    fn as_ref(&self) -> &std::path::Path {
-        self.path.as_path()
-    }
-}
-
-impl Drop for PathGuard {
-    fn drop(&mut self) {
-        let path = &self.path;
-
-        if matches!(path.try_exists(), Ok(false)) {
-            return;
-        }
-
-        // Best-effort (cannot recover on cleanup).
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path).unwrap_or_else(|err| {
-                tracing::error!(
-                    "Could not delete directory `{path}`: {err:?}",
-                    path = path.display()
-                )
-            })
-        } else {
-            std::fs::remove_file(&path).unwrap_or_else(|err| {
-                tracing::error!(
-                    "Could not delete file `{path}`: {err:?}",
-                    path = path.display()
-                )
-            })
-        }
-    }
 }
 
 pub trait SystemTimeExt {
@@ -177,6 +65,7 @@ pub(crate) use debug_panic_or_log_error;
 
 macro_rules! assert_impl {
     ($ty:ty : $trait:path) => {
+        #[cfg(not(coverage))]
         const _: fn() = || {
             fn assert_impl<T: $trait>() {}
             assert_impl::<$ty>();
@@ -215,65 +104,5 @@ mod tests {
         assert_eq!(saturating_i64_to_u64(i64::MIN), 0);
         assert_eq!(i64::MAX, 9223372036854775807);
         assert_eq!(saturating_i64_to_u64(i64::MAX), 9223372036854775807);
-    }
-
-    /// Tests that `safe_replace` doesn’t fail if a `*.bak` file already exists.
-    #[test]
-    fn test_safe_replace_existing_bak() {
-        use std::collections::HashSet;
-        use std::ffi::OsString;
-        use std::fs;
-
-        let tmpdir = tempfile::TempDir::with_prefix(std::env!("CARGO_CRATE_NAME")).unwrap();
-        let tmp = tmpdir.path();
-
-        let dir_a = tmp.join("a");
-        fs::create_dir(&dir_a).unwrap();
-
-        let dir_b = tmp.join("b");
-        fs::create_dir(&dir_b).unwrap();
-
-        let dir_a_bak = dir_a.with_added_extension("bak");
-        fs::create_dir(&dir_a_bak).unwrap();
-        // NOTE: We need to create a file, because `fs::rename` doesn’t fail
-        //   when renaming to an existing, but empty, directory.
-        fs::write(dir_a_bak.join("foo"), "").unwrap();
-
-        fn assert_dirs<T: Into<OsString>>(
-            tmp: &std::path::Path,
-            expected: impl IntoIterator<Item = T>,
-        ) {
-            let dirs: HashSet<OsString> = fs::read_dir(tmp)
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name())
-                .collect();
-            let expected = HashSet::from_iter(expected.into_iter().map(Into::into));
-            assert_eq!(dirs, expected);
-        }
-
-        #[rustfmt::skip]
-        assert_dirs(tmp, ["a", "a.bak", "b"]);
-
-        let backup_opt = safe_replace(dir_b, &dir_a).unwrap();
-        assert!(matches!(backup_opt, Some(_)));
-
-        assert_dirs(
-            tmp,
-            [
-                OsString::from("a"),
-                OsString::from("a.bak"),
-                backup_opt
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .unwrap()
-                    .to_os_string(),
-            ],
-        );
-
-        drop(backup_opt);
-
-        #[rustfmt::skip]
-        assert_dirs(tmp, ["a", "a.bak"]);
     }
 }

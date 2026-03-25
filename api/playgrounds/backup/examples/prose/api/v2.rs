@@ -10,7 +10,8 @@ use std::{path::Path, str::FromStr as _};
 
 use anyhow::Context;
 use prose_backup::{
-    BackupConfig, BackupId, BackupService, ExtractionSuccess, archiving::ArchiveBlueprint,
+    BackupConfig, BackupId, BackupService, CreateBackupCommand, ExtractionSuccess,
+    archiving::ArchiveBlueprint,
 };
 use tokio::sync::RwLock;
 
@@ -117,7 +118,7 @@ impl ProsePodServerApiV2 {
         let backups_version = self.constants.backups_version;
         let blueprint = &self.constants.backup_blueprints[&backups_version];
 
-        let mut command = prose_backup::CreateBackupCommand::new(
+        let mut command = CreateBackupCommand::new(
             concat!("example-", env!("CARGO_CRATE_NAME")),
             &description,
             backups_version,

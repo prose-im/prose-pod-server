@@ -256,7 +256,7 @@ async fn error_path_restore_missing_file() -> Result<(), anyhow::Error> {
         .insert(BACKUP_VERSION, blueprint.clone())
         .build();
 
-    let service = BackupService::from_config_custom(
+    let mut service = BackupService::from_config_custom(
         &backup_config,
         archiving::Context { blueprints },
         |_| unreachable!(),
@@ -283,11 +283,12 @@ async fn error_path_restore_missing_file() -> Result<(), anyhow::Error> {
 
     println!();
     blueprint.paths.push(entry);
+    (service.archiving_context.blueprints).insert(BACKUP_VERSION, blueprint.clone());
     let res = service.restore_backup(&backup_id, &blueprint).await;
     assert!(res.is_err());
     let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
     tracing::info!("Error: {err}");
-    assert!(err.contains("Move failed"));
+    assert!(err.contains("Invalid backup: Missing data"));
 
     Ok(())
 }

@@ -98,8 +98,13 @@ tasks:
     aliases: [cov]
     cmds:
       - cargo llvm-cov --html -F test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
-      - open target/llvm-cov/html/index.html
+      - task: cov:llvm-cov:open
     dotenv: [test.env]
+
+  cov:llvm-cov:open:
+    desc: Opens `cargo-llvm-cov`’s coverage report.
+    aliases: [cov:open]
+    cmd: open target/llvm-cov/html/index.html
 
   # Note recommended, as it runs `cargo clean`, takes longer to run and
   # produces erroneous output. Use `cov:llvm-cov` instead.
@@ -107,8 +112,12 @@ tasks:
     desc: Check test coverage using `cargo-tarpaulin`.
     cmds:
       - cargo tarpaulin -o html --include-files 'src/**' --exclude-files 'src/stores/s3.rs' --output-dir target/tarpaulin --features test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
-      - open target/tarpaulin/tarpaulin-report.html
+      - task: cov:tarpaulin:open
     dotenv: [test.env]
+
+  cov:tarpaulin:open:
+    desc: Opens `cargo-tarpaulin`’s coverage report.
+    cmd: open target/tarpaulin/tarpaulin-report.html
 
   ci:
     desc: Run CI tests (doesn’t test S3).
