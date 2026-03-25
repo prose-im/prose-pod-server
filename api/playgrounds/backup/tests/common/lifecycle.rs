@@ -6,17 +6,13 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::Once,
     time::SystemTime,
 };
 
-use crate::common::{fs::create_files, log_error};
+use crate::common::log_error;
 
 static INIT: Once = Once::new();
-
-/// Directory containing a fake filesystem root, to use in tests.
-pub const TEST_DATA_DIR: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/data");
 
 pub struct TestContext {
     pub now: SystemTime,
@@ -28,8 +24,6 @@ pub struct TestContext {
 pub fn init() -> TestContext {
     INIT.call_once(|| {
         init_tracing();
-
-        init_shared_data().unwrap();
     });
 
     let test_id = format!("test-{id}", id = super::unique_hex().unwrap());
@@ -95,44 +89,4 @@ fn init_tracing() {
             this = env!("CARGO_CRATE_NAME")
         )))
         .init();
-}
-
-fn init_shared_data() -> Result<(), anyhow::Error> {
-    use anyhow::Context as _;
-
-    tracing::info!("Creating shared test data in `{TEST_DATA_DIR}`…");
-
-    fn exists(path: impl AsRef<Path>) -> bool {
-        fs::exists(Path::new(TEST_DATA_DIR).join(path)).unwrap()
-    }
-
-    #[rustfmt::skip]
-    create_files(
-        TEST_DATA_DIR,
-        [
-            "foo/",
-            "foo/a",
-            "foo/b",
-            "bar/",
-            "bar/a",
-            "bar/b",
-            "baz/",
-        ]
-        .into_iter(),
-    )?;
-
-    let test_data_dir = Path::new(TEST_DATA_DIR);
-
-    if !exists("baz/example.bin") {
-        Command::new("dd")
-            .arg("if=/dev/zero")
-            .arg("of=baz/example.bin")
-            .arg("bs=1K")
-            .arg("count=12")
-            .current_dir(test_data_dir)
-            .output()
-            .unwrap();
-    }
-
-    Ok(())
 }

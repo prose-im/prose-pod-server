@@ -6,7 +6,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use openpgp::{

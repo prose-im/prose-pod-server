@@ -8,7 +8,6 @@
 //! Essentially ensures that the library works as intended and all features it
 //! says are supported really are and work.
 
-#[allow(dead_code, unused_imports, unused_macros)]
 mod common;
 
 use std::{
@@ -21,7 +20,10 @@ use anyhow::{Context as _, anyhow};
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
-    archiving, config::*, decryption::PgpDecryptionContext, openpgp,
+    archiving::{self, ArchiveBlueprint},
+    config::*,
+    decryption::PgpDecryptionContext,
+    openpgp,
 };
 use toml::toml;
 
@@ -130,14 +132,29 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
     let backup_config = BackupConfig::try_from(config_toml).context("BackupConfig::try_from")?;
     tracing::info!("Parsed config: {backup_config:#?}");
 
-    let blueprints = test_blueprints();
+    let blueprint = ArchiveBlueprint::from_iter(
+        [
+            ("foo-data", "foo"),
+            ("bar-data", "bar"),
+        ]
+        .into_iter(),
+    )
+    .src_relative_to(&test_data_path);
 
-    let prose_pod_api_dir = env_required!("PROSE_POD_API_DIR");
-    let archive_version = BLUEPRINT_POD_API_DEMO;
-    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
-    let blueprint = pod_api_demo_blueprint
-        .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
-    let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
+    #[rustfmt::skip]
+    create_files(
+        &test_data_path,
+        [
+            "foo/", "foo/a",
+            // NOTE: Tests that a standalone file can be archived too.
+            "bar",
+        ],
+    )?;
+
+    const BACKUP_VERSION: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(BACKUP_VERSION, blueprint.clone())
+        .build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
@@ -170,8 +187,8 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: archive_version,
-            blueprint: &blueprint,
+            version: BACKUP_VERSION,
+            blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
@@ -241,7 +258,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
 
     println!();
     service
-        .restore_extracted_backup(extraction_output, &restore_blueprint)
+        .restore_extracted_backup(extraction_output, &blueprint)
         .await
         .context("restore_extracted_backup")?;
 

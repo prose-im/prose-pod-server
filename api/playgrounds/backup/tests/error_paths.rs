@@ -5,7 +5,6 @@
 
 //! Tests error paths and cold branches.
 
-#[allow(dead_code, unused_imports, unused_macros)]
 mod common;
 
 use std::{path::Path, time::Duration};

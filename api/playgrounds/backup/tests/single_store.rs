@@ -3,19 +3,17 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-#[allow(dead_code, unused_imports, unused_macros)]
+//! Tests that backing up and restoring both work if the user chose the same
+//! store for both backups and integrity checks.
+
 mod common;
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use anyhow::anyhow;
 use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess,
-    archiving,
+    archiving::{self, ArchiveBlueprint},
 };
 use toml::toml;
 
@@ -53,10 +51,15 @@ async fn single_store() -> Result<(), anyhow::Error> {
     }?;
     tracing::info!("Parsed config: {backup_config:#?}");
 
-    let blueprints = test_blueprints();
-    let local_data_blueprint = blueprints.get(&BLUEPRINT_LOCAL_DATA).unwrap();
-    let blueprint = &local_data_blueprint.src_relative_to(Path::new(TEST_DATA_DIR));
-    let restore_blueprint = &local_data_blueprint.src_relative_to(test_data_path.join("restore"));
+    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
+        .src_relative_to(&test_data_path);
+
+    create_files(&test_data_path, ["foo/", "foo/a"])?;
+
+    const BACKUP_VERSION: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(BACKUP_VERSION, blueprint.clone())
+        .build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
@@ -86,8 +89,8 @@ async fn single_store() -> Result<(), anyhow::Error> {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BLUEPRINT_LOCAL_DATA,
-            blueprint,
+            version: BACKUP_VERSION,
+            blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
@@ -106,9 +109,7 @@ async fn single_store() -> Result<(), anyhow::Error> {
     tracing::info!("Backups: {backups:#?}");
 
     println!();
-    service
-        .restore_backup(&backup_id, restore_blueprint)
-        .await?;
+    service.restore_backup(&backup_id, &blueprint).await?;
 
     println!();
     () = service.delete_backup(&backup_id).await?;

@@ -17,7 +17,8 @@ tasks:
     desc: Run all tests.
     cmds:
       - rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
-      - cargo test --no-default-features -F test,all_providers {{ .CLI_ARGS }}
+      - cargo test --lib --tests --no-default-features -F test,all_providers {{ .CLI_ARGS }}
+      - cargo test --doc -p backup
       - cargo test --doc -p composable-stream -F doc
     dotenv: [test.env]
 
@@ -25,6 +26,11 @@ tasks:
     desc: Run a single integration test.
     cmds:
       - cargo test -F test,all_providers --test {{ index .MATCH 0 }}{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
+
+  test:s3:
+    desc: Run th S3 integration test (requires special env).
+    cmds:
+      - cargo test -F test,all_providers --test s3{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
     dotenv: [test.env]
 
   cov:llvm-cov:
@@ -33,24 +39,22 @@ tasks:
     cmds:
       - cargo llvm-cov --html --no-default-features -F test,all_providers -- --skip s3
       - open target/llvm-cov/html/index.html
-    dotenv: [test.env]
 
   cov:tarpaulin:
     desc: Check test coverage.
     cmds:
       - cargo tarpaulin -o html --include-files 'src/**' --exclude-files 'src/stores/s3.rs' --output-dir target/tarpaulin --no-default-features --features test,all_providers -- --skip s3
       - open target/tarpaulin/tarpaulin-report.html
-    dotenv: [test.env]
 
   ci:
     desc: Run CI tests (doesn’t test S3).
     cmds:
       - cargo fmt --check
       - cargo clippy
-      - cargo test --no-default-features -F test,all_providers -- --skip s3
+      - cargo test --lib --tests --no-default-features -F test,all_providers -- --skip s3
+      - cargo test --doc -p backup
       - cargo test --doc -p composable-stream -F doc
       - cargo check --release --lib
-    dotenv: [test.env]
 
   dev:doc:
     desc: Rebuild Cargo docs on source file changes.

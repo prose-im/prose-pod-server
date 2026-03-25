@@ -3,6 +3,8 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
+#![allow(dead_code, unused_imports, unused_macros)]
+
 pub mod blueprints;
 pub mod fs;
 pub mod lifecycle;
@@ -11,6 +13,7 @@ pub mod print;
 #[cfg(feature = "provider_s3")]
 pub mod s3;
 
+#[allow(unused_imports)]
 pub mod prelude {
     pub use super::blueprints::*;
     pub(crate) use super::env_required;

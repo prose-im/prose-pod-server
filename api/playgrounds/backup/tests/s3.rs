@@ -3,7 +3,6 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-#[allow(dead_code, unused_imports, unused_macros)]
 mod common;
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
@@ -11,7 +10,8 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::{Context as _, anyhow};
 use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
-    ExtractAndRestoreSuccess, archiving,
+    ExtractAndRestoreSuccess,
+    archiving::{self, ArchiveBlueprint},
     config::{S3ObjectLockConfig, StorageS3Config},
     stores::{ObjectId, ObjectStore, S3Store},
 };
@@ -72,12 +72,16 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
     ])?;
 
     // Create blueprints.
-    let blueprints = test_blueprints();
-    let archive_version = BLUEPRINT_POD_API_DEMO;
-    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
+    let pod_api_demo_blueprint =
+        ArchiveBlueprint::from_iter(BLUEPRINT_PATHS_POD_API_DEMO.into_iter());
     let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
     let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
+
+    const BACKUP_VERSION: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(BACKUP_VERSION, blueprint.clone())
+        .build();
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
@@ -109,7 +113,7 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         .create_backup(CreateBackupCommand {
             prefix: &test_id,
             description: "Test backup",
-            version: archive_version,
+            version: BACKUP_VERSION,
             blueprint: &blueprint,
             additional_archive_data: vec![],
             created_at: now,
@@ -230,15 +234,14 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
     };
 
     // Create blueprints.
-    let blueprints = test_blueprints();
-    let archive_version = BLUEPRINT_POD_API_DEMO;
-    let pod_api_demo_blueprint = blueprints.get(&archive_version).unwrap();
+    let pod_api_demo_blueprint =
+        ArchiveBlueprint::from_iter(BLUEPRINT_PATHS_POD_API_DEMO.into_iter());
     let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
     println!();
     tracing::info!("Create service");
-    let service = BackupService::from_config(&backup_config, blueprints)?;
+    let service = BackupService::from_config(&backup_config, HashMap::new())?;
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());
@@ -255,7 +258,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         .create_backup(CreateBackupCommand {
             prefix: &test_id,
             description: "Test backup",
-            version: archive_version,
+            version: 0,
             blueprint: &blueprint,
             additional_archive_data: vec![],
             created_at: now,
