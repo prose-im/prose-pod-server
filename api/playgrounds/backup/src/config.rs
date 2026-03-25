@@ -520,15 +520,15 @@ mod tests {
             };
         }
         macro_rules! assert_error {
-            ($res:expr, $msg:literal) => {
+            ($res:expr, $expected:expr) => {
                 assert_eq!(
                     $res.err().as_ref().map(anyhow::Error::to_string),
-                    Some($msg.to_owned())
+                    Some($expected.to_owned())
                 )
             };
-            (toml: $toml:tt, $msg:literal) => {{
+            (toml: $toml:tt, $expected:expr) => {{
                 let res = backup_config!($toml);
-                assert_error!(res, $msg)
+                assert_error!(res, $expected)
             }};
         }
 
@@ -549,12 +549,17 @@ mod tests {
             "missing field `provider` for key \"default.storage.backups\" in TOML source string"
         );
 
+        #[cfg(feature = "provider_s3")]
+        let (provider, missing_field, supported) = ("s3", "s3", "one of `S3`, `s3`, `fs`");
+        #[cfg(not(feature = "provider_s3"))]
+        let (provider, missing_field, supported) = ("fs", "directory", "`fs`");
+
         assert_error!(
             toml: {
                 [storage.backups]
-                provider = "s3"
+                provider = provider
             },
-            "missing field `s3` for key \"default.storage.backups\" in TOML source string"
+            format!("missing field `{missing_field}` for key \"default.storage.backups\" in TOML source string")
         );
 
         assert_error!(
@@ -562,7 +567,7 @@ mod tests {
                 [storage.backups]
                 provider = "foo"
             },
-            "unknown variant: found `foo`, expected `one of `S3`, `s3`, `fs`` for key \"default.storage.backups.provider\" in TOML source string"
+            format!("unknown variant: found `foo`, expected `{supported}` for key \"default.storage.backups.provider\" in TOML source string")
         );
     }
 }

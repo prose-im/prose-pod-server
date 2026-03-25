@@ -55,7 +55,7 @@ name = "prose_backup"
 
 [features]
 default = ["provider_s3"]
-test = ["example", "figment/toml", "toml/display"]
+test = ["figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
 all_providers = ["provider_fs", "provider_s3"]
 provider_fs = []
@@ -67,6 +67,10 @@ required-features = ["test", "provider_fs"]
 
 [[test]]
 name = "error_paths"
+required-features = ["test", "provider_fs"]
+
+[[test]]
+name = "single_store"
 required-features = ["test", "provider_fs"]
 
 [[test]]

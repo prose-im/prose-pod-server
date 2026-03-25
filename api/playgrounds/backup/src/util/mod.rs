@@ -187,6 +187,7 @@ pub(crate) use assert_impl;
 
 /// While waiting for <https://github.com/rust-lang/rust/commit/e1424588bd6c0865d1b3425e8f67c93554733d4e>
 /// to make it to a stable release.
+#[cfg(feature = "provider_s3")]
 pub fn get_or_try_insert<T, E>(
     opt: &mut Option<T>,
     f: impl FnOnce() -> Result<T, E>,

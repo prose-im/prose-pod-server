@@ -224,13 +224,15 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         prose_backup::config::StorageSubconfig::S3 { config } => {
             config.object_lock.as_ref().unwrap().mode.clone()
         }
-        prose_backup::config::StorageSubconfig::Fs { .. } => unreachable!(),
+        #[allow(unreachable_patterns)]
+        _ => unreachable!(),
     };
     let legal_hold_status = match &backup_config.storage.checks {
         prose_backup::config::StorageSubconfig::S3 { config } => {
             config.object_lock_legal_hold_status.clone().unwrap()
         }
-        prose_backup::config::StorageSubconfig::Fs { .. } => unreachable!(),
+        #[allow(unreachable_patterns)]
+        _ => unreachable!(),
     };
 
     // Create blueprints.

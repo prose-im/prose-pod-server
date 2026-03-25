@@ -8,41 +8,103 @@ tasks:
     aliases: [doc]
     cmd: cargo doc --no-deps -F all_providers --lib --open
 
+  example:list:
+    desc: List available examples.
+    silent: true
+    cmd: |-
+      {
+        cargo metadata --format-version 1 --no-deps | jq -r '
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select(.kind | index("example"))
+          | .name
+          ';
+        find examples -maxdepth 1 -type f -name '*.rs' -exec basename {} .rs \;
+        find examples -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -exec basename $(dirname {}) \;
+      } | sort -u
+
   example:*:
     desc: Run an example.
     cmd: cargo run -F example --example {{ index .MATCH 0 }}{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
     dotenv: [test.env]
 
-  test:
-    desc: Run all tests.
+  lint:
+    desc: Run lints.
     cmds:
-      - rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
-      - cargo test --lib --tests --no-default-features -F test,all_providers {{ .CLI_ARGS }}
+      - cargo fmt --check
+      - cargo clippy
+
+  check:
+    desc: Run syntax checks.
+    cmd: cargo check --lib
+
+  check:examples:
+    desc: Run syntax checks for examples.
+    cmd: cargo check --examples -F example
+
+  check:release:
+    desc: Run syntax checks in release mode.
+    cmd: cargo check --release --lib
+
+  test:cheap:
+    desc: Run all tests, excluding expensive ones.
+    aliases: [test]
+    cmds:
+      - task: dev:cleanup-test-artifacts
+      - cargo test --lib --tests --no-default-features -F test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
       - cargo test --doc -p backup
       - cargo test --doc -p composable-stream -F doc
     dotenv: [test.env]
 
+  test:expensive:
+    desc: Run all expensive tests.
+    cmds:
+      - task: dev:cleanup-test-artifacts
+      - for: { var: CARGO_EXPENSIVE_TESTS }
+        task: test:{{.ITEM}}
+
+  test:all:
+    desc: Run all tests.
+    cmds:
+      - task: test:cheap
+      - task: test:expensive
+
   test:*:
     desc: Run a single integration test.
-    cmds:
-      - cargo test --no-default-features -F test,provider_fs --test {{ index .MATCH 0 }}{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
-
-  test:s3:
-    desc: Run th S3 integration test (requires special env).
-    cmds:
-      - cargo test -F test --test s3{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
+    cmd: >-
+      cargo test
+      --no-default-features
+      -F {{ .CARGO_FEATURES }}
+      --test {{ index .MATCH 0 }}
+      {{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
+    vars:
+      CARGO_FEATURES:
+        sh: |-
+          cargo metadata --format-version 1 --no-deps | jq -r --arg test '{{ index .MATCH 0 }}' '
+            (
+              .packages[]
+              | select(.name == "backup")
+              | .targets[]
+              | select((.kind | index("test")) and .name == $test)
+              | .["required-features"]
+            ) // ["test"]
+            | join(",")
+            '
     dotenv: [test.env]
 
   cov:llvm-cov:
-    desc: Check test coverage.
+    desc: Check test coverage using `cargo-llvm-cov`.
     aliases: [cov]
     cmds:
       - cargo llvm-cov --html -F test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - open target/llvm-cov/html/index.html
     dotenv: [test.env]
 
+  # Note recommended, as it runs `cargo clean`, takes longer to run and
+  # produces erroneous output. Use `cov:llvm-cov` instead.
   cov:tarpaulin:
-    desc: Check test coverage.
+    desc: Check test coverage using `cargo-tarpaulin`.
     cmds:
       - cargo tarpaulin -o html --include-files 'src/**' --exclude-files 'src/stores/s3.rs' --output-dir target/tarpaulin --features test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - open target/tarpaulin/tarpaulin-report.html
@@ -51,12 +113,11 @@ tasks:
   ci:
     desc: Run CI tests (doesn’t test S3).
     cmds:
-      - cargo fmt --check
-      - cargo clippy
-      - cargo test --lib --tests --no-default-features -F test,all_providers -- --skip s3
+      - task: lint
+      - cargo test --lib --tests -F test,all_providers -- --skip s3
       - cargo test --doc -p backup
       - cargo test --doc -p composable-stream -F doc
-      - cargo check --release --lib
+      - task: check:release
 
   dev:doc:
     desc: Rebuild Cargo docs on source file changes.
@@ -67,3 +128,24 @@ tasks:
     cmds:
       - task: doc:open
       - cmd: cargo watch -x 'doc --no-deps -F all_providers --lib'
+
+  dev:cleanup-test-artifacts:
+    internal: true
+    cmd: rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
+
+vars:
+  CARGO_EXPENSIVE_FEATURE: provider_s3
+  CARGO_EXPENSIVE_TESTS_JSON:
+    sh: |-
+      cargo metadata --format-version 1 --no-deps | jq --arg feature '{{ .CARGO_EXPENSIVE_FEATURE }}' '
+        .packages[]
+        | select(.name == "backup")
+        | .targets[]
+        | select(
+            (.kind | index("test"))
+            and (.["required-features"] // [] | index($feature))
+          )
+        | .name
+        '
+  CARGO_EXPENSIVE_TESTS:
+    ref: "fromJson .CARGO_EXPENSIVE_TESTS_JSON"
