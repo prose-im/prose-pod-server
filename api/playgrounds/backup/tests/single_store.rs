@@ -110,6 +110,7 @@ async fn single_store() {
     println!();
     let backups = service.list_backups().await.unwrap();
     tracing::info!("Backups: {backups:#?}");
+    assert_eq!(backups.len(), 1);
 
     println!();
     service

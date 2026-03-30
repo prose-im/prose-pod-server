@@ -70,7 +70,8 @@ pub use crate::util::BytesAmount;
 /// // Where to store backups.
 /// [storage.backups]
 /// provider = "s3"
-/// s3.bucket_name = "prose-backups"
+/// s3.bucket_name = "backups"
+/// s3.prefix = "prose/"
 ///
 /// // Where to store backup integrity checks.
 /// [storage.checks]
@@ -81,7 +82,8 @@ pub use crate::util::BytesAmount;
 /// // once the retention period ends (this library won’t do it). Because of
 /// // mandatory versioning, this library can only mark objects as deleted but
 /// // the underlying data will still exist (and be billed by your provider!).
-/// s3.bucket_name = "prose-checks"
+/// s3.bucket_name = "checks"
+/// s3.prefix = "prose/"
 ///
 /// // Global S3 configuration.
 /// // `storage.backups.s3` and `storage.checks.s3` will fallback to it.
@@ -212,7 +214,20 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
     }
 
     for provider in ["s3", "fs"] {
+        // Move e.g. `s3` to `storage.s3`.
         if let Ok(default) = figment.extract_inner::<figment::value::Value>(provider) {
+            figment = figment
+                .merge(Serialized::default(
+                    &format!("storage.{provider}"),
+                    default.clone(),
+                ))
+                .remove(provider);
+        }
+
+        // Move e.g. `storage.s3` to `storage.(backups|checks).s3`.
+        if let Ok(default) =
+            figment.extract_inner::<figment::value::Value>(&format!("storage.{provider}"))
+        {
             figment = figment
                 .merge(Serialized::default(
                     &format!("storage.backups.{provider}"),
@@ -222,8 +237,19 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
                     &format!("storage.checks.{provider}"),
                     default,
                 ))
-                .remove(provider);
+                .remove(&format!("storage.{provider}"));
         }
+    }
+
+    // Move `storage.provider` to `storage.(backups|checks).provider`.
+    if let Ok(default) = figment.extract_inner::<figment::value::Value>("storage.provider") {
+        figment = figment
+            .merge(Serialized::default(
+                "storage.backups.provider",
+                default.clone(),
+            ))
+            .merge(Serialized::default("storage.checks.provider", default))
+            .remove("storage.provider");
     }
 
     Ok(figment)
@@ -329,6 +355,23 @@ pub struct StorageConfig {
     pub backups: StorageSubconfig,
 
     pub checks: StorageSubconfig,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    #[doc(hidden)]
+    pub provider: AlwaysNone,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    #[cfg(feature = "provider_s3")]
+    #[doc(hidden)]
+    pub s3: AlwaysNone,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in figment).
+    #[cfg(feature = "provider_fs")]
+    #[doc(hidden)]
+    pub fs: AlwaysNone,
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +410,9 @@ pub struct StorageS3Config {
 
     #[serde(default)]
     pub session_token: Option<secrecy::SecretString>,
+
+    #[serde(default)]
+    pub prefix: Option<String>,
 
     #[serde(default)]
     pub force_path_style: Option<bool>,
@@ -476,11 +522,11 @@ impl TryFrom<figment::providers::Data<figment::providers::Toml>> for BackupConfi
 // MARK: Helpers
 
 trait FigmentExt {
-    fn remove(self, key: &'static str) -> Self;
+    fn remove(self, key: &str) -> Self;
 }
 
 impl FigmentExt for Figment {
-    fn remove(self, key: &'static str) -> Self {
+    fn remove(self, key: &str) -> Self {
         use figment::providers::Serialized;
 
         self.merge(Serialized::default(key, json::Value::Null))

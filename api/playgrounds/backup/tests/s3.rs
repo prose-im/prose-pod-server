@@ -183,6 +183,145 @@ async fn s3_happy_path() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn s3_single_bucket_same_prefix() {
+    let mut context = init();
+    let TestContext {
+        now,
+        ref test_id,
+        ref test_data_path,
+        ..
+    } = context;
+
+    let region = env_required!("S3_REGION");
+    let endpoint_url = env_required!("S3_ENDPOINT_URL");
+    let access_key = env_required!("S3_ACCESS_KEY");
+    let secret_key = env_required!("S3_SECRET_KEY");
+    let bucket_name_backups = env_required!("S3_BUCKET_NAME_BACKUPS");
+
+    println!();
+    tracing::info!("Create config");
+    let backup_config = BackupConfig::try_from(toml! {
+        [storage]
+        provider = "s3"
+        s3.prefix = "single-store/"
+
+        [s3]
+        bucket_name = bucket_name_backups
+        region = region
+        endpoint_url = endpoint_url
+        access_key = access_key
+        secret_key = secret_key
+    })
+    .unwrap();
+    tracing::debug!("Parsed config: {backup_config:#?}");
+
+    // Create blueprints.
+    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
+        .src_relative_to(&test_data_path);
+
+    create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
+
+    let backup_version: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(backup_version, blueprint.clone())
+        .build();
+
+    println!();
+    tracing::info!("Create service");
+    let service = BackupService::from_config_custom(
+        &backup_config,
+        ArchivingContext { blueprints },
+        |_| unreachable!(),
+        || -> openpgp::policy::StandardPolicy { unreachable!() },
+    )
+    .unwrap();
+
+    // Store some values for later use.
+    let backup_store = as_s3_store(&service.backup_store.inner());
+    let check_store = as_s3_store(&service.check_store);
+
+    println!();
+    tracing::info!("Create backup");
+    let CreateBackupSuccess {
+        output: creation_output,
+        stats: creation_stats,
+        ..
+    } = service
+        .create_backup(CreateBackupCommand {
+            prefix: &test_id,
+            description: "Test backup",
+            version: backup_version,
+            blueprint: &blueprint,
+            additional_archive_data: vec![],
+            created_at: now,
+        })
+        .await
+        .unwrap();
+    let created_backup_id = creation_output.backup_id;
+    tracing::info!("Upload stats: {creation_stats:#?}");
+
+    // Register cleanup function.
+    context.cleanup_functions.push({
+        let backup_store = backup_store.clone();
+        let check_store = check_store.clone();
+        let created_backup_id = ObjectId::from(&created_backup_id);
+
+        Box::pin(async move {
+            (backup_store.delete(&created_backup_id))
+                .await
+                .map_or_else(log_error!(), |_| ());
+
+            (check_store.delete_all(&created_backup_id))
+                .await
+                .map_or_else(log_error!(), |_| ());
+        })
+    });
+
+    println!();
+    tracing::info!("List backups");
+    let backups = service.list_backups().await.unwrap();
+    tracing::debug!("Backups: {backups:#?}");
+    assert!(backups.iter().any(|backup| backup.id == created_backup_id));
+    assert!(
+        backups
+            .iter()
+            .all(|backup| backup.id.extensions.ends_with("zst"))
+    );
+
+    println!();
+    tracing::info!("Get backup details");
+    let details = service.get_details(&created_backup_id).await.unwrap();
+    tracing::debug!("Backup details: {details:#?}");
+
+    println!();
+    tracing::info!("Get download URL");
+    let download_url = service
+        .get_download_url(&created_backup_id, Duration::from_secs(3))
+        .await
+        .unwrap();
+    tracing::debug!("Download URL: <{download_url}>.");
+
+    println!();
+    tracing::info!("Restore backup");
+    let ExtractAndRestoreSuccess {
+        extraction_stats, ..
+    } = service
+        .restore_backup(&created_backup_id, &blueprint)
+        .await
+        .unwrap();
+    print_stats(
+        &extraction_stats.raw_read_stats,
+        &extraction_stats.decryption_stats,
+        &extraction_stats.decompression_stats,
+        extraction_stats.extracted_bytes_count,
+    );
+
+    println!();
+    tracing::info!("Delete backup");
+    () = service.delete_backup(&created_backup_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn s3_object_locking() {
     use s3::types::{
         ObjectLockConfiguration, ObjectLockEnabled, ObjectLockLegalHold, ObjectLockRetention,
@@ -660,6 +799,7 @@ fn test_s3_store(
         access_key,
         secret_key: secret_key.into(),
         session_token: None,
+        prefix: None,
         force_path_style: None,
         object_lock,
         object_lock_legal_hold_status,

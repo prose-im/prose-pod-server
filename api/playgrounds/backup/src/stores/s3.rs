@@ -26,6 +26,7 @@ const UPLOAD_PART_SIZE: usize = 8 * 1024 * 1024;
 pub struct S3Store {
     pub client: s3::Client,
     pub bucket: String,
+    pub prefix: String,
     pub object_lock: Option<crate::config::S3ObjectLockConfig>,
     pub object_lock_legal_hold_status: Option<s3::types::ObjectLockLegalHoldStatus>,
 }
@@ -41,6 +42,7 @@ impl S3Store {
             access_key,
             secret_key,
             session_token,
+            prefix,
             force_path_style,
             object_lock,
             object_lock_legal_hold_status,
@@ -75,6 +77,7 @@ impl S3Store {
         Self {
             client,
             bucket: String::clone(bucket_name),
+            prefix: prefix.to_owned().unwrap_or_default(),
             object_lock: object_lock.clone(),
             object_lock_legal_hold_status: object_lock_legal_hold_status.clone(),
         }
@@ -87,7 +90,7 @@ impl ObjectStore for S3Store {
         let writer = S3Writer::new(
             self.client.clone(),
             &self.bucket,
-            key,
+            format!("{}{key}", self.prefix),
             self.object_lock.as_ref(),
             self.object_lock_legal_hold_status.as_ref(),
         )
@@ -98,7 +101,11 @@ impl ObjectStore for S3Store {
     async fn reader(&self, key: &str) -> Result<Box<DynObjectReader>, ReadObjectError> {
         match self.exists_(key).await {
             Ok(_) => {
-                let reader = S3Reader::new(self.client.clone(), &self.bucket, key);
+                let reader = S3Reader::new(
+                    self.client.clone(),
+                    &self.bucket,
+                    format!("{}{key}", self.prefix),
+                );
                 Ok(Box::new(reader))
             }
             Err(err) => Err(err),
@@ -122,7 +129,7 @@ impl ObjectStore for S3Store {
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
-                .prefix(prefix)
+                .prefix(format!("{}{prefix}", self.prefix))
                 .set_continuation_token(continuation_token.clone())
                 .send()
                 .await
@@ -131,7 +138,8 @@ impl ObjectStore for S3Store {
             results.extend(resp.contents().iter().filter_map(|obj| {
                 match (obj.key(), obj.size()) {
                     (Some(key), Some(size)) => Some(ObjectMetadata {
-                        file_name: key.to_owned(),
+                        // SAFETY: `list_objects_v2` call uses `self.prefix`.
+                        file_name: key.strip_prefix(&self.prefix).unwrap().to_owned(),
                         size_bytes: saturating_i64_to_u64(size),
                     }),
                     _ => None,
@@ -157,7 +165,7 @@ impl ObjectStore for S3Store {
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
-                .start_after(prefix)
+                .prefix(format!("{}{prefix}", self.prefix))
                 .set_continuation_token(continuation_token.clone())
                 .send()
                 .await
@@ -166,7 +174,8 @@ impl ObjectStore for S3Store {
             results.extend(resp.contents().iter().filter_map(|obj| {
                 match (obj.key(), obj.size()) {
                     (Some(key), Some(size)) => Some(ObjectMetadata {
-                        file_name: key.to_owned(),
+                        // SAFETY: `list_objects_v2` call uses `self.prefix`.
+                        file_name: key.strip_prefix(&self.prefix).unwrap().to_owned(),
                         size_bytes: saturating_i64_to_u64(size),
                     }),
                     _ => None,
@@ -188,7 +197,7 @@ impl ObjectStore for S3Store {
             .client
             .head_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(format!("{}{key}", self.prefix))
             .send()
             .await
             .context("Failed getting S3 object metadata")
@@ -214,7 +223,7 @@ impl ObjectStore for S3Store {
             .client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(format!("{}{key}", self.prefix))
             .presigned(PresigningConfig::expires_in(*ttl)?)
             .await?;
 
@@ -226,7 +235,7 @@ impl ObjectStore for S3Store {
             .client
             .delete_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(format!("{}{key}", self.prefix))
             .send()
             .await
             .context("Failed deleting S3 object")?;
@@ -258,7 +267,7 @@ impl ObjectStore for S3Store {
             .client
             .list_objects_v2()
             .bucket(&self.bucket)
-            .prefix(prefix)
+            .prefix(format!("{}{prefix}", self.prefix))
             .send()
             .await?;
 
@@ -300,6 +309,8 @@ impl ObjectStore for S3Store {
 
         for object in results.deleted.unwrap_or_default() {
             let key = object.key().map_or(String::new(), str::to_owned);
+            // SAFETY: `list_objects_v2` call uses `self.prefix`.
+            let key = key.strip_prefix(&self.prefix).unwrap().to_owned();
 
             // FIXME: Doesn’t seem to work with Ceph (hence, with Hetzner).
             //   It’s annoying to make a separate request just to check that,
@@ -332,7 +343,7 @@ impl S3Store {
             .client
             .head_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(format!("{}{key}", self.prefix))
             .send()
             .await
         {

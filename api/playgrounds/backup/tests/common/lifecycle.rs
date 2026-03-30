@@ -87,7 +87,7 @@ fn init_tracing() {
         .with_timer(uptime())
         .with_target(true)
         .with_env_filter(EnvFilter::new(format!(
-            "{this}=trace,prose_backup=trace,trace",
+            "{this}=trace,prose_backup=trace,info",
             this = env!("CARGO_CRATE_NAME")
         )))
         .init();
