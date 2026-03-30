@@ -11,7 +11,7 @@ use std::{path::Path, time::Duration};
 
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess,
-    archiving::{self, ArchiveBlueprint},
+    archiving::{ArchiveBlueprint, ArchivingContext},
     config::*,
 };
 use toml::toml;
@@ -68,7 +68,7 @@ async fn error_path_atomic_restore() -> Result<(), anyhow::Error> {
 
     let service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -185,7 +185,7 @@ async fn error_path_backup_missing_file() -> Result<(), anyhow::Error> {
 
     let service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -258,7 +258,7 @@ async fn error_path_restore_missing_file() -> Result<(), anyhow::Error> {
 
     let mut service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -335,7 +335,7 @@ async fn error_path_unknown_archive_entry_no_error() -> Result<(), anyhow::Error
 
     let service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )

@@ -9,7 +9,7 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
-pub use self::SigningContext as Context;
+pub(crate) use self::SigningContext as Context;
 
 #[non_exhaustive]
 #[derive(Default)]

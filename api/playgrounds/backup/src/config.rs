@@ -9,6 +9,8 @@
 
 use figment::Figment;
 
+pub use crate::util::BytesAmount;
+
 /// Backup configuration.
 ///
 /// Example full configuration (all keys have default values):
@@ -29,10 +31,8 @@ use figment::Figment;
 ///
 /// [hashing]
 /// // The algorithm to use when computing backup checksums.
-/// // Note that only SHA-256 is supported at the moment, and we don’t plan on
-/// // supporting more algorithms. This configuration key is mostly there for
-/// // future-proofing.
-/// algorithm = "SHA-256"
+/// // Possible values: `"BLAKE3"` (default), `"SHA-256"`.
+/// algorithm = "BLAKE3"
 ///
 /// // By default, backups are not signed as it requires a secret signing key
 /// // to be configured and accessible. This is where it is done.
@@ -52,7 +52,7 @@ use figment::Figment;
 /// // By default, backups are not encrypted as it requires a secret
 /// // encryption key to be configured. This is where it is done.
 /// [encryption]
-/// // Encryption mode. Allowed values: `"off"` (default), `"pgp"`.
+/// // Encryption mode. Possible values: `"off"` (default), `"pgp"`.
 /// // Also configure `encryption.<mode>` when you enable encryption.
 /// mode = "pgp"
 /// // Path to the Transferable Secret Key to use when encrypting new backups.
@@ -140,13 +140,18 @@ pub struct BackupConfig {
 pub fn default_config_static() -> toml::Table {
     use toml::toml;
 
+    #[cfg(feature = "blake3")]
+    let default_hashing_algorithm = "BLAKE3";
+    #[cfg(all(not(feature = "blake3"), feature = "sha2"))]
+    let default_hashing_algorithm = "SHA-256";
+
     #[allow(unused_mut)]
     let mut static_defaults = toml! {
         [compression]
         zstd_compression_level = 3
 
         [hashing]
-        algorithm = "SHA-256"
+        algorithm = default_hashing_algorithm
 
         [signing]
         pgp.enabled = false
@@ -245,6 +250,11 @@ pub struct HashingConfig {
 #[derive(Debug, Clone, Copy)]
 #[derive(serde::Deserialize)]
 pub enum HashingAlgorithm {
+    #[cfg(feature = "blake3")]
+    #[serde(rename = "BLAKE3")]
+    Blake3,
+
+    #[cfg(feature = "sha2")]
     #[serde(rename = "SHA-256")]
     Sha256,
 }
@@ -413,7 +423,7 @@ pub struct DownloadConfig {
 #[serde(deny_unknown_fields)]
 pub struct CachingConfig {
     #[serde(default)]
-    pub max_backup_cache_size: Option<crate::util::BytesAmount>,
+    pub max_backup_cache_size: Option<BytesAmount>,
 }
 
 // MARK: Constructors

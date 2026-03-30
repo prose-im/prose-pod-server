@@ -78,11 +78,13 @@ impl Drop for TestContext {
 
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt::time::uptime;
 
     tracing_subscriber::fmt()
         .with_test_writer()
         .compact()
-        .without_time()
+        // .without_time()
+        .with_timer(uptime())
         .with_target(true)
         .with_env_filter(EnvFilter::new(format!(
             "{this}=trace,prose_backup=trace,trace",

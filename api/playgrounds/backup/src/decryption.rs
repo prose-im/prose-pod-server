@@ -7,7 +7,7 @@
 
 use composable_stream::Either;
 
-pub use self::DecryptionContext as Context;
+pub(crate) use self::DecryptionContext as Context;
 
 #[non_exhaustive]
 #[derive(Debug, Default)]

@@ -55,17 +55,12 @@ where
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         #[cfg(debug_assertions)]
-        let start = std::time::SystemTime::now();
+        let start = std::time::Instant::now();
 
         let n = self.inner.read(buf)?;
 
         #[cfg(debug_assertions)]
-        {
-            let end = std::time::SystemTime::now();
-            if let Ok(duration) = end.duration_since(start) {
-                self.stats.record_duration(&duration);
-            }
-        }
+        self.stats.record_duration(&start.elapsed());
 
         self.stats.record_chunk(n);
 
@@ -80,17 +75,12 @@ where
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         #[cfg(debug_assertions)]
-        let start = std::time::SystemTime::now();
+        let start = std::time::Instant::now();
 
         let n = self.inner.write(buf)?;
 
         #[cfg(debug_assertions)]
-        {
-            let end = std::time::SystemTime::now();
-            if let Ok(duration) = end.duration_since(start) {
-                self.stats.record_duration(&duration);
-            }
-        }
+        self.stats.record_duration(&start.elapsed());
 
         self.stats.record_chunk(n);
 

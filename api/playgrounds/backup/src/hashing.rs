@@ -9,102 +9,57 @@
 //! signature otherwise if signing is disabled then backups cannot be restored
 //! anymore (no access to public key material to check the detached signature)!
 
-use composable_stream::ComposableStreamBuilder;
 use std::io::Write;
 
-use crate::CreateBackupError;
 use crate::config::{self, HashingConfig};
 
-pub(crate) enum DigestWriter<W> {
-    Sha256(Sha256DigestWriter<W>),
+pub(crate) enum DigestWriter {
+    #[cfg(feature = "blake3")]
+    Blake3(blake3::Hasher),
+
+    #[cfg(feature = "sha2")]
+    Sha256(sha2::Sha256),
 }
 
-pub(crate) fn digest<W>(
-    hashing_config: &HashingConfig,
-) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<DigestWriter<W>, CreateBackupError>>
-where
-    W: Write + Send + Sync,
-{
-    ComposableStreamBuilder {
-        // NOTE: We create only one writer in the form of an enum because:
-        //   1. It does not make much sense to create multiple digests
-        //   2. We ensure there is always at least one
-        make: move |writer: W| match hashing_config.algorithm {
-            config::HashingAlgorithm::Sha256 => {
-                Ok(DigestWriter::Sha256(Sha256DigestWriter::new(writer)))
-            }
-        },
+pub(crate) fn digest(hashing_config: &HashingConfig) -> DigestWriter {
+    // NOTE: We create only one writer in the form of an enum because:
+    //   1. It does not make much sense to create multiple digests
+    //   2. We ensure there is always at least one
+    match hashing_config.algorithm {
+        #[cfg(feature = "blake3")]
+        config::HashingAlgorithm::Blake3 => DigestWriter::Blake3(blake3::Hasher::new()),
+        #[cfg(feature = "sha2")]
+        config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(sha2::Sha256::default()),
     }
 }
 
-impl<W: Write> Write for DigestWriter<W> {
+impl Write for DigestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
+            #[cfg(feature = "blake3")]
+            DigestWriter::Blake3(writer) => writer.write(buf),
+            #[cfg(feature = "sha2")]
             Self::Sha256(writer) => writer.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
+            #[cfg(feature = "blake3")]
+            DigestWriter::Blake3(writer) => writer.flush(),
+            #[cfg(feature = "sha2")]
             Self::Sha256(writer) => writer.flush(),
         }
     }
 }
 
-impl<W: Write> DigestWriter<W> {
-    #[cfg_attr(not(coverage), allow(unused_mut))]
-    pub fn finalize(mut self) -> Result<W, anyhow::Error> {
-        #[cfg(coverage)]
-        self.flush()?;
-
+impl DigestWriter {
+    pub fn finalize(self) -> Vec<u8> {
         match self {
-            Self::Sha256(writer) => writer.finalize(),
-        }
-    }
-}
-
-// MARK: SHA-256
-
-use self::sha256::*;
-mod sha256 {
-    use std::io::{self, Write};
-
-    use anyhow::Context as _;
-    use sha2::{Digest as _, Sha256};
-
-    pub(crate) struct Sha256DigestWriter<W> {
-        hasher: Sha256,
-        writer: W,
-    }
-
-    impl<W> Sha256DigestWriter<W> {
-        pub fn new(writer: W) -> Self {
-            Self {
-                hasher: Sha256::new(),
-                writer,
-            }
-        }
-    }
-
-    impl<W: Write> Sha256DigestWriter<W> {
-        pub fn finalize(mut self) -> Result<W, anyhow::Error> {
-            self.flush()?;
-
-            let hash = self.hasher.finalize();
-            self.writer
-                .write_all(&hash)
-                .context("Could not write hash")?;
-            Ok(self.writer)
-        }
-    }
-
-    impl<W: Write> Write for Sha256DigestWriter<W> {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.hasher.write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.hasher.flush()
+            #[cfg(feature = "blake3")]
+            DigestWriter::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
+            #[cfg(feature = "sha2")]
+            Self::Sha256(hasher) => sha2::Digest::finalize(hasher).to_vec(),
         }
     }
 }

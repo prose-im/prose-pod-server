@@ -28,10 +28,11 @@ High priority (ordered):
    - Or support this use case.
      - Then provide a convenience configuration key to avoid needing to
        configure both `storage.backups` and `storage.checks`.
-1. Test atomicity of restores.
 
 Medium priority (unordered):
 
+- Make sure one can change the hashing algorithm to a non-default one but
+  existing backups still restore, and vice-versa.
 - Overridable archiving blueprints (with non-overridable packaged ones).
 - Cache S3 requests.
   - Also cache metadata when listing objects (it should already be present).

@@ -20,6 +20,9 @@
 //! }
 //! ```
 
+#[cfg(all(not(feature = "blake3"), not(feature = "sha2")))]
+compile_error!("One of feature “blake3” or “sha2” must be enabled.");
+
 pub mod archiving;
 mod compression;
 pub mod config;
@@ -94,10 +97,10 @@ impl BackupService {
     ///                    └────┬────┘ │
     ///                         ◇──────┘
     ///      ╺━┯━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━┯━╸
-    ///    ┌───┴────┐     ┌─────┴─────┐            │ PGP signing
-    ///    │ Upload │     │   Hash    │            │ enabled?
-    ///    │ backup │     │ (SHA 256) │            ◇───────┐
-    ///    │  (S3)  │     └─────┬─────┘        Yes │       │ No
+    ///    ┌───┴────┐      ┌────┴─────┐            │ PGP signing
+    ///    │ Upload │      │   Hash   │            │ enabled?
+    ///    │ backup │      │ (BLAKE3) │            ◇───────┐
+    ///    │  (S3)  │      └────┬─────┘        Yes │       │ No
     ///    └───┬────┘  ┌────────┴─────────┐    ┌───┴───┐   ◯
     ///        ◯       │ Upload integrity │    │ Sign  │
     ///                │    check (S3)    │    │ (PGP) │
@@ -468,12 +471,10 @@ mod create {
             created_at,
         }: CreateBackupCommand<'_>,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
-        use std::time::SystemTime;
-
         check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
-        let created_at = SystemTime::now();
+        let created_at = std::time::SystemTime::now();
 
         let extensions = match service.encryption_context {
             Some(EncryptionContext::Pgp { .. }) => "tar.zst.pgp",
@@ -495,16 +496,16 @@ mod create {
             .await
             .map_err(CreateBackupError::CannotCreateSink)?;
 
-        let start = SystemTime::now();
+        let start = std::time::Instant::now();
 
-        let archive_writer = archive(&blueprint, version, &additional_archive_data)
+        let archive_writer = archive(&blueprint, version, additional_archive_data)
             .then(compress(&service.compression_config))
             .then(eventually(service.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
             }))
             // Record stats so we can know the final size of the backup.
             .then(meter_writes(WriteStats::new()))
-            .tee(digest(&service.hashing_config), Vec::<u8>::new())
+            .tee_into(digest(&service.hashing_config))
             .opt_tee(
                 service.signing_context.pgp.as_ref(),
                 |ctx| pgp_sign(ctx, created_at),
@@ -532,17 +533,21 @@ mod create {
             }
             .into_parts();
 
-        let digest = digest_writer
-            .finalize()
-            .map_err(CreateBackupError::HashingFailed)?;
+        let digest = digest_writer.finalize();
 
         let mut digest_ids: Vec<ObjectId> = Vec::new();
         let mut checks_upload_durations: Vec<(ObjectId, std::time::Duration)> = Vec::new();
 
-        // Upload SHA-256 digest.
+        // Upload digest.
+        let digest_id = match service.hashing_config.algorithm {
+            #[cfg(feature = "blake3")]
+            crate::config::HashingAlgorithm::Blake3 => raw_backup_id.with_extension("blake3"),
+            #[cfg(feature = "sha2")]
+            crate::config::HashingAlgorithm::Sha256 => raw_backup_id.with_extension("sha256"),
+        };
         upload_integrity_check(
             digest,
-            raw_backup_id.with_extension("sha256"),
+            digest_id,
             &service,
             &mut checks_upload_durations,
             &mut digest_ids,
@@ -576,7 +581,7 @@ mod create {
         () = backup_upload
             .finalize()
             .map_err(CreateBackupError::UploadFailed)?;
-        let backup_upload_duration = SystemTime::now().duration_since(start).unwrap_or_default();
+        let backup_upload_duration = start.elapsed();
 
         let size_bytes = backup_stats.bytes_written;
         tracing::info!("Created backup {backup_id:?} ({size_bytes}B).");
@@ -613,9 +618,7 @@ mod create {
         checks_upload_durations: &mut Vec<(ObjectId, std::time::Duration)>,
         uploaded: &mut Vec<ObjectId>,
     ) -> Result<(), CreateBackupError> {
-        use std::time::SystemTime;
-
-        let start = SystemTime::now();
+        let start = std::time::Instant::now();
 
         let mut uploader = service
             .check_store
@@ -633,16 +636,12 @@ mod create {
             .context("`finalize` failed")
             .map_err(CreateBackupError::IntegrityCheckUploadFailed)?;
 
-        checks_upload_durations.push((
-            check_id.clone(),
-            SystemTime::now().duration_since(start).unwrap(),
-        ));
+        checks_upload_durations.push((check_id.clone(), start.elapsed()));
         uploaded.push(check_id);
 
         Ok(())
     }
 
-    #[derive(Debug)]
     pub struct CreateBackupCommand<'a> {
         /// Desired backup prefix (e.g. “prose-backup”).
         pub prefix: &'a str,
@@ -655,7 +654,7 @@ mod create {
         pub blueprint: &'a ArchiveBlueprint,
 
         /// Some more data to insert in the archive before it’s built.
-        pub additional_archive_data: Vec<(String, bytes::Bytes)>,
+        pub additional_archive_data: Vec<(String, u64, Box<dyn std::io::Read + Send>)>,
 
         /// Timestamp which should be associated with the backup.
         ///

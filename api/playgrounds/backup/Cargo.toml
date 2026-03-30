@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 authors = ["Rémi Bardon <remi@remibardon.name>"]
+autotests = false
+autobenches = false
 
 [dependencies]
 anyhow = { version = "1", default-features = false }
@@ -16,10 +18,10 @@ figment = { version = "0.10", default-features = false }
 iso8601-duration = { version = "0.2", default-features = false, features = ["serde"] }
 json = { version = "1", default-features = false, package = "serde_json", features = ["std"] }
 openpgp = { version = "2", default-features = false, package = "sequoia-openpgp", features = ["crypto-nettle"] }
+ouroboros = { version = "0.18", default-features = false }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_with = { version = "3", default-features = false, features = ["macros"] }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
 tar = { version = "0.4", default-features = false }
 tempfile = { version = "3", default-features = false }
 thiserror = { version = "2", default-features = false }
@@ -39,43 +41,56 @@ composable-stream = { path = "./crates/composable-stream"}
 zstd = { version = "0.13", default-features = false }
 
 # Optional dependencies.
+blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
 s3 = { optional = true, version = "1", default-features = false, package = "aws-sdk-s3", features = [
     "default-https-client",
     "rt-tokio",
     "rustls",
     "sigv4a",
 ] }
-ouroboros = { version = "0.18.5", default-features = false }
+sha2 = { optional = true, version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+criterion = { version = "0.8", features = ["async_tokio", "html_reports"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "env-filter"] }
 
 [lib]
 name = "prose_backup"
 
 [features]
-default = ["provider_s3"]
+default = ["blake3", "provider_s3"]
 test = ["figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
 all_providers = ["provider_fs", "provider_s3"]
 provider_fs = []
 provider_s3 = ["dep:s3"]
-
-[[test]]
-name = "happy_paths"
-required-features = ["test", "provider_fs"]
+blake3 = ["dep:blake3"]
+sha2 = ["dep:sha2"]
 
 [[test]]
 name = "error_paths"
-required-features = ["test", "provider_fs"]
+required-features = ["test", "provider_fs", "blake3"]
 
 [[test]]
-name = "single_store"
-required-features = ["test", "provider_fs"]
+name = "happy_paths"
+required-features = ["test", "provider_fs", "blake3"]
+
+[[test]]
+name = "large_files"
+required-features = ["test", "provider_fs", "blake3"]
 
 [[test]]
 name = "s3"
-required-features = ["test", "provider_s3"]
+required-features = ["test", "provider_s3", "blake3"]
+
+[[test]]
+name = "single_store"
+required-features = ["test", "provider_fs", "blake3"]
+
+[[bench]]
+name = "backup"
+harness = false
+required-features = ["provider_fs", "blake3", "sha2"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

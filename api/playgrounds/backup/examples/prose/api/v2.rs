@@ -124,8 +124,11 @@ impl ProsePodServerApiV2 {
             backups_version,
             blueprint,
         );
-        command.additional_archive_data =
-            vec![(PROSE_POD_API_ARCHIVE_KEY.to_owned(), prose_pod_api_data)];
+        command.additional_archive_data = vec![(
+            PROSE_POD_API_ARCHIVE_KEY.to_owned(),
+            prose_pod_api_data.len() as u64,
+            Box::new(std::io::Cursor::new(prose_pod_api_data)),
+        )];
 
         let response = state.backup_service.create_backup(command).await?;
 

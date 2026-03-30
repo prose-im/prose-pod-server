@@ -16,6 +16,7 @@ use crate::config::StorageFsConfig;
 use super::prelude::*;
 
 /// Read and write backups on disk.
+#[derive(Debug, Clone)]
 pub struct FsStore {
     pub directory: PathBuf,
 

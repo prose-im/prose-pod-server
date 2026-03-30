@@ -26,7 +26,7 @@ tasks:
 
   example:*:
     desc: Run an example.
-    cmd: cargo run -F example --example {{ index .MATCH 0 }}{{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
+    cmd: cargo run -F example --example {{ index .MATCH 0 }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
     dotenv: [test.env]
 
   lint:
@@ -37,7 +37,10 @@ tasks:
 
   check:
     desc: Run syntax checks.
-    cmd: cargo check --lib
+    cmds:
+      - cargo check --lib
+      - cargo check --lib --no-default-features -F provider_fs -F blake3
+      - cargo check --lib --no-default-features -F provider_fs -F sha2
 
   check:examples:
     desc: Run syntax checks for examples.
@@ -47,12 +50,21 @@ tasks:
     desc: Run syntax checks in release mode.
     cmd: cargo check --release --lib
 
-  test:cheap:
-    desc: Run all tests, excluding expensive ones.
+  test:all:
+    desc: Run all tests.
     aliases: [test]
     cmds:
-      - task: dev:cleanup-test-artifacts
-      - cargo test --lib --tests --no-default-features -F test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+      - task: test:cheap
+      - task: test:expensive
+
+  test:cheap:
+    desc: Run all tests, excluding expensive ones.
+    cmds:
+      - task: util:cleanup-test-artifacts
+      - task: cargo-test
+        vars:
+          TESTS: { ref: .CARGO_CHEAP_TESTS }
+          TEST_LIB: true
       - cargo test --doc -p backup
       - cargo test --doc -p composable-stream -F doc
     dotenv: [test.env]
@@ -60,38 +72,17 @@ tasks:
   test:expensive:
     desc: Run all expensive tests.
     cmds:
-      - task: dev:cleanup-test-artifacts
-      - for: { var: CARGO_EXPENSIVE_TESTS }
-        task: test:{{.ITEM}}
-
-  test:all:
-    desc: Run all tests.
-    cmds:
-      - task: test:cheap
-      - task: test:expensive
+      - task: util:cleanup-test-artifacts
+      - task: cargo-test
+        vars:
+          TESTS: { ref: .CARGO_EXPENSIVE_TESTS }
 
   test:*:
     desc: Run a single integration test.
-    cmd: >-
-      cargo test
-      --no-default-features
-      -F {{ .CARGO_FEATURES }}
-      --test {{ index .MATCH 0 }}
-      {{ if .CLI_ARGS }} -- {{ .CLI_ARGS }}{{ end }}
-    vars:
-      CARGO_FEATURES:
-        sh: |-
-          cargo metadata --format-version 1 --no-deps | jq -r --arg test '{{ index .MATCH 0 }}' '
-            (
-              .packages[]
-              | select(.name == "backup")
-              | .targets[]
-              | select((.kind | index("test")) and .name == $test)
-              | .["required-features"]
-            ) // ["test"]
-            | join(",")
-            '
-    dotenv: [test.env]
+    cmd:
+      task: cargo-test
+      vars:
+        TESTS: { ref: .MATCH }
 
   cov:llvm-cov:
     desc: Check test coverage using `cargo-llvm-cov`.
@@ -111,7 +102,7 @@ tasks:
   cov:tarpaulin:
     desc: Check test coverage using `cargo-tarpaulin`.
     cmds:
-      - cargo tarpaulin -o html --include-files 'src/**' --exclude-files 'src/stores/s3.rs' --output-dir target/tarpaulin --features test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - task: cov:tarpaulin:open
     dotenv: [test.env]
 
@@ -128,6 +119,21 @@ tasks:
       - cargo test --doc -p composable-stream -F doc
       - task: check:release
 
+  bench:all:
+    desc: Run all benchmarks.
+    aliases: [bench]
+    cmd:
+      task: cargo-bench
+      vars:
+        BENCHES: { ref: .CARGO_ALL_BENCHES }
+
+  bench:*:
+    desc: Run one benchmark.
+    cmd:
+      task: cargo-bench
+      vars:
+        BENCHES: { ref: .MATCH }
+
   dev:doc:
     desc: Rebuild Cargo docs on source file changes.
     aliases: [doc:watch]
@@ -138,23 +144,95 @@ tasks:
       - task: doc:open
       - cmd: cargo watch -x 'doc --no-deps -F all_providers --lib'
 
-  dev:cleanup-test-artifacts:
+  util:cleanup-test-artifacts:
     internal: true
     cmd: rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
 
+  cargo-test:
+    desc: Run specified tests.
+    internal: true
+    cmd: cargo test{{ if .TEST_LIB }} --lib{{ end }}{{ range .TESTS }} --test {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [TESTS]
+    preconditions:
+      # It might not be _necessary_ in this case, but most tasks using this
+      # helper require it so let’s centralize and make tasks leaner.
+      - sh: grep -q '^autotests = false$' Cargo.toml
+        msg: "`Cargo.toml` must contain `autotests = false`."
+    vars:
+      CARGO_FEATURES:
+        sh: |-
+          cargo metadata --format-version 1 --no-deps | jq -r '
+            [
+              .packages[]
+              | select(.name == "backup")
+              | .targets[]
+              | select((.kind | index("test")) and (.name as $n | $ARGS.positional | index($n)))
+              | .["required-features"]
+              | .[]
+            ]
+            | unique
+            | join(",")
+            ' --args{{ range .TESTS }} {{ . }}{{ end }}
+    dotenv: [test.env]
+
+  cargo-bench:
+    desc: Run specified benchmarks.
+    internal: true
+    cmd: cargo bench --profile {{ .CARGO_PROFILE }}{{ range .BENCHES }} --bench {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [BENCHES]
+    preconditions:
+      # It might not be _necessary_ in this case, but most tasks using this
+      # helper require it so let’s centralize and make tasks leaner.
+      - sh: grep -q '^autobenches = false$' Cargo.toml
+        msg: "`Cargo.toml` must contain `autobenches = false`."
+    vars:
+      CARGO_PROFILE: release
+      CARGO_FEATURES:
+        sh: |-
+          cargo metadata --format-version 1 --no-deps | jq -r '
+            [
+              .packages[]
+              | select(.name == "backup")
+              | .targets[]
+              | select((.kind | index("bench")) and (.name as $n | $ARGS.positional | index($n)))
+              | .["required-features"]
+              | .[]
+            ]
+            | unique
+            | join(",")
+            ' --args{{ range .BENCHES }} {{ . }}{{ end }}
+
 vars:
-  CARGO_EXPENSIVE_FEATURE: provider_s3
-  CARGO_EXPENSIVE_TESTS_JSON:
+  CARGO_EXPENSIVE_TESTS: [s3, large_files]
+  CARGO_ALL_TESTS_JSON:
     sh: |-
-      cargo metadata --format-version 1 --no-deps | jq --arg feature '{{ .CARGO_EXPENSIVE_FEATURE }}' '
-        .packages[]
-        | select(.name == "backup")
-        | .targets[]
-        | select(
-            (.kind | index("test"))
-            and (.["required-features"] // [] | index($feature))
-          )
-        | .name
+      cargo metadata --format-version 1 --no-deps | jq '
+        [
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select((.kind | index("test")))
+          | .name
+        ]
         '
-  CARGO_EXPENSIVE_TESTS:
-    ref: "fromJson .CARGO_EXPENSIVE_TESTS_JSON"
+  CARGO_ALL_TESTS:
+    ref: fromJson .CARGO_ALL_TESTS_JSON
+  CARGO_CHEAP_TESTS_JSON:
+    sh: jq --argjson expensive '{{ toJson .CARGO_EXPENSIVE_TESTS }}' '. - $expensive' <<< '{{ .CARGO_ALL_TESTS_JSON }}'
+  CARGO_CHEAP_TESTS:
+    ref: fromJson .CARGO_CHEAP_TESTS_JSON
+  CARGO_ALL_BENCHES_JSON:
+    sh: |-
+      cargo metadata --format-version 1 --no-deps | jq '
+        [
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select((.kind | index("bench")))
+          | .name
+        ]
+        '
+  CARGO_ALL_BENCHES:
+    ref: fromJson .CARGO_ALL_BENCHES_JSON

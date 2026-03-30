@@ -12,7 +12,7 @@ use composable_stream::ComposableStreamBuilder;
 
 use crate::CreateBackupError;
 
-pub use self::EncryptionContext as Context;
+pub(crate) use self::EncryptionContext as Context;
 
 #[non_exhaustive]
 #[derive(Debug)]

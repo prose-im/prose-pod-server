@@ -20,7 +20,7 @@ use anyhow::{Context as _, anyhow};
 use openpgp::types::ReasonForRevocation;
 use prose_backup::{
     BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
-    archiving::{self, ArchiveBlueprint},
+    archiving::{ArchiveBlueprint, ArchivingContext},
     config::*,
     decryption::PgpDecryptionContext,
     openpgp,
@@ -168,7 +168,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
 
     let mut service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |path| {
             certs
                 .get(path)

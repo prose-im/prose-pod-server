@@ -16,6 +16,9 @@
 !/tests/
 !/tests/**
 
+!/benches/
+!/benches/**
+
 !/.editorconfig
 
 !/.gitignore

@@ -11,14 +11,14 @@ pub mod fs;
 #[cfg(feature = "provider_s3")]
 pub mod s3;
 
-mod prelude {
+pub mod prelude {
     pub use super::{BulkDeleteOutput, DeletedState, ObjectMetadata, ObjectStore, ReadObjectError};
 
     pub type DynObjectWriter = dyn super::ObjectWriter;
     pub type DynObjectReader = dyn std::io::Read + Send + Sync;
 }
 
-pub use self::cache::CachedStore;
+pub use self::cache::{CachedStore, StoreCache};
 #[cfg(feature = "provider_fs")]
 pub use self::fs::FsStore;
 use self::prelude::*;

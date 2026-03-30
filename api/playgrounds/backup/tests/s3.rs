@@ -11,7 +11,7 @@ use anyhow::{Context as _, anyhow};
 use prose_backup::{
     BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
     ExtractAndRestoreSuccess,
-    archiving::{self, ArchiveBlueprint},
+    archiving::{ArchiveBlueprint, ArchivingContext},
     config::{S3ObjectLockConfig, StorageS3Config},
     stores::{ObjectId, ObjectStore, S3Store},
 };
@@ -89,7 +89,7 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
     tracing::info!("Create service");
     let service = BackupService::from_config_custom(
         &backup_config,
-        archiving::Context { blueprints },
+        ArchivingContext { blueprints },
         |path| {
             certs
                 .get(path)

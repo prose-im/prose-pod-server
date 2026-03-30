@@ -19,7 +19,7 @@ use crate::util::debug_panic;
 use crate::verification::VerificationOutput;
 use crate::{BackupId, CreateBackupError};
 
-pub use self::ArchivingContext as Context;
+pub(crate) use self::ArchivingContext as Context;
 use self::errors::*;
 
 // WARN: Do not change as doing so would break backward compatibility.
@@ -79,11 +79,11 @@ pub(crate) fn check_archiving_will_succeed(
 fn archive_writer<W: Write>(
     builder: &mut tar::Builder<W>,
     blueprint: &ArchiveBlueprint,
-    additional_data: &[(String, bytes::Bytes)],
+    additional_data: impl IntoIterator<Item = (String, u64, Box<dyn std::io::Read + Send>)>,
 ) -> Result<(), anyhow::Error> {
     // Add in-memory data first, to avoid filesystem I/O if it fails.
-    for (archive_path, bytes) in additional_data {
-        append_data(&bytes, archive_path, builder)?;
+    for (archive_path, size, reader) in additional_data {
+        append_data(reader, archive_path, size, builder)?;
     }
 
     for (archive_path, local_path) in blueprint.paths.iter() {
@@ -113,7 +113,7 @@ fn archive_writer<W: Write>(
 pub(crate) fn archive<W: Write>(
     blueprint: &ArchiveBlueprint,
     version: u8,
-    additional_data: &[(String, bytes::Bytes)],
+    additional_data: impl IntoIterator<Item = (String, u64, Box<dyn std::io::Read + Send>)>,
 ) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>> {
     ComposableStreamBuilder {
         make: move |writer: W| {
@@ -351,16 +351,46 @@ where
     })
 }
 
+/// Note that, as confirmed by unit tests, this function will fail if the
+/// provided `size` is different than the total amount of bytes read.
+/// This is on purpose, to prevent tar header manipulation.
 fn append_data<W: std::io::Write>(
-    data: &[u8],
+    data: impl std::io::Read,
     path: impl AsRef<std::path::Path>,
+    size: u64,
     builder: &mut tar::Builder<W>,
 ) -> Result<(), std::io::Error> {
     let mut header = tar::Header::new_gnu();
-    header.set_size(data.len() as u64);
+    header.set_size(size);
     header.set_cksum();
 
-    builder.append_data(&mut header, path, std::io::Cursor::new(data))?;
+    let mut read_stats = ReadStats::new();
+    let data = MeteredStream::new(data, &mut read_stats);
 
-    Ok(())
+    builder.append_data(&mut header, path, data)?;
+
+    if read_stats.bytes_read == size {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("Wrong size provided."))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    #[test]
+    fn ensure_append_data_fails_if_stream_len_different_than_provided() {
+        fn try_builder(data_len: u64, given_size: u64) -> Result<(), std::io::Error> {
+            let mut builder = tar::Builder::new(Vec::new());
+            let data = std::io::repeat(0).take(data_len);
+
+            super::append_data(data, "foo", given_size, &mut builder)
+        }
+
+        assert!(try_builder(10, 9).is_err());
+        assert!(try_builder(10, 10).is_ok());
+        assert!(try_builder(10, 11).is_err());
+    }
 }

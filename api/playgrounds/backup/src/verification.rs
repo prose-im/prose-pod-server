@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::BackupService;
 use crate::stores::{ObjectId, ObjectStore as _, ReadObjectError, ReadSizedObjectError};
 
-pub use self::VerificationContext as Context;
+pub(crate) use self::VerificationContext as Context;
 
 /// Do not download OpenPGP signatures if larger than 2KiB.
 /// FYI it should be 191 bytes so we’re being pretty safe here.
@@ -97,7 +97,6 @@ impl BackupService {
         report: &mut VerificationReport,
     ) -> Result<VerificationOutput, VerificationError> {
         use anyhow::{Context as _, anyhow};
-        use std::io::Read as _;
 
         let backup_id = ObjectId::from(backup_id);
 
@@ -181,8 +180,7 @@ impl BackupService {
 
             // Read signature.
             let mut signature: Vec<u8> = Vec::new();
-            reader
-                .read_to_end(&mut signature)
+            std::io::copy(&mut reader, &mut signature)
                 .context("Failed reading OpenPGP signature")
                 .map_err(VerificationError::Other)?;
             let signature: &Vec<u8> = &*report.signature.insert(signature);
@@ -231,6 +229,87 @@ impl BackupService {
             return Err(VerificationError::BackupNotSigned);
         }
 
+        #[cfg(feature = "blake3")]
+        'blake3_check: {
+            use composable_stream::Tee;
+
+            let check_name = backup_id.with_extension("blake3");
+
+            let reader = self
+                .check_store
+                .reader_if_not_too_large(&check_name, blake3::OUT_LEN as u64)
+                .await;
+
+            let mut reader = match reader {
+                Ok(reader) => reader,
+                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                    tracing::debug!(
+                        "BLAKE3 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
+                    );
+                    break 'blake3_check;
+                }
+                Err(err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_))) => {
+                    tracing::debug!(
+                        "BLAKE3 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
+                    );
+                    break 'blake3_check;
+                }
+                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                    return Err(VerificationError::Other(err.context(format!(
+                        "Failed opening BLAKE3 checksum reader for `{check_name}`"
+                    ))));
+                }
+            };
+
+            // Read signature.
+            let mut expected_hash: Vec<u8> = Vec::new();
+            let hash_len = std::io::copy(&mut reader, &mut expected_hash)
+                .context("Failed reading SHA-256 checksum")
+                .map_err(VerificationError::Other)?;
+
+            // Create the verifier and abort early if the hash is invalid.
+            if hash_len != blake3::OUT_LEN as u64 {
+                return Err(VerificationError::InvalidChecksum(anyhow!(
+                    "Invalid SHA-256 checksum: `{check_name}`."
+                )));
+            }
+            let verifier = blake3::Hasher::new();
+
+            // Read the backup to a temporary file, but also feed it to the
+            // SHA-256 hasher in parallel.
+            let mut tee_writer = Tee(backup_file, verifier);
+            std::io::copy(&mut backup_reader, &mut tee_writer)
+                .context(format!("Failed reading backup: `{backup_id}`"))
+                .map_err(VerificationError::Other)?;
+
+            // NOTE: It’s okay to drop the file as-is:
+            //   the OS will flush before closing the file.
+            let Tee(_backup_file, verifier) = tee_writer;
+
+            let computed_hash = verifier.finalize();
+
+            // Verify the checksum.
+            if computed_hash.as_bytes() != expected_hash.as_slice() {
+                return Err(VerificationError::InvalidChecksum(anyhow!(
+                    "Invalid BLAKE3 checksum (verify): `{check_name}`."
+                )));
+            }
+
+            tracing::debug!("BLAKE3 checksum verified.");
+            report.is_intact = true;
+
+            self.backup_store
+                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
+                .await;
+
+            // Don’t process any other integrity check.
+            return Ok(VerificationOutput {
+                tmp_dir,
+                backup_path,
+            });
+        }
+
+        #[cfg(feature = "sha2")]
         'sha256_check: {
             use composable_stream::Tee;
             use sha2::{Digest as _, Sha256};
@@ -265,13 +344,12 @@ impl BackupService {
 
             // Read signature.
             let mut expected_hash: Vec<u8> = Vec::new();
-            reader
-                .read_to_end(&mut expected_hash)
+            let hash_len = std::io::copy(&mut reader, &mut expected_hash)
                 .context("Failed reading SHA-256 checksum")
                 .map_err(VerificationError::Other)?;
 
             // Create the verifier and abort early if the hash is invalid.
-            if expected_hash.len() != Sha256::output_size() {
+            if hash_len != Sha256::output_size() as u64 {
                 return Err(VerificationError::InvalidChecksum(anyhow!(
                     "Invalid SHA-256 checksum: `{check_name}`."
                 )));
@@ -290,7 +368,6 @@ impl BackupService {
             let Tee(_backup_file, verifier) = tee_writer;
 
             let computed_hash = verifier.finalize();
-            assert_eq!(computed_hash.as_ref(), expected_hash);
 
             // Verify the checksum.
             if computed_hash.as_ref() != expected_hash {
