@@ -12,6 +12,15 @@ pub enum OptionalStream<S> {
 
 impl<S> OptionalStream<S> {
     #[inline]
+    pub fn new(mut stream: S, cond: impl FnOnce(&mut S) -> bool) -> Self {
+        if cond(&mut stream) {
+            Self::Some(stream)
+        } else {
+            Self::None
+        }
+    }
+
+    #[inline]
     pub const fn is_some(&self) -> bool {
         matches!(*self, Self::Some(_))
     }
@@ -30,6 +39,11 @@ impl<S> OptionalStream<S> {
             Some(t) => Self::Some(f(t)),
             None => Self::None,
         }
+    }
+
+    pub const fn take(&mut self) -> Self {
+        // FIXME(const-hack) replace `mem::replace` by `mem::take` when the latter is const ready
+        std::mem::replace(self, Self::None)
     }
 }
 
@@ -50,6 +64,19 @@ where
         match self {
             Self::None => Ok(()),
             Self::Some(writer) => writer.flush(),
+        }
+    }
+}
+
+impl<T> std::io::Read for OptionalStream<T>
+where
+    T: std::io::Read,
+{
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::None => Ok(0),
+            Self::Some(reader) => reader.read(buf),
         }
     }
 }

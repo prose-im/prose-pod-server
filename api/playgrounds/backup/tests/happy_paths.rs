@@ -164,6 +164,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
+    let signing_config = backup_config.signing.clone();
     let encryption_config = backup_config.encryption.clone();
 
     let mut service = BackupService::from_config_custom(
@@ -244,6 +245,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
     let ExtractionSuccess {
         extraction_output,
         extraction_stats,
+        verification_report,
         ..
     } = service
         .extract_backup(&backup_id)
@@ -255,6 +257,15 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         &extraction_stats.decompression_stats,
         extraction_stats.extracted_bytes_count,
     );
+    if let Some(SigningPgpConfig { tsk, .. }) = &signing_config.pgp {
+        let pgp_cert = certs.get(tsk).unwrap().clone();
+
+        assert!(!verification_report.known_signing_keys.is_empty());
+        verification_report
+            .known_signing_keys
+            .iter()
+            .all(|report| report.cert_fingerprint == pgp_cert.fingerprint());
+    }
 
     println!();
     service

@@ -386,8 +386,16 @@ pub mod dtos {
         /// [`is_valid`]: SigningKeyReportDto::is_valid
         pub is_signed: bool,
 
-        /// Fingerprint of the key used to sign the backup, if applicable.
-        pub signing_keys: Vec<SigningKeyReportDto>,
+        /// Fingerprint of the key(s) used to sign the backup, if applicable.
+        ///
+        /// Note that this list might be empty while [`is_signed`] is `true`.
+        /// It means the backup was signed but with an unknown key (lost or
+        /// malicious). In that case, [`can_be_restored`] might still be `true`
+        /// (e.g. if the integrity of the backup was verified successfully).
+        ///
+        /// [`is_signed`]: Self::signing_keys
+        /// [`can_be_restored`]: Self::can_be_restored
+        pub known_signing_keys: Vec<SigningKeyReportDto>,
 
         /// Whether or not the backup is encrypted.
         pub is_encrypted: bool,
@@ -408,7 +416,7 @@ pub mod dtos {
         pub can_be_restored: bool,
     }
 
-    /// Information about a key used to sign
+    /// Information about a key used to sign a backup.
     #[derive(Debug)]
     pub struct SigningKeyReportDto {
         /// Unique fingerprint of the signing key.
@@ -417,19 +425,7 @@ pub mod dtos {
         /// key fingerprint.
         pub fingerprint: String,
 
-        /// Whether or not the backup signature was issued by a trusted entity.
-        ///
-        /// This doesn’t mean the signature is valid, which is indicated by
-        /// [`is_valid`].
-        ///
-        /// [`is_valid`]: Self::is_valid
-        pub is_trusted: bool,
-
         /// Whether or not the backup signature is valid.
-        ///
-        /// Note that this implies [`is_trusted`].
-        ///
-        /// [`is_trusted`]: Self::is_trusted
         pub is_valid: bool,
     }
 
@@ -437,7 +433,6 @@ pub mod dtos {
         fn from(value: PgpSignatureReport) -> Self {
             Self {
                 fingerprint: value.cert_fingerprint.to_spaced_hex(),
-                is_trusted: value.is_trusted,
                 is_valid: value.is_valid,
             }
         }
@@ -902,8 +897,8 @@ mod read {
                 is_encrypted,
                 can_be_restored,
                 is_intact,
-                signing_keys: verification_report
-                    .signing_keys
+                known_signing_keys: verification_report
+                    .known_signing_keys
                     .into_iter()
                     .map(Into::into)
                     .collect(),

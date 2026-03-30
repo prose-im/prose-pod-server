@@ -57,7 +57,7 @@ pub struct VerificationReport {
     pub is_encrypted: bool,
     pub can_be_restored: bool,
     pub is_intact: bool,
-    pub signing_keys: Vec<PgpSignatureReport>,
+    pub known_signing_keys: Vec<PgpSignatureReport>,
     pub signature: Option<Vec<u8>>,
     pub is_encryption_valid: bool,
 }
@@ -97,6 +97,7 @@ impl BackupService {
         report: &mut VerificationReport,
     ) -> Result<VerificationOutput, VerificationError> {
         use anyhow::{Context as _, anyhow};
+        use composable_stream::OptionalStream;
 
         let backup_id = ObjectId::from(backup_id);
 
@@ -109,7 +110,7 @@ impl BackupService {
         let tmp_dir = Arc::new(tmp_dir);
         let backup_path = tmp_dir.path().join(&backup_id);
 
-        let mut backup_file = std::fs::File::options()
+        let backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.
             .create_new(true)
             .write(true)
@@ -126,6 +127,8 @@ impl BackupService {
             let metadata = std::fs::metadata(&backup_path).unwrap();
             debug_assert_eq!(metadata.permissions().mode(), 0o100600);
         }
+
+        let mut backup_file = OptionalStream::Some(backup_file);
 
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
@@ -180,9 +183,10 @@ impl BackupService {
 
             // Read signature.
             let mut signature: Vec<u8> = Vec::new();
-            std::io::copy(&mut reader, &mut signature)
+            let signature_len = std::io::copy(&mut reader, &mut signature)
                 .context("Failed reading OpenPGP signature")
                 .map_err(VerificationError::Other)?;
+            debug_assert_ne!(signature_len, 0);
             let signature: &Vec<u8> = &*report.signature.insert(signature);
 
             // Create the verifier, applying the policy at the
@@ -195,23 +199,42 @@ impl BackupService {
                     .map_err(VerificationError::InvalidSignature)?;
 
             // Read the backup to a temporary file.
-            std::io::copy(&mut backup_reader, &mut backup_file)
-                .context(format!("Failed reading backup: `{backup_id}`"))
-                .map_err(VerificationError::Other)?;
+            {
+                let copied = std::io::copy(&mut backup_reader, &mut backup_file)
+                    .context(format!("Failed reading backup: `{backup_id}`"))
+                    .map_err(VerificationError::Other)?;
+                debug_assert_ne!(copied, 0);
+            }
 
             // Verify the signature.
-            verifier
-                .verify_reader(&mut backup_file)
-                .context(format!(
-                    "Invalid OpenPGP signature (verify): `{check_name}`"
-                ))
-                .map_err(VerificationError::InvalidSignature)?;
-            report.is_intact = true;
-
-            tracing::debug!("OpenPGP signature verified.");
+            let pgp_verification_res = verifier.verify_reader(&mut backup_file);
 
             let pgp_report = verifier.report();
-            report.signing_keys = pgp_report.signing_keys;
+            report.known_signing_keys = pgp_report.known_signing_keys;
+
+            match pgp_verification_res {
+                Ok(()) => report.is_intact = true,
+                Err(err) => {
+                    if report.known_signing_keys.is_empty() {
+                        tracing::debug!(
+                            "All OpenPGP signing keys for `{check_name}` are untrusted. Falling back to integrity checks. (Source: {err:#})"
+                        );
+                        backup_file = OptionalStream::None;
+                        backup_reader = Box::new(
+                            std::fs::File::open(&backup_path)
+                                .context("Failed opening the backup file")
+                                .map_err(VerificationError::Other)?,
+                        );
+                        break 'pgp_sig;
+                    } else {
+                        return Err(VerificationError::InvalidSignature(err.context(format!(
+                            "Invalid OpenPGP signature (verify): `{check_name}`"
+                        ))));
+                    }
+                }
+            }
+
+            tracing::debug!("OpenPGP signature verified.");
 
             self.backup_store
                 .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
@@ -264,29 +287,34 @@ impl BackupService {
             // Read signature.
             let mut expected_hash: Vec<u8> = Vec::new();
             let hash_len = std::io::copy(&mut reader, &mut expected_hash)
-                .context("Failed reading SHA-256 checksum")
+                .context("Failed reading BLAKE3 checksum")
                 .map_err(VerificationError::Other)?;
 
             // Create the verifier and abort early if the hash is invalid.
             if hash_len != blake3::OUT_LEN as u64 {
                 return Err(VerificationError::InvalidChecksum(anyhow!(
-                    "Invalid SHA-256 checksum: `{check_name}`."
+                    "Invalid BLAKE3 checksum: `{check_name}`."
                 )));
             }
             let verifier = blake3::Hasher::new();
 
             // Read the backup to a temporary file, but also feed it to the
-            // SHA-256 hasher in parallel.
-            let mut tee_writer = Tee(backup_file, verifier);
-            std::io::copy(&mut backup_reader, &mut tee_writer)
-                .context(format!("Failed reading backup: `{backup_id}`"))
-                .map_err(VerificationError::Other)?;
+            // BLAKE3 hasher in parallel.
+            let mut tee_writer = Tee(verifier, backup_file);
+            {
+                let copied = std::io::copy(&mut backup_reader, &mut tee_writer)
+                    .context(format!("Failed reading backup: `{backup_id}`"))
+                    .map_err(VerificationError::Other)?;
+                debug_assert_ne!(copied, 0);
+            }
 
             // NOTE: It’s okay to drop the file as-is:
             //   the OS will flush before closing the file.
-            let Tee(_backup_file, verifier) = tee_writer;
+            let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
+            tracing::debug!("Empty BLAKE3 hash: {:?}", blake3::Hasher::new().finalize());
+            tracing::debug!("{computed_hash:?} == {expected_hash:?}?");
 
             // Verify the checksum.
             if computed_hash.as_bytes() != expected_hash.as_slice() {
@@ -358,14 +386,17 @@ impl BackupService {
 
             // Read the backup to a temporary file, but also feed it to the
             // SHA-256 hasher in parallel.
-            let mut tee_writer = Tee(backup_file, verifier);
-            std::io::copy(&mut backup_reader, &mut tee_writer)
-                .context(format!("Failed reading backup: `{backup_id}`"))
-                .map_err(VerificationError::Other)?;
+            let mut tee_writer = Tee(verifier, backup_file);
+            {
+                let copied = std::io::copy(&mut backup_reader, &mut tee_writer)
+                    .context(format!("Failed reading backup: `{backup_id}`"))
+                    .map_err(VerificationError::Other)?;
+                debug_assert_ne!(copied, 0);
+            }
 
             // NOTE: It’s okay to drop the file as-is:
             //   the OS will flush before closing the file.
-            let Tee(_backup_file, verifier) = tee_writer;
+            let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
 
@@ -456,14 +487,18 @@ pub mod pgp {
 
     #[derive(Debug, Default)]
     pub struct PgpVerificationReport {
-        pub signing_keys: Vec<PgpSignatureReport>,
+        pub known_signing_keys: Vec<PgpSignatureReport>,
+        pub rejected_signatures_count: usize,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     pub struct PgpSignatureReport {
+        /// Fingerprint of the certificate containing the signing subkey.
         pub cert_fingerprint: openpgp::Fingerprint,
+
+        /// Fingerprint of the signing subkey.
         pub subkey_fingerprint: Option<openpgp::Fingerprint>,
-        pub is_trusted: bool,
+
         pub is_valid: bool,
     }
 
@@ -483,56 +518,77 @@ pub mod pgp {
 
                         for result in results {
                             match result {
-                                Ok(checksum) => {
-                                    self.report.signing_keys.push(PgpSignatureReport {
-                                        cert_fingerprint: checksum.ka.cert().fingerprint(),
-                                        subkey_fingerprint: Some(checksum.ka.key().fingerprint()),
-                                        is_trusted: true,
+                                Ok(GoodChecksum { ka, .. }) => {
+                                    tracing::trace!("Found signature: Ok(GoodChecksum {{ .. }})");
+
+                                    self.report.known_signing_keys.push(PgpSignatureReport {
+                                        cert_fingerprint: ka.cert().fingerprint(),
+                                        subkey_fingerprint: Some(ka.key().fingerprint()),
                                         is_valid: true,
                                     });
                                 }
 
                                 Err(err) => {
+                                    self.report.rejected_signatures_count =
+                                        self.report.rejected_signatures_count.saturating_add(1);
+
                                     match &err {
+                                        VerificationError::MissingKey { .. } => {
+                                            tracing::trace!(
+                                                "Found signature: Err(VerificationError::MissingKey {{ .. }})"
+                                            );
+                                        }
+
                                         VerificationError::UnboundKey { cert, .. } => {
-                                            self.report.signing_keys.push(PgpSignatureReport {
-                                                cert_fingerprint: cert.fingerprint(),
-                                                subkey_fingerprint: None,
-                                                is_trusted: true,
-                                                is_valid: false,
-                                            });
-                                        }
+                                            tracing::trace!(
+                                                "Found signature: Err(VerificationError::UnboundKey {{ .. }})"
+                                            );
 
-                                        VerificationError::BadKey { ka, .. }
-                                        | VerificationError::BadSignature { ka, .. } => {
-                                            self.report.signing_keys.push(PgpSignatureReport {
-                                                cert_fingerprint: ka.cert().fingerprint(),
-                                                subkey_fingerprint: Some(ka.key().fingerprint()),
-                                                is_trusted: true,
-                                                is_valid: false,
-                                            });
-                                        }
-
-                                        err @ VerificationError::MissingKey { sig }
-                                        | err @ VerificationError::MalformedSignature {
-                                            sig, ..
-                                        } => {
-                                            let mut fingerprints =
-                                                sig.issuer_fingerprints().peekable();
-                                            if fingerprints.peek().is_none() {
-                                                tracing::warn!(
-                                                    "Signature has no issuer fingerprint. Issuers: {issuers:?}. Error: {err:?}",
-                                                    issuers = sig.get_issuers()
-                                                );
-                                            }
-                                            for fingerprint in fingerprints {
-                                                self.report.signing_keys.push(PgpSignatureReport {
-                                                    cert_fingerprint: fingerprint.clone(),
+                                            self.report.known_signing_keys.push(
+                                                PgpSignatureReport {
+                                                    cert_fingerprint: cert.fingerprint(),
                                                     subkey_fingerprint: None,
-                                                    is_trusted: false,
                                                     is_valid: false,
-                                                });
-                                            }
+                                                },
+                                            );
+                                        }
+
+                                        VerificationError::BadKey { ka, error, .. } => {
+                                            tracing::trace!(
+                                                "Found signature: Err(VerificationError::BadKey {{ error: \"{error:#}\", .. }})"
+                                            );
+
+                                            self.report.known_signing_keys.push(
+                                                PgpSignatureReport {
+                                                    cert_fingerprint: ka.cert().fingerprint(),
+                                                    subkey_fingerprint: Some(
+                                                        ka.key().fingerprint(),
+                                                    ),
+                                                    is_valid: false,
+                                                },
+                                            );
+                                        }
+
+                                        VerificationError::BadSignature { ka, error, .. } => {
+                                            tracing::trace!(
+                                                "Found signature: Err(VerificationError::BadSignature {{ error: \"{error:#}\", .. }})"
+                                            );
+
+                                            self.report.known_signing_keys.push(
+                                                PgpSignatureReport {
+                                                    cert_fingerprint: ka.cert().fingerprint(),
+                                                    subkey_fingerprint: Some(
+                                                        ka.key().fingerprint(),
+                                                    ),
+                                                    is_valid: false,
+                                                },
+                                            );
+                                        }
+
+                                        VerificationError::MalformedSignature { error, .. } => {
+                                            tracing::trace!(
+                                                "Found signature: Err(VerificationError::MalformedSignature {{ error: \"{error:#}\", .. }})"
+                                            );
                                         }
 
                                         err => {

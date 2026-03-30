@@ -13,10 +13,7 @@ Medium priority (unordered):
 
 Low priority (unordered):
 
-- Fallback to SHA-256 hash if signature from an unknown key. Use cases:
-  - Old backup + PGP still configured but key lost.
-  - PGP now configured, malicious actor plants signatures for old unsigned
-    backups, rendering them unrestorable.
+None.
 
 ## Backlog (planned)
 
