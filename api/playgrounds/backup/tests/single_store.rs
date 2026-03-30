@@ -25,7 +25,7 @@ use crate::common::prelude::*;
 /// This test uses the `fs` storage provider for faster execution time, but
 /// it’d be the same with S3.
 #[tokio::test(flavor = "multi_thread")]
-async fn single_store() -> Result<(), anyhow::Error> {
+async fn single_store() {
     let context = init();
     let TestContext {
         now,
@@ -45,27 +45,29 @@ async fn single_store() -> Result<(), anyhow::Error> {
             fs.directory = "store"
         };
 
-        map_storage_directories_in_test_dir(&mut toml, test_data_path)?;
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
 
         BackupConfig::try_from(toml)
-    }?;
+    }
+    .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
     let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
         .src_relative_to(&test_data_path);
 
-    create_files(&test_data_path, ["foo/", "foo/a"])?;
+    create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
-    ])?;
+    ])
+    .unwrap();
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
@@ -79,7 +81,8 @@ async fn single_store() -> Result<(), anyhow::Error> {
                 .ok_or(anyhow!("Unknown cert: `{}`.", path.display()))
         },
         || pgp_policy.clone(),
-    )?;
+    )
+    .unwrap();
 
     println!();
     let CreateBackupSuccess {
@@ -89,12 +92,12 @@ async fn single_store() -> Result<(), anyhow::Error> {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await?
+        service.create_backup(command).await.unwrap()
     };
     let CreateBackupOutput {
         backup_id,
@@ -105,14 +108,15 @@ async fn single_store() -> Result<(), anyhow::Error> {
     tracing::info!("Integrity checks: {digest_ids:#?}");
 
     println!();
-    let backups = service.list_backups().await?;
+    let backups = service.list_backups().await.unwrap();
     tracing::info!("Backups: {backups:#?}");
 
     println!();
-    service.restore_backup(&backup_id, &blueprint).await?;
+    service
+        .restore_backup(&backup_id, &blueprint)
+        .await
+        .unwrap();
 
     println!();
-    () = service.delete_backup(&backup_id).await?;
-
-    Ok(())
+    () = service.delete_backup(&backup_id).await.unwrap();
 }

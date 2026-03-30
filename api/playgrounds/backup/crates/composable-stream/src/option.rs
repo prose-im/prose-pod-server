@@ -41,6 +41,7 @@ impl<S> OptionalStream<S> {
         }
     }
 
+    #[inline]
     pub const fn take(&mut self) -> Self {
         // FIXME(const-hack) replace `mem::replace` by `mem::take` when the latter is const ready
         std::mem::replace(self, Self::None)

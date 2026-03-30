@@ -20,7 +20,6 @@ None.
 High priority (ordered):
 
 1. Support custom object prefix (use case: S3 directory-style prefix).
-1. Ensure the API works if backups and checks are in the same bucket.
 1. Crash if same bucket + prefix is used for backups and checks.
    - Or support this use case.
      - Then provide a convenience configuration key to avoid needing to

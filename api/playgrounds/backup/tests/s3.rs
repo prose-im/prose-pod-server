@@ -20,7 +20,7 @@ use toml::toml;
 use crate::common::{log_error, prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn s3_happy_path() -> Result<(), anyhow::Error> {
+async fn s3_happy_path() {
     let mut context = init();
     let TestContext {
         now,
@@ -61,7 +61,8 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         endpoint_url = endpoint_url
         access_key = access_key
         secret_key = secret_key
-    })?;
+    })
+    .unwrap();
     tracing::debug!("Parsed config: {backup_config:#?}");
 
     println!();
@@ -69,7 +70,8 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
-    ])?;
+    ])
+    .unwrap();
 
     // Create blueprints.
     let pod_api_demo_blueprint =
@@ -78,9 +80,9 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
     let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
@@ -97,7 +99,8 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
                 .ok_or(anyhow!("Unknown cert: `{}`.", path.display()))
         },
         || pgp_policy.clone(),
-    )?;
+    )
+    .unwrap();
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());
@@ -113,12 +116,13 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         .create_backup(CreateBackupCommand {
             prefix: &test_id,
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint,
             additional_archive_data: vec![],
             created_at: now,
         })
-        .await?;
+        .await
+        .unwrap();
     let created_backup_id = creation_output.backup_id;
     tracing::info!("Upload stats: {creation_stats:#?}");
 
@@ -141,20 +145,21 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
 
     println!();
     tracing::info!("List backups");
-    let backups = service.list_backups().await?;
+    let backups = service.list_backups().await.unwrap();
     tracing::debug!("Backups: {backups:#?}");
     assert!(backups.iter().any(|backup| backup.id == created_backup_id));
 
     println!();
     tracing::info!("Get backup details");
-    let details = service.get_details(&created_backup_id).await?;
+    let details = service.get_details(&created_backup_id).await.unwrap();
     tracing::debug!("Backup details: {details:#?}");
 
     println!();
     tracing::info!("Get download URL");
     let download_url = service
         .get_download_url(&created_backup_id, Duration::from_secs(3))
-        .await?;
+        .await
+        .unwrap();
     tracing::debug!("Download URL: <{download_url}>.");
 
     println!();
@@ -163,7 +168,8 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
         extraction_stats, ..
     } = service
         .restore_backup(&created_backup_id, &restore_blueprint)
-        .await?;
+        .await
+        .unwrap();
     print_stats(
         &extraction_stats.raw_read_stats,
         &extraction_stats.decryption_stats,
@@ -173,13 +179,11 @@ async fn s3_happy_path() -> Result<(), anyhow::Error> {
 
     println!();
     tracing::info!("Delete backup");
-    () = service.delete_backup(&created_backup_id).await?;
-
-    Ok(())
+    () = service.delete_backup(&created_backup_id).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn s3_object_locking() -> Result<(), anyhow::Error> {
+async fn s3_object_locking() {
     use s3::types::{
         ObjectLockConfiguration, ObjectLockEnabled, ObjectLockLegalHold, ObjectLockRetention,
     };
@@ -216,7 +220,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         endpoint_url = endpoint_url
         access_key = access_key
         secret_key = secret_key
-    })?;
+    })
+    .unwrap();
     tracing::debug!("Parsed config: {backup_config:#?}");
 
     // Extract some parsed values for later use.
@@ -243,7 +248,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
 
     println!();
     tracing::info!("Create service");
-    let service = BackupService::from_config(&backup_config, HashMap::new())?;
+    let service = BackupService::from_config(&backup_config, HashMap::new()).unwrap();
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());
@@ -265,7 +270,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             additional_archive_data: vec![],
             created_at: now,
         })
-        .await?;
+        .await
+        .unwrap();
     let created_backup_id = creation_output.backup_id;
     tracing::info!("Upload stats: {creation_stats:#?}");
 
@@ -295,7 +301,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             .get_object_lock_configuration()
             .bucket(&check_store.bucket)
             .send()
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(
             lock_config
                 .object_lock_configuration()
@@ -310,7 +317,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             .bucket(&check_store.bucket)
             .key(digest_id.to_string())
             .send()
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(
             retention.retention().and_then(ObjectLockRetention::mode),
             Some(&object_lock_mode),
@@ -323,7 +331,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
             .bucket(&check_store.bucket)
             .key(digest_id.to_string())
             .send()
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(
             legal_hold
                 .legal_hold()
@@ -336,7 +345,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         {
             // NOTE: Does not error because a delete marker is created but the
             //   underlying object is kept per the Object Lock configuration.
-            let _deleted_state = service.check_store.delete(&digest_id).await?;
+            let _deleted_state = service.check_store.delete(&digest_id).await.unwrap();
             // FIXME: Re-enable this assertion? Seems to fail with Ceph.
             // assert_eq!(deleted_state, DeletedState::MarkedForDeletion);
 
@@ -345,7 +354,8 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
                 .bucket(&check_store.bucket)
                 .prefix(digest_id.to_string())
                 .send()
-                .await?;
+                .await
+                .unwrap();
             assert!(
                 !versions.delete_markers().is_empty(),
                 "versions={versions:#?}"
@@ -353,9 +363,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
         }
     }
 
-    // crate::common::s3::print_all_objects(s3_client, &check_store.bucket).await?;
-
-    Ok(())
+    // crate::common::s3::print_all_objects(s3_client, &check_store.bucket).await.unwrap();
 }
 
 /// Test Object Lock via one-shot upload.
@@ -363,7 +371,7 @@ async fn s3_object_locking() -> Result<(), anyhow::Error> {
 /// TL;DR: When using Ceph, Object Lock modes and Legal Hold statuses are
 ///   respected when sending “Put Object” requests.
 #[tokio::test(flavor = "multi_thread")]
-async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
+async fn s3_object_lock_oneshot() {
     use s3::types::{
         ObjectLockLegalHold, ObjectLockLegalHoldStatus, ObjectLockMode, ObjectLockRetention,
         ObjectLockRetentionMode,
@@ -374,7 +382,7 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         now, ref test_id, ..
     } = context;
 
-    let s3_store = test_s3_store(None, None)?;
+    let s3_store = test_s3_store(None, None).unwrap();
     let s3_client = &s3_store.client;
 
     let key = format!("{test_id}-lock-oneshot");
@@ -394,7 +402,8 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         .object_lock_retain_until_date((now + Duration::from_mins(1)).into())
         .object_lock_legal_hold_status(object_lock_legal_hold_status.clone())
         .send()
-        .await?;
+        .await
+        .unwrap();
 
     // Register cleanup function.
     context.cleanup_functions.push({
@@ -414,7 +423,8 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         .bucket(&s3_store.bucket)
         .key(&key)
         .send()
-        .await?;
+        .await
+        .unwrap();
     let object_bytes = object.body.collect().await.unwrap();
     assert_eq!(object_bytes.to_vec().len(), 4);
 
@@ -423,7 +433,8 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         .bucket(&s3_store.bucket)
         .key(&key)
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(
         retention.retention().and_then(ObjectLockRetention::mode),
         Some(&object_lock_retention),
@@ -435,7 +446,8 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         .bucket(&s3_store.bucket)
         .key(&key)
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(
         legal_hold
             .legal_hold()
@@ -443,8 +455,6 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
         Some(&object_lock_legal_hold_status),
         "legal_hold: {legal_hold:#?}"
     );
-
-    Ok(())
 }
 
 /// Test Object Lock via multipart upload.
@@ -453,7 +463,7 @@ async fn s3_object_lock_oneshot() -> Result<(), anyhow::Error> {
 ///   respected when sending “Multipart Upload” requests. One needs to apply
 ///   this metadata afterwards.
 #[tokio::test(flavor = "multi_thread")]
-async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
+async fn s3_object_lock_multipart() {
     use s3::error::SdkError;
     use s3::types::{
         CompletedMultipartUpload, CompletedPart, ObjectLockLegalHold, ObjectLockLegalHoldStatus,
@@ -471,7 +481,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
             duration: Duration::from_mins(5),
         }),
         Some(ObjectLockLegalHoldStatus::On),
-    )?;
+    )
+    .unwrap();
     let s3_client = &s3_store.client;
 
     let key = format!("{test_id}-lock-multipart");
@@ -485,7 +496,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         .object_lock_retain_until_date((now + Duration::from_mins(2)).into())
         .object_lock_legal_hold_status(ObjectLockLegalHoldStatus::On)
         .send()
-        .await?;
+        .await
+        .unwrap();
 
     let upload_id = multipart.upload_id().unwrap();
 
@@ -499,7 +511,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         .part_number(1)
         .body(body.into())
         .send()
-        .await?;
+        .await
+        .unwrap();
 
     // Complete the multipart upload
     let completed_part = CompletedPart::builder()
@@ -516,7 +529,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         .upload_id(upload_id)
         .multipart_upload(completed_upload)
         .send()
-        .await?;
+        .await
+        .unwrap();
 
     // Register cleanup function.
     context.cleanup_functions.push({
@@ -536,7 +550,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         .bucket(&s3_store.bucket)
         .key(&key)
         .send()
-        .await?;
+        .await
+        .unwrap();
     let object_bytes = object.body.collect().await.unwrap();
     assert_eq!(object_bytes.to_vec().len(), 4);
 
@@ -588,7 +603,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         )
         .send()
         .await
-        .context("Failed setting S3 object retention")?;
+        .context("Failed setting S3 object retention")
+        .unwrap();
 
     // Now `object_retention` is correct.
     let retention = s3_client
@@ -612,7 +628,8 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         )
         .send()
         .await
-        .context("Failed setting S3 legal hold")?;
+        .context("Failed setting S3 legal hold")
+        .unwrap();
 
     // Now `object_legal_hold` is correct.
     let legal_hold = s3_client
@@ -622,8 +639,6 @@ async fn s3_object_lock_multipart() -> Result<(), anyhow::Error> {
         .send()
         .await;
     assert!(legal_hold.is_ok(), "legal_hold: {legal_hold:#?}");
-
-    Ok(())
 }
 
 // MARK: Helpers

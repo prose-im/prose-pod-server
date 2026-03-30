@@ -69,9 +69,9 @@ async fn error_path_atomic_restore() {
     )
     .unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     let service = BackupService::from_config_custom(
@@ -95,7 +95,7 @@ async fn error_path_atomic_restore() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
@@ -184,9 +184,9 @@ async fn error_path_backup_missing_file() {
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     let service = BackupService::from_config_custom(
@@ -202,7 +202,7 @@ async fn error_path_backup_missing_file() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
@@ -255,9 +255,9 @@ async fn error_path_restore_missing_file() {
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     let mut service = BackupService::from_config_custom(
@@ -276,7 +276,7 @@ async fn error_path_restore_missing_file() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
@@ -287,7 +287,7 @@ async fn error_path_restore_missing_file() {
 
     println!();
     blueprint.paths.push(entry);
-    (service.archiving_context.blueprints).insert(BACKUP_VERSION, blueprint.clone());
+    (service.archiving_context.blueprints).insert(backup_version, blueprint.clone());
     let res = service.restore_backup(&backup_id, &blueprint).await;
     assert!(res.is_err());
     let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
@@ -330,9 +330,9 @@ async fn error_path_unknown_archive_entry_no_error() {
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     let service = BackupService::from_config_custom(
@@ -351,7 +351,7 @@ async fn error_path_unknown_archive_entry_no_error() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
@@ -413,9 +413,9 @@ async fn error_path_lost_signing_key() {
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     println!();
@@ -445,7 +445,7 @@ async fn error_path_lost_signing_key() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),

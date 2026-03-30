@@ -30,7 +30,7 @@ use toml::toml;
 use crate::common::{prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn happy_path_noenc_nosign() -> Result<(), anyhow::Error> {
+async fn happy_path_noenc_nosign() {
     let config = toml! {
         [encryption]
         mode = "off"
@@ -51,7 +51,7 @@ async fn happy_path_noenc_nosign() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn happy_path_enc_pgp_nosign() -> Result<(), anyhow::Error> {
+async fn happy_path_enc_pgp_nosign() {
     let config = toml! {
         [encryption]
         mode = "pgp"
@@ -73,7 +73,7 @@ async fn happy_path_enc_pgp_nosign() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn happy_path_noenc_sign_pgp() -> Result<(), anyhow::Error> {
+async fn happy_path_noenc_sign_pgp() {
     let config = toml! {
         [encryption]
         mode = "off"
@@ -95,7 +95,7 @@ async fn happy_path_noenc_sign_pgp() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn happy_path_enc_pgp_sign_pgp() -> Result<(), anyhow::Error> {
+async fn happy_path_enc_pgp_sign_pgp() {
     let config = toml! {
         [encryption]
         mode = "pgp"
@@ -118,7 +118,7 @@ async fn happy_path_enc_pgp_sign_pgp() -> Result<(), anyhow::Error> {
 }
 
 /// Tests all features of the library, given a configuration.
-async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Error> {
+async fn test_happy_path_(mut config_toml: toml::Table) {
     let context = init();
     let TestContext {
         now,
@@ -126,10 +126,12 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         ..
     } = context;
 
-    map_storage_directories_in_test_dir(&mut config_toml, test_data_path)?;
+    map_storage_directories_in_test_dir(&mut config_toml, test_data_path).unwrap();
 
     println!();
-    let backup_config = BackupConfig::try_from(config_toml).context("BackupConfig::try_from")?;
+    let backup_config = BackupConfig::try_from(config_toml)
+        .context("BackupConfig::try_from")
+        .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
     let blueprint = ArchiveBlueprint::from_iter(
@@ -149,18 +151,19 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
             // NOTE: Tests that a standalone file can be archived too.
             "bar",
         ],
-    )?;
+    ).unwrap();
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
         ("encrypt.pgp", now - Duration::from_hours(23)),
         ("sign.pgp", now - Duration::from_hours(23)),
-    ])?;
+    ])
+    .unwrap();
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
@@ -178,7 +181,8 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         },
         || pgp_policy.clone(),
     )
-    .context("BackupService::from_config_custom")?;
+    .context("BackupService::from_config_custom")
+    .unwrap();
 
     println!();
     let CreateBackupSuccess {
@@ -188,7 +192,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
@@ -196,7 +200,8 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
         service
             .create_backup(command)
             .await
-            .context("create_backup")?
+            .context("create_backup")
+            .unwrap()
     };
     let CreateBackupOutput {
         backup_id,
@@ -215,7 +220,8 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
             |keys| keys.for_storage_encryption(),
             SystemTime::now() - Duration::from_mins(10),
             ReasonForRevocation::KeySuperseded,
-        )?;
+        )
+        .unwrap();
 
         service.decryption_context.pgp = Some(PgpDecryptionContext {
             tsks: vec![pgp_cert],
@@ -224,21 +230,27 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
     }
 
     println!();
-    let backups = service.list_backups().await.context("list_backups")?;
+    let backups = service
+        .list_backups()
+        .await
+        .context("list_backups")
+        .unwrap();
     tracing::info!("Backups: {backups:#?}");
 
     println!();
     let details = service
         .get_details(&backup_id)
         .await
-        .context("get_details")?;
+        .context("get_details")
+        .unwrap();
     tracing::info!("Backup details: {details:#?}");
 
     println!();
     let download_url = service
         .get_download_url(&backup_id, Duration::from_secs(3))
         .await
-        .context("get_download_url")?;
+        .context("get_download_url")
+        .unwrap();
     tracing::info!("Download URL: <{download_url}>.");
 
     println!();
@@ -250,7 +262,8 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
     } = service
         .extract_backup(&backup_id)
         .await
-        .context("extract_backup")?;
+        .context("extract_backup")
+        .unwrap();
     print_stats(
         &extraction_stats.raw_read_stats,
         &extraction_stats.decryption_stats,
@@ -271,13 +284,13 @@ async fn test_happy_path_(mut config_toml: toml::Table) -> Result<(), anyhow::Er
     service
         .restore_extracted_backup(extraction_output, &blueprint)
         .await
-        .context("restore_extracted_backup")?;
+        .context("restore_extracted_backup")
+        .unwrap();
 
     println!();
     () = service
         .delete_backup(&backup_id)
         .await
-        .context("delete_backup")?;
-
-    Ok(())
+        .context("delete_backup")
+        .unwrap();
 }

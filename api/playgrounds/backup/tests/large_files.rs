@@ -19,7 +19,7 @@ use toml::toml;
 use crate::common::prelude::*;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn large_files() -> Result<(), anyhow::Error> {
+async fn large_files() {
     let context = init();
     let TestContext {
         now,
@@ -39,10 +39,11 @@ async fn large_files() -> Result<(), anyhow::Error> {
             fs.directory = "checks"
         };
 
-        map_storage_directories_in_test_dir(&mut toml, test_data_path)?;
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
 
         BackupConfig::try_from(toml)
-    }?;
+    }
+    .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
     let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
@@ -50,7 +51,7 @@ async fn large_files() -> Result<(), anyhow::Error> {
 
     println!();
     tracing::info!("Creating test files…");
-    create_files(&test_data_path, ["foo/"])?;
+    create_files(&test_data_path, ["foo/"]).unwrap();
     let dd_status = Command::new("dd")
         .arg("if=/dev/urandom")
         .arg("of=foo/example.bin")
@@ -61,9 +62,9 @@ async fn large_files() -> Result<(), anyhow::Error> {
         .unwrap();
     assert!(dd_status.success());
 
-    const BACKUP_VERSION: u8 = 1;
+    let backup_version: u8 = 1;
     let blueprints = BlueprintsBuilder::new()
-        .insert(BACKUP_VERSION, blueprint.clone())
+        .insert(backup_version, blueprint.clone())
         .build();
 
     println!();
@@ -86,12 +87,12 @@ async fn large_files() -> Result<(), anyhow::Error> {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: BACKUP_VERSION,
+            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await?
+        service.create_backup(command).await.unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
     tracing::info!("creation_stats: {creation_stats:#?}");
@@ -103,10 +104,11 @@ async fn large_files() -> Result<(), anyhow::Error> {
         decryption_report,
         extraction_stats,
         ..
-    } = service.restore_backup(&backup_id, &blueprint).await?;
+    } = service
+        .restore_backup(&backup_id, &blueprint)
+        .await
+        .unwrap();
     tracing::info!("verification_report: {verification_report:#?}");
     tracing::info!("decryption_report: {decryption_report:#?}");
     tracing::info!("extraction_stats: {extraction_stats:#?}");
-
-    Ok(())
 }
