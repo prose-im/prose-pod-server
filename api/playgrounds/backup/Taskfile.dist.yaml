@@ -179,7 +179,7 @@ tasks:
   cargo-bench:
     desc: Run specified benchmarks.
     internal: true
-    cmd: cargo bench --profile {{ .CARGO_PROFILE }}{{ range .BENCHES }} --bench {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    cmd: cargo bench{{ range .BENCHES }} --bench {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
     requires:
       vars: [BENCHES]
     preconditions:
@@ -188,7 +188,6 @@ tasks:
       - sh: grep -q '^autobenches = false$' Cargo.toml
         msg: "`Cargo.toml` must contain `autobenches = false`."
     vars:
-      CARGO_PROFILE: release
       CARGO_FEATURES:
         sh: |-
           cargo metadata --format-version 1 --no-deps | jq -r '
