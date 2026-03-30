@@ -33,22 +33,22 @@ tasks:
     desc: Run lints.
     cmds:
       - cargo fmt --check
-      - cargo clippy
+      - cargo clippy --locked
 
   check:
     desc: Run syntax checks.
     cmds:
-      - cargo check --lib
-      - cargo check --lib --no-default-features -F provider_fs -F blake3
-      - cargo check --lib --no-default-features -F provider_fs -F sha2
+      - cargo check --lib --locked
+      - cargo check --lib --locked --no-default-features -F provider_fs -F blake3
+      - cargo check --lib --locked --no-default-features -F provider_fs -F sha2
 
   check:examples:
     desc: Run syntax checks for examples.
-    cmd: cargo check --examples -F example
+    cmd: cargo check --examples -F example --locked
 
   check:release:
     desc: Run syntax checks in release mode.
-    cmd: cargo check --release --lib
+    cmd: cargo check --release --lib --locked
 
   test:all:
     desc: Run all tests.
@@ -114,9 +114,9 @@ tasks:
     desc: Run CI tests (doesn’t test S3).
     cmds:
       - task: lint
-      - cargo test --lib --tests -F test,all_providers -- --skip s3
-      - cargo test --doc -p backup
-      - cargo test --doc -p composable-stream -F doc
+      - cargo test --locked --lib --tests -F test,all_providers -- --skip s3
+      - cargo test --locked --doc -p backup
+      - cargo test --locked --doc -p composable-stream -F doc
       - task: check:release
 
   bench:all:
