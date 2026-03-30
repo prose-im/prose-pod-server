@@ -27,7 +27,7 @@
 !/Cargo.lock
 
 !/README.md
+!/CONTRIBUTING.md
+!/TODO.md
 
 !/Taskfile.dist.yaml
-
-!/TODO.md
