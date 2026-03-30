@@ -37,7 +37,7 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 toml = { version = "1", default-features = false, features = ["serde"] }
 urlencoding = { version = "2", default-features = false }
-composable-stream = { path = "./crates/composable-stream"}
+composable-stream = { path = "./crates/composable-stream" }
 zstd = { version = "0.13", default-features = false }
 
 # Optional dependencies.
