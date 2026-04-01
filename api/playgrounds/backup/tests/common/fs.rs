@@ -110,10 +110,6 @@ pub fn map_storage_directories_in_test_dir(
         .unwrap();
     caching.entry("cache_dir").or_insert_with(|| {
         let cache_dir_path = test_data_path.join("cache");
-        tracing::debug!(
-            "Creating cache directory in `{path}`…",
-            path = cache_dir_path.display()
-        );
         std::fs::create_dir_all(&cache_dir_path).unwrap();
         toml::Value::String(cache_dir_path.display().to_string())
     });

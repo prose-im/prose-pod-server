@@ -40,12 +40,24 @@ impl<Stream, Stats: StreamStats> MeteredStream<Stream, Stats> {
         Self { inner, stats }
     }
 
+    pub fn into_parts(self) -> (Stream, Stats) {
+        (self.inner, self.stats)
+    }
+
+    pub fn inner(&self) -> &Stream {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut Stream {
+        &mut self.inner
+    }
+
     pub fn into_inner(self) -> Stream {
         self.inner
     }
 
-    pub fn into_parts(self) -> (Stream, Stats) {
-        (self.inner, self.stats)
+    pub fn into_stats(self) -> Stats {
+        self.stats
     }
 }
 
@@ -88,7 +100,11 @@ where
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
+        let res = self.inner.flush();
+
+        self.stats.record_flush();
+
+        res
     }
 }
 

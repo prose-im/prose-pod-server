@@ -156,47 +156,51 @@ impl BackupService {
 
             let check_name = backup_id.with_extension("sig");
 
-            let reader = self
-                .check_store
-                .reader_if_not_too_large(&check_name, MAX_PGP_SIGNATURE_LENGTH)
-                .await;
+            // Read the signature.
+            let signature: &Vec<u8> = {
+                let reader = self
+                    .check_store
+                    .reader_if_not_too_large(&check_name, MAX_PGP_SIGNATURE_LENGTH)
+                    .await;
 
-            let mut reader = match reader {
-                Ok(reader) => reader,
-                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
-                    tracing::debug!(
-                        "OpenPGP signature file `{check_name}` too large. Skipping. (Source: {err:#})"
-                    );
-                    break 'pgp_sig;
-                }
-                Err(ReadSizedObjectError::ReadFailed(err @ ReadObjectError::ObjectNotFound(_))) => {
-                    tracing::debug!(
-                        "OpenPGP signature file `{check_name}` not found. Skipping. (Source: {err:#})"
-                    );
-                    break 'pgp_sig;
-                }
-                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
-                    return Err(VerificationError::Other(err.context(format!(
-                        "Failed opening OpenPGP signature reader for `{check_name}`"
-                    ))));
-                }
+                let mut reader = match reader {
+                    Ok(reader) => reader,
+                    Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                        tracing::debug!(
+                            "OpenPGP signature file `{check_name}` too large. Skipping. (Source: {err:#})"
+                        );
+                        break 'pgp_sig;
+                    }
+                    Err(ReadSizedObjectError::ReadFailed(
+                        err @ ReadObjectError::ObjectNotFound(_),
+                    )) => {
+                        tracing::debug!(
+                            "OpenPGP signature file `{check_name}` not found. Skipping. (Source: {err:#})"
+                        );
+                        break 'pgp_sig;
+                    }
+                    Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                        return Err(VerificationError::Other(err.context(format!(
+                            "Failed opening OpenPGP signature reader for `{check_name}`"
+                        ))));
+                    }
+                };
+                report.is_signed = true;
+
+                let mut signature: Vec<u8> = Vec::new();
+                let signature_len = std::io::copy(&mut reader, &mut signature)
+                    .context("Failed reading OpenPGP signature")
+                    .map_err(VerificationError::Other)?;
+                debug_assert_ne!(signature_len, 0);
+                &*report.signature.insert(signature)
             };
-            report.is_signed = true;
-
-            // Read signature.
-            let mut signature: Vec<u8> = Vec::new();
-            let signature_len = std::io::copy(&mut reader, &mut signature)
-                .context("Failed reading OpenPGP signature")
-                .map_err(VerificationError::Other)?;
-            debug_assert_ne!(signature_len, 0);
-            let signature: &Vec<u8> = &*report.signature.insert(signature);
 
             // Create the verifier, applying the policy at the
             // creation date of the backup.
             // NOTE: Validates the signature, which avoids reading the
             //   backup entirely if the signature itself is invalid.
             let mut verifier =
-                pgp::PgpSignatureVerifier::new(context, &signature, created_at.into())
+                pgp::PgpSignatureVerifier::new(context, signature.as_slice(), created_at.into())
                     .context(format!("Invalid OpenPGP signature: `{check_name}`"))
                     .map_err(VerificationError::InvalidSignature)?;
 
@@ -312,8 +316,8 @@ impl BackupService {
             let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
-            tracing::debug!("Empty BLAKE3 hash: {:?}", blake3::Hasher::new().finalize());
-            tracing::debug!("{computed_hash:?} == {expected_hash:?}?");
+            #[cfg(debug_assertions)]
+            assert_ne!(computed_hash, blake3::Hasher::new().finalize());
 
             // Verify the checksum.
             if computed_hash.as_bytes() != expected_hash.as_slice() {
@@ -395,6 +399,8 @@ impl BackupService {
             let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
+            #[cfg(debug_assertions)]
+            assert_ne!(computed_hash, Sha256::new().finalize());
 
             // Verify the checksum.
             if computed_hash.as_ref() != expected_hash {

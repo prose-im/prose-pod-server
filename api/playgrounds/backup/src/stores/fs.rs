@@ -101,7 +101,7 @@ impl ObjectStore for FsStore {
 
         let path = self.directory.join(file_name);
 
-        // tracing::debug!("Opening {} (write)…", path.display());
+        tracing::trace!("Opening `{}` (write)…", path.display());
 
         let writer = File::options()
             .create(true)
@@ -123,9 +123,9 @@ impl ObjectStore for FsStore {
 
         let path = self.directory.join(file_name);
 
-        // tracing::debug!("Opening {} (read)…", path.display());
+        tracing::trace!("Opening `{}` (read)…", path.display());
 
-        match File::options().read(true).open(path) {
+        match File::open(path) {
             Ok(reader) => Ok(Box::new(reader)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 Err(ReadObjectError::ObjectNotFound(anyhow::Error::from(err)))

@@ -77,6 +77,12 @@ impl std::ops::Deref for PathGuard {
     }
 }
 
+impl std::fmt::Debug for PathGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.path, f)
+    }
+}
+
 impl AsRef<std::path::Path> for PathGuard {
     fn as_ref(&self) -> &std::path::Path {
         self.path.as_path()
@@ -90,6 +96,9 @@ impl Drop for PathGuard {
         if matches!(path.try_exists(), Ok(false)) {
             return;
         }
+
+        #[cfg(debug_assertions)]
+        tracing::trace!("[Drop] Deleting `{path}`…", path = path.display());
 
         // Best-effort (cannot recover on cleanup).
         if path.is_dir() {
