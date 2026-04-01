@@ -208,7 +208,7 @@ pub(crate) fn extract<'a>(
     decryption_report: &mut DecryptionReport,
     stats: &mut ExtractionStats,
 ) -> Result<ExtractionOutput<'a>, ExtractionError> {
-    let backup_file = std::fs::File::open(backup_path)
+    let backup_file = std::fs::File::open(backup_path.as_path())
         .context("Could not open backup file")
         .inspect_err(debug_panic)?;
 

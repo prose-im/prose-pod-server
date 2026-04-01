@@ -121,7 +121,6 @@ pub struct BackupConfig {
 
     pub download: DownloadConfig,
 
-    #[serde(default)]
     pub caching: CachingConfig,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
@@ -147,6 +146,8 @@ pub fn default_config_static() -> toml::Table {
     #[cfg(all(not(feature = "blake3"), feature = "sha2"))]
     let default_hashing_algorithm = "SHA-256";
 
+    let cache_dir = tempfile::env::temp_dir().display().to_string();
+
     #[allow(unused_mut)]
     let mut static_defaults = toml! {
         [compression]
@@ -166,6 +167,9 @@ pub fn default_config_static() -> toml::Table {
 
         [download]
         url_max_ttl = "PT5M"
+
+        [caching]
+        cache_dir = cache_dir
     };
 
     #[cfg(feature = "provider_fs")]
@@ -464,10 +468,12 @@ pub struct DownloadConfig {
 
 // MARK: Caching
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CachingConfig {
+    pub cache_dir: std::path::PathBuf,
+
     #[serde(default)]
     pub max_backup_cache_size: Option<BytesAmount>,
 }

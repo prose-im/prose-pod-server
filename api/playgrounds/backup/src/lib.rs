@@ -1003,9 +1003,6 @@ mod restore {
             &mut extraction_stats,
         )?;
 
-        // TODO: Cache?
-        drop(verification_output.tmp_dir);
-
         Ok(ExtractionSuccess {
             verification_report,
             decryption_report,

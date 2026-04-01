@@ -62,6 +62,19 @@ impl Drop for TestContext {
                 "Test data can be found in `{test_data_path}` (not cleaning up).",
                 test_data_path = self.test_data_path.display()
             );
+
+            if self.test_data_path.join("cache").is_dir() {
+                if let Err(err) = std::fs::rename(
+                    self.test_data_path.join("cache"),
+                    self.test_data_path.join("cache.bak"),
+                ) {
+                    tracing::warn!(
+                        "Could not prevent the cache directory from being \
+                        automatically deleted: {err:?}"
+                    );
+                }
+            }
+
             return;
         }
 

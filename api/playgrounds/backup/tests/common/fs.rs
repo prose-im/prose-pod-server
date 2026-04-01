@@ -103,5 +103,20 @@ pub fn map_storage_directories_in_test_dir(
     std::fs::create_dir_all(&checks_store_path)?;
     *checks_dir = toml::Value::String(checks_store_path.display().to_string());
 
+    let caching = config_toml
+        .entry("caching")
+        .or_insert(toml::Value::Table(toml::value::Table::new()))
+        .as_table_mut()
+        .unwrap();
+    caching.entry("cache_dir").or_insert_with(|| {
+        let cache_dir_path = test_data_path.join("cache");
+        tracing::debug!(
+            "Creating cache directory in `{path}`…",
+            path = cache_dir_path.display()
+        );
+        std::fs::create_dir_all(&cache_dir_path).unwrap();
+        toml::Value::String(cache_dir_path.display().to_string())
+    });
+
     Ok(())
 }

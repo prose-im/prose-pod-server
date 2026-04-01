@@ -51,7 +51,10 @@ pub fn sinking_service(
         backup_store: CachedStore::new(
             Box::new(SinkStore),
             Arc::new(RwLock::new(StoreCache::default())),
-            &CachingConfig::default(),
+            &CachingConfig {
+                cache_dir: tempfile::env::temp_dir(),
+                max_backup_cache_size: None,
+            },
         ),
         check_store: Box::new(SinkStore),
     }
@@ -89,7 +92,10 @@ pub fn fs_service(
         backup_store: CachedStore::new(
             Box::new(store.clone()),
             Arc::new(RwLock::new(StoreCache::default())),
-            &CachingConfig::default(),
+            &CachingConfig {
+                cache_dir: tempfile::env::temp_dir(),
+                max_backup_cache_size: None,
+            },
         ),
         check_store: Box::new(store),
     }

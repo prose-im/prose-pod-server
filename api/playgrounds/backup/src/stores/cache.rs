@@ -3,11 +3,14 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::{collections::VecDeque, fs::File, sync::Arc};
+use std::collections::VecDeque;
+use std::fs::File;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use tempfile::TempDir;
 use tokio::sync::RwLock;
 
+use crate::util::PathGuard;
 use crate::{config::CachingConfig, util::debug_panic_or_log_error};
 
 use super::prelude::*;
@@ -16,6 +19,7 @@ pub struct CachedStore<S> {
     store: S,
     cache: Arc<RwLock<StoreCache>>,
     max_cache_size_bytes: Option<u64>,
+    cache_dir: PathBuf,
 }
 
 #[derive(Default)]
@@ -26,7 +30,7 @@ pub struct StoreCache {
 
 struct CacheEntry {
     key: String,
-    tmp_dir: Arc<TempDir>,
+    path: Arc<PathGuard>,
     size: u64,
 }
 
@@ -36,6 +40,9 @@ where
     S::Target: ObjectStore,
 {
     pub fn new(store: S, cache: Arc<RwLock<StoreCache>>, caching_config: &CachingConfig) -> Self {
+        let cache_dir = &caching_config.cache_dir;
+        debug_assert!(cache_dir.is_dir());
+
         Self {
             store,
             cache,
@@ -43,6 +50,7 @@ where
                 .max_backup_cache_size
                 .as_ref()
                 .map(crate::util::BytesAmount::as_bytes),
+            cache_dir: cache_dir.to_owned(),
         }
     }
 
@@ -50,13 +58,18 @@ where
         &self.store
     }
 
-    pub async fn cache(&self, key: String, tmp_dir: Arc<TempDir>) {
+    pub fn cache_dir(&self) -> &PathBuf {
+        let todo = "Remove";
+        &self.cache_dir
+    }
+
+    pub async fn cache(&self, key: String, path: Arc<PathGuard>) {
         let mut cache = self.cache.write().await;
 
-        let Ok(metadata) = tmp_dir.path().metadata() else {
+        let Ok(metadata) = path.as_path().metadata() else {
             debug_panic_or_log_error!(
                 "Cannot read metadata at `{path}`",
-                path = tmp_dir.path().display()
+                path = path.as_path().display()
             );
             return;
         };
@@ -97,8 +110,10 @@ where
             }
         }
 
-        tracing::debug!("Caching `{key}`.");
-        cache.entries.push_back(CacheEntry { key, tmp_dir, size });
+        tracing::debug!("Caching `{key}` in `{path}`…", path = path.display());
+
+        cache.entries.push_back(CacheEntry { key, path, size });
+
         // SAFETY: We’ll never reach 18 446 744 TB.
         cache.total_size += size;
     }
@@ -142,8 +157,8 @@ where
 
         for entry in cache.entries.iter() {
             if entry.key == key {
-                let path = entry.tmp_dir.path().join(&entry.key);
-                match File::open(&path) {
+                let path = entry.path.as_path();
+                match File::open(path) {
                     Ok(file) => {
                         tracing::debug!(
                             "Object `{key}` was cached. Reading from `{path}`.",

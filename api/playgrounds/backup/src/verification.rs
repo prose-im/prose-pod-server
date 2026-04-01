@@ -5,16 +5,16 @@
 
 //! Verification logic.
 
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::sync::Arc;
 
 use crate::BackupService;
 use crate::stores::{ObjectId, ObjectStore as _, ReadObjectError, ReadSizedObjectError};
+use crate::util::PathGuard;
 
 pub(crate) use self::VerificationContext as Context;
 
 /// Do not download OpenPGP signatures if larger than 2KiB.
-/// FYI it should be 191 bytes so we’re being pretty safe here.
+/// FYI EdDSA+SHA512 signatures are 191 bytes so we’re being pretty safe here.
 ///
 /// Because integrity checks are stored in S3 buckets, where data transfer
 /// might be charged, it’s important to avoid downloading excessively large
@@ -29,8 +29,7 @@ pub struct VerificationContext {
 }
 
 pub struct VerificationOutput {
-    pub tmp_dir: Arc<tempfile::TempDir>,
-    pub backup_path: std::path::PathBuf,
+    pub backup_path: Arc<PathGuard>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -98,17 +97,18 @@ impl BackupService {
     ) -> Result<VerificationOutput, VerificationError> {
         use anyhow::{Context as _, anyhow};
         use composable_stream::OptionalStream;
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
         let backup_id = ObjectId::from(backup_id);
 
         // Open local file paths.
         // If permissions are not sufficient, avoids unnecessary network
         // calls (potentially billed).
-        let tmp_dir = tempfile::TempDir::new()
-            .context("Failed creating a temporary directory to download the backup in")
-            .map_err(VerificationError::Other)?;
-        let tmp_dir = Arc::new(tmp_dir);
-        let backup_path = tmp_dir.path().join(&backup_id);
+        let fixme = "Remove unwrap";
+        let backup_path = tempfile::tempdir_in(self.backup_store.cache_dir())
+            .unwrap()
+            .keep()
+            .join(&backup_id);
 
         let backup_file = std::fs::File::options()
             // Allow creating the file and writing to it.
@@ -129,6 +129,8 @@ impl BackupService {
         }
 
         let mut backup_file = OptionalStream::Some(backup_file);
+
+        let backup_path = Arc::new(PathGuard::new(backup_path));
 
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
@@ -221,7 +223,7 @@ impl BackupService {
                         );
                         backup_file = OptionalStream::None;
                         backup_reader = Box::new(
-                            std::fs::File::open(&backup_path)
+                            std::fs::File::open(backup_path.as_path())
                                 .context("Failed opening the backup file")
                                 .map_err(VerificationError::Other)?,
                         );
@@ -237,14 +239,11 @@ impl BackupService {
             tracing::debug!("OpenPGP signature verified.");
 
             self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
+                .cache(backup_id.to_string(), Arc::clone(&backup_path))
                 .await;
 
             // Don’t process any other integrity check.
-            return Ok(VerificationOutput {
-                tmp_dir,
-                backup_path,
-            });
+            return Ok(VerificationOutput { backup_path });
         }
 
         // Ensure backup is signed if configuration enforces it.
@@ -327,14 +326,11 @@ impl BackupService {
             report.is_intact = true;
 
             self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
+                .cache(backup_id.to_string(), Arc::clone(&backup_path))
                 .await;
 
             // Don’t process any other integrity check.
-            return Ok(VerificationOutput {
-                tmp_dir,
-                backup_path,
-            });
+            return Ok(VerificationOutput { backup_path });
         }
 
         #[cfg(feature = "sha2")]
@@ -411,14 +407,11 @@ impl BackupService {
             report.is_intact = true;
 
             self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&tmp_dir))
+                .cache(backup_id.to_string(), Arc::clone(&backup_path))
                 .await;
 
             // Don’t process any other integrity check.
-            return Ok(VerificationOutput {
-                tmp_dir,
-                backup_path,
-            });
+            return Ok(VerificationOutput { backup_path });
         }
 
         Err(VerificationError::Other(anyhow!(

@@ -35,6 +35,20 @@ where
     Ok(res)
 }
 
+pub fn save_certs(test_data_path: impl AsRef<Path>, certs: HashMap<PathBuf, openpgp::Cert>) {
+    use openpgp::serialize::Marshal as _;
+
+    let certs_dir = test_data_path.as_ref().join("certs");
+
+    std::fs::create_dir_all(&certs_dir).unwrap();
+
+    for (path, cert) in certs.iter() {
+        cert.as_tsk()
+            .serialize(&mut std::fs::File::create_new(certs_dir.join(path)).unwrap())
+            .unwrap();
+    }
+}
+
 pub fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::Error> {
     use openpgp::cert::CertBuilder;
     use std::time::Duration;
