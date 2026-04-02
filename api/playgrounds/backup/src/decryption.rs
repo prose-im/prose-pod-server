@@ -30,7 +30,7 @@ pub(crate) fn reader<'ctx: 'report, 'report, R>(
 where
     R: std::io::Read + Send + Sync + 'ctx + 'report,
 {
-    if extensions.ends_with(".pgp") {
+    if extensions.contains(&Box::from("pgp")) {
         if let Some(context) = context.pgp.as_ref() {
             let decryptor = pgp::decryptor(backup_reader, context, backup_id, report)?;
 

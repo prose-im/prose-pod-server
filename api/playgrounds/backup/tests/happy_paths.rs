@@ -236,6 +236,13 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
         .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
+    // Ensure compression is enabled. Most tests don’t use it for simplicity
+    // but it would very likely be enabled in production apps.
+    assert!(matches!(
+        backup_config.compression,
+        CompressionConfig::Zstd { .. }
+    ));
+
     let blueprint = ArchiveBlueprint::from_iter(
         [
             ("foo-data", "foo"),

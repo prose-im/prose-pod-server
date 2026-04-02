@@ -14,7 +14,10 @@ use std::{
 use prose_backup::{
     BackupService,
     archiving::ArchivingContext,
-    config::{CachingConfig, CompressionConfig, DownloadConfig, HashingAlgorithm, HashingConfig},
+    config::{
+        CachingConfig, CompressionConfig, CompressionZstdConfig, DownloadConfig, HashingAlgorithm,
+        HashingConfig,
+    },
     decryption::DecryptionContext,
     signing::SigningContext,
     stores::{CachedStore, FsStore, StoreCache},
@@ -28,15 +31,15 @@ pub mod sink_store;
 
 /// A `BackupService` which dismisses data (no persistence).
 pub fn sinking_service(
-    zstd_compression_level: i32,
+    compression_level: i32,
     hashing_algorithm: HashingAlgorithm,
 ) -> BackupService {
     BackupService {
         archiving_context: ArchivingContext {
             blueprints: HashMap::new(),
         },
-        compression_config: CompressionConfig {
-            zstd_compression_level,
+        compression_config: CompressionConfig::Zstd {
+            config: CompressionZstdConfig { compression_level },
         },
         hashing_config: HashingConfig {
             algorithm: hashing_algorithm,
@@ -62,7 +65,7 @@ pub fn sinking_service(
 
 /// A `BackupService` which stores data on the file system.
 pub fn fs_service(
-    zstd_compression_level: i32,
+    compression_level: i32,
     hashing_algorithm: HashingAlgorithm,
     path: impl AsRef<Path>,
 ) -> BackupService {
@@ -76,8 +79,8 @@ pub fn fs_service(
         archiving_context: ArchivingContext {
             blueprints: HashMap::new(),
         },
-        compression_config: CompressionConfig {
-            zstd_compression_level,
+        compression_config: CompressionConfig::Zstd {
+            config: CompressionZstdConfig { compression_level },
         },
         hashing_config: HashingConfig {
             algorithm: hashing_algorithm,

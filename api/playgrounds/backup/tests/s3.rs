@@ -278,7 +278,7 @@ async fn s3_single_bucket_same_prefix() {
     assert!(
         backups
             .iter()
-            .all(|backup| backup.id.extensions.ends_with("zst"))
+            .all(|backup| backup.id.extensions.ends_with(&[Box::from("zst")]))
     );
 
     println!();

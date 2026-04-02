@@ -38,7 +38,6 @@ tokio = { version = "1", default-features = false, features = [
 toml = { version = "1", default-features = false, features = ["serde"] }
 urlencoding = { version = "2", default-features = false }
 composable-stream = { path = "./crates/composable-stream" }
-zstd = { version = "0.13", default-features = false }
 
 # Optional dependencies.
 blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
@@ -49,6 +48,7 @@ s3 = { optional = true, version = "1", default-features = false, package = "aws-
     "sigv4a",
 ] }
 sha2 = { optional = true, version = "0.10", default-features = false, features = ["std"] }
+zstd = { optional = true, version = "0.13", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["async_tokio", "html_reports"] }
@@ -58,7 +58,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 name = "prose_backup"
 
 [features]
-default = ["blake3", "provider_s3"]
+default = ["zstd", "blake3", "provider_s3"]
 test = ["figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
 all_providers = ["provider_fs", "provider_s3"]
@@ -66,6 +66,7 @@ provider_fs = []
 provider_s3 = ["dep:s3"]
 blake3 = ["dep:blake3"]
 sha2 = ["dep:sha2"]
+zstd = ["dep:zstd"]
 
 [[test]]
 name = "alternate_paths"
@@ -81,7 +82,7 @@ required-features = ["test", "provider_fs", "blake3"]
 
 [[test]]
 name = "happy_paths"
-required-features = ["test", "provider_fs", "blake3"]
+required-features = ["test", "zstd", "provider_fs", "blake3"]
 
 [[test]]
 name = "s3"
@@ -94,7 +95,7 @@ required-features = ["test", "provider_fs", "blake3"]
 [[bench]]
 name = "backup"
 harness = false
-required-features = ["provider_fs", "blake3", "sha2"]
+required-features = ["zstd", "provider_fs", "blake3", "sha2"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

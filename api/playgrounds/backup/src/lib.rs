@@ -447,6 +447,7 @@ mod create {
     use crate::archiving::{self, *};
     use crate::backup_id::*;
     use crate::compression::*;
+    use crate::config::CompressionConfig;
     use crate::dtos::*;
     use crate::encryption::*;
     use crate::hashing::*;
@@ -471,16 +472,22 @@ mod create {
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
 
-        let extensions = match service.encryption_context {
-            Some(EncryptionContext::Pgp { .. }) => "tar.zst.pgp",
-            None => "tar.zst",
+        let mut extensions: Vec<Box<str>> = vec![Box::from("tar")];
+        match &service.compression_config {
+            #[cfg(feature = "zstd")]
+            CompressionConfig::Zstd { .. } => extensions.push(Box::from("zst")),
+            CompressionConfig::Off => {}
+        }
+        match &service.encryption_context {
+            Some(EncryptionContext::Pgp { .. }) => extensions.push(Box::from("pgp")),
+            None => {}
         };
 
         let backup_id = BackupId {
             prefix: Box::from(prefix),
             created_at: created_at.into(),
             description: Box::from(description),
-            extensions: Box::from(extensions),
+            extensions,
         };
         let raw_backup_id = ObjectId::from(&backup_id);
 
@@ -515,8 +522,7 @@ mod create {
             .map_err(CreateBackupError::ArchivingFailed)?;
 
         let encryption_writer_opt = compression_writer
-            .finish()
-            .map_err(anyhow::Error::new)
+            .finalize()
             .map_err(CreateBackupError::CompressionFailed)?;
 
         let (Tee(Tee(backup_upload, pgp_signing_writer_opt), digest_writer), backup_stats) =
@@ -762,7 +768,23 @@ mod read {
         /// It’s not bulletproof and might break if we make changes to
         /// compression or encryption but it’s good enough for now.
         fn is_backup(metadata: &ObjectMetadata) -> bool {
-            metadata.file_name.ends_with(".zst") || metadata.file_name.ends_with(".zst.pgp")
+            match metadata.file_name.rsplit(".").next() {
+                Some(file_ext) => {
+                    for ext in [
+                        #[cfg(feature = "hashing-sha2")]
+                        "sha256",
+                        #[cfg(feature = "hashing-blake3")]
+                        "blake3",
+                        "sig",
+                    ] {
+                        if file_ext == ext {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                None => false,
+            }
         }
 
         // NOTE: If using the same bucket and prefix for both the backups and
@@ -887,7 +909,7 @@ mod read {
 
         let is_signed = verification_report.is_signed;
         let is_intact = verification_report.is_intact;
-        let is_encrypted: bool = backup_id.extensions.as_ref() == "pgp";
+        let is_encrypted: bool = backup_id.extensions.contains(&Box::from("pgp"));
 
         let dto = BackupDto {
             metadata: BackupMetadataFullDto {
@@ -1091,7 +1113,7 @@ mod backup_id {
 
         pub description: Box<str>,
 
-        pub extensions: Box<str>,
+        pub extensions: Vec<Box<str>>,
     }
 
     impl BackupId {
@@ -1126,7 +1148,7 @@ mod backup_id {
                 prefix: Box::from(prefix),
                 created_at,
                 description: Box::from(description),
-                extensions: Box::from(extensions),
+                extensions: extensions.split(".").map(Box::from).collect(),
             })
         }
     }
@@ -1158,6 +1180,8 @@ mod backup_id {
             let created_at = created_at.unix_timestamp();
             assert!(created_at <= 9_999_999_999);
             debug_assert!(created_at > 999_999_999);
+
+            let extensions = extensions.join(".");
 
             write!(f, "{prefix}-{created_at:010}-{description}.{extensions}")
         }
@@ -1248,7 +1272,11 @@ mod backup_id {
                     prefix: Box::from("prose-backup"),
                     created_at: time::UtcDateTime::UNIX_EPOCH + time::Duration::seconds(1772432392),
                     description: Box::from("Automatic backup"),
-                    extensions: Box::from("tar.zst.pgp"),
+                    extensions: vec![
+                        Box::from("tar"),
+                        Box::from("zst"),
+                        Box::from("pgp")
+                    ],
                 }
             );
 

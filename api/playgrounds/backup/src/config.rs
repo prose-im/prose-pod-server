@@ -21,13 +21,18 @@ pub use crate::util::BytesAmount;
 /// #
 /// # let toml = toml! {
 /// [compression]
-/// // Zstd compression level (see <https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html>).
+/// // The algorithm to use when compressing backups.
+/// // Possible values: `"zstd"` (default), `"off"`.
+/// // Note that using `"off"` is highly discouraged as it would result in
+/// // larger backups.
+/// algorithm = "zstd"
+/// // Zstandard compression level (see <https://raw.githack.com/facebook/zstd/v1.5.7/doc/zstd_manual.html>).
 /// // This value is transparently passed to the `zstd` library for forward
 /// // compatibility, meaning any negative or positive value can be used
 /// // although `zstd` only supports `<= 22` at the moment.
 /// // The special value `0` means `zstd`’s default (currently `3`).
 /// // Default is `3`.
-/// zstd_compression_level = 3
+/// zstd.compression_level = 3
 ///
 /// [hashing]
 /// // The algorithm to use when computing backup checksums.
@@ -151,7 +156,8 @@ pub fn default_config_static() -> toml::Table {
     #[allow(unused_mut)]
     let mut static_defaults = toml! {
         [compression]
-        zstd_compression_level = 3
+        // This isn’t the default in most cases, it’s just a fallback.
+        algorithm = "off"
 
         [hashing]
         algorithm = default_hashing_algorithm
@@ -171,6 +177,13 @@ pub fn default_config_static() -> toml::Table {
         [caching]
         cache_dir = cache_dir
     };
+
+    #[cfg(feature = "zstd")]
+    static_defaults.extend(toml! {
+        [compression]
+        algorithm = "zstd"
+        zstd.compression_level = 3
+    });
 
     #[cfg(feature = "provider_fs")]
     static_defaults.extend(toml! {
@@ -263,9 +276,24 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
 
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
+#[serde(tag = "algorithm")]
+pub enum CompressionConfig {
+    #[cfg(feature = "zstd")]
+    #[serde(rename = "zstd", alias = "Zstandard")]
+    Zstd {
+        #[serde(rename = "zstd")]
+        config: CompressionZstdConfig,
+    },
+
+    #[serde(rename = "off", alias = "none")]
+    Off,
+}
+
+#[derive(Debug, Clone)]
+#[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CompressionConfig {
-    pub zstd_compression_level: i32,
+pub struct CompressionZstdConfig {
+    pub compression_level: i32,
 }
 
 // MARK: Hashing
