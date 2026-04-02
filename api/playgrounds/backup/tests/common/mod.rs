@@ -35,6 +35,7 @@ pub mod prelude {
     pub use super::lifecycle::*;
     pub(crate) use super::macros::*;
     pub use super::pgp::*;
+    pub use super::run_command;
     pub use super::unique_hex;
 }
 
@@ -73,4 +74,18 @@ mod macros {
         };
     }
     pub(crate) use log_error;
+}
+
+pub fn run_command(subject: impl std::fmt::Display, command: &mut std::process::Command) {
+    let output = command.output().unwrap();
+
+    let status = output.status;
+
+    let mut output_str = Vec::with_capacity(output.stdout.len() + output.stderr.len());
+    output_str.extend(output.stdout);
+    output_str.extend(output.stderr);
+
+    tracing::debug!("{subject}:\n{}", String::from_utf8(output_str).unwrap());
+
+    assert!(status.success(), "{status:#}");
 }

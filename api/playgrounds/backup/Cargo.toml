@@ -72,6 +72,10 @@ name = "alternate_paths"
 required-features = ["test", "provider_fs", "blake3"]
 
 [[test]]
+name = "compatibility"
+required-features = ["test", "provider_fs", "blake3"]
+
+[[test]]
 name = "error_paths"
 required-features = ["test", "provider_fs", "blake3"]
 

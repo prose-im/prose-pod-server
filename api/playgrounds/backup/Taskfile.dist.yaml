@@ -159,6 +159,11 @@ tasks:
       # helper require it so let’s centralize and make tasks leaner.
       - sh: grep -q '^autotests = false$' Cargo.toml
         msg: "`Cargo.toml` must contain `autotests = false`."
+      - sh: |-
+          if [[ " {{ .TESTS | join " " }} " == *" compatibility "* ]]; then
+            command -v sq >/dev/null 2>&1
+          fi
+        msg: "Install `sq`, the Sequoia-PGP command line tool, using `cargo install sequoia-sq`."
     vars:
       CARGO_FEATURES:
         sh: |-

@@ -147,3 +147,18 @@ pub fn revoke_subkey<P: key::KeyParts>(
 
     Ok((revoked_cert, revocation))
 }
+
+pub fn sq_packet_dump(message_path: impl AsRef<Path>, cert_path: impl AsRef<Path>) {
+    super::run_command(
+        format!(
+            "`{path}` packet dump",
+            path = message_path.as_ref().display().to_string()
+        ),
+        std::process::Command::new("sq")
+            .arg("packet")
+            .arg("dump")
+            .arg("--recipient-file")
+            .arg(cert_path.as_ref())
+            .arg(message_path.as_ref()),
+    );
+}
