@@ -28,7 +28,6 @@ Medium priority (unordered):
   - Also cache metadata when listing objects (it should already be present).
     - Or always return metadata directly; actually that would be better.
 - Type errors more granularly.
-- Test that permissions are correctly kept when restoring a backup.
 
 Low priority (unordered):
 

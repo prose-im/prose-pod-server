@@ -217,6 +217,103 @@ async fn happy_path_atomic_restore() {
     //   cleaned up).
 }
 
+/// Tests that backup restorations restore file permissions.
+#[tokio::test(flavor = "multi_thread")]
+async fn happy_path_file_permissions() {
+    use std::{fs::Permissions, os::unix::fs::PermissionsExt as _};
+
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
+
+    println!();
+    let backup_config = {
+        let mut toml = toml! {
+            [storage]
+            provider = "fs"
+            fs.directory = "store"
+        };
+
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
+
+        BackupConfig::try_from(toml).unwrap()
+    };
+    tracing::debug!("Parsed config: {backup_config:#?}");
+
+    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
+        .src_relative_to(&test_data_path);
+
+    create_files(
+        &test_data_path,
+        [
+            "foo/", "foo/a", "foo/b",
+        ],
+    )
+    .unwrap();
+
+    let backup_version: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(backup_version, blueprint.clone())
+        .build();
+
+    let service = BackupService::from_config_custom(
+        &backup_config,
+        ArchivingContext { blueprints },
+        |_| unreachable!(),
+        || -> openpgp::policy::StandardPolicy { unreachable!() },
+    )
+    .unwrap();
+
+    // Set some custom permissions.
+    // NOTE: Uses two different files to ensure the library works and we’re not
+    //   just using a default value.
+    let foo_a = test_data_path.join("foo/a");
+    let foo_a_permissions = Permissions::from_mode(0o100401);
+    std::fs::set_permissions(&foo_a, foo_a_permissions.clone()).unwrap();
+    let foo_b = test_data_path.join("foo/b");
+    let foo_b_permissions = Permissions::from_mode(0o100402);
+    std::fs::set_permissions(&foo_b, foo_b_permissions.clone()).unwrap();
+
+    println!();
+    let CreateBackupSuccess {
+        output: creation_output,
+        ..
+    } = {
+        let command = CreateBackupCommand {
+            prefix: "prose-backup",
+            description: "Test backup",
+            version: backup_version,
+            blueprint: &blueprint.clone(),
+            additional_archive_data: vec![],
+            created_at: now - Duration::from_mins(90),
+        };
+        service.create_backup(command).await.unwrap()
+    };
+    let CreateBackupOutput { backup_id, .. } = creation_output;
+
+    // Override permissions.
+    std::fs::set_permissions(&foo_a, Permissions::from_mode(0o100600)).unwrap();
+    std::fs::set_permissions(&foo_a, Permissions::from_mode(0o100600)).unwrap();
+
+    // Restore the backup.
+    println!();
+    let res = service.restore_backup(&backup_id, &blueprint).await;
+    assert!(res.is_ok(), "Error: {:#?}", res.err().unwrap());
+
+    // Test that permissions were reverted.
+    assert_eq!(
+        std::fs::metadata(&foo_a).unwrap().permissions(),
+        foo_a_permissions
+    );
+    assert_eq!(
+        std::fs::metadata(&foo_b).unwrap().permissions(),
+        foo_b_permissions
+    );
+}
+
 // MARK: - Helpers
 
 /// Tests all features of the library, given a configuration.
