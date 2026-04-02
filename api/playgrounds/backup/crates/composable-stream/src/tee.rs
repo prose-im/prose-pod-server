@@ -132,7 +132,7 @@ impl<M1> ComposableStreamBuilder<M1> {
         ComposableStreamBuilder {
             make: move |a1: A1| {
                 let b1: B1 = make(a1)?;
-                let b2_opt: OptionalStream<B2> = OptionalStream::map(cond, other_builder);
+                let b2_opt: OptionalStream<B2> = OptionalStream::mapping(cond, other_builder);
                 Ok(Tee(b1, b2_opt))
             },
         }

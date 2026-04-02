@@ -5,6 +5,7 @@
 
 //! Verification logic.
 
+use std::io::Seek as _;
 use std::sync::Arc;
 
 use crate::BackupService;
@@ -211,6 +212,12 @@ impl BackupService {
                     .map_err(VerificationError::Other)?;
                 debug_assert_ne!(copied, 0);
             }
+
+            let fixme = "Cleanup";
+            backup_file = backup_file.map(|mut s| {
+                s.rewind().unwrap();
+                s
+            });
 
             // Verify the signature.
             let pgp_verification_res = verifier.verify_reader(&mut backup_file);

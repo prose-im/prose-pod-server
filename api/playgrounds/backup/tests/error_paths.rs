@@ -421,6 +421,7 @@ async fn error_path_lost_signing_key() {
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> =
         make_test_certs([("sign.pgp", now - Duration::from_hours(23))]).unwrap();
+    save_certs(test_data_path, &certs);
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 

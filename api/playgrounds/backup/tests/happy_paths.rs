@@ -164,6 +164,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
         ("sign.pgp", now - Duration::from_hours(23)),
     ])
     .unwrap();
+    save_certs(test_data_path, &certs);
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 

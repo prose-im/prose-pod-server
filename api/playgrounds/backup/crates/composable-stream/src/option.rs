@@ -31,13 +31,24 @@ impl<S> OptionalStream<S> {
     }
 
     #[inline]
-    pub fn map<T, F>(option: Option<T>, f: F) -> Self
+    pub fn mapping<T, F>(option: Option<T>, f: F) -> Self
     where
         F: FnOnce(T) -> S,
     {
         match option {
             Some(t) => Self::Some(f(t)),
             None => Self::None,
+        }
+    }
+
+    #[inline]
+    pub fn map<U, F>(self, f: F) -> OptionalStream<U>
+    where
+        F: FnOnce(S) -> U,
+    {
+        match self {
+            Self::Some(s) => OptionalStream::Some(f(s)),
+            Self::None => OptionalStream::None,
         }
     }
 

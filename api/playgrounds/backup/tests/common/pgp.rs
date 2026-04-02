@@ -35,7 +35,7 @@ where
     Ok(res)
 }
 
-pub fn save_certs(test_data_path: impl AsRef<Path>, certs: HashMap<PathBuf, openpgp::Cert>) {
+pub fn save_certs(test_data_path: impl AsRef<Path>, certs: &HashMap<PathBuf, openpgp::Cert>) {
     use openpgp::serialize::Marshal as _;
 
     let certs_dir = test_data_path.as_ref().join("certs");

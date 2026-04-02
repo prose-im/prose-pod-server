@@ -43,7 +43,7 @@ pub mod pgp {
 
         #[borrows(mut writer)]
         #[not_covariant]
-        signer: Option<openpgp::serialize::stream::Signer<'this>>,
+        message: Option<openpgp::serialize::stream::Message<'this>>,
     }
 
     impl<W: Write> PgpSigner<W> {
@@ -53,9 +53,7 @@ pub mod pgp {
             self.flush()?;
 
             // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
-            // TODO: Try to `.build()` before? Would it work?
-            //   Try and make sure nothing breaks.
-            self.with_signer_mut(|signer| signer.take().unwrap().build()?.finalize())?;
+            self.with_message_mut(|opt| opt.take().unwrap().finalize())?;
 
             Ok(self.into_heads().writer)
         }
@@ -67,12 +65,12 @@ pub mod pgp {
     {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
-            self.with_signer_mut(|opt| opt.as_mut().unwrap().write(buf))
+            self.with_message_mut(|opt| opt.as_mut().unwrap().write(buf))
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
             // SAFETY: Nothing takes the value out of the `Option` until `finalize`.
-            self.with_signer_mut(|opt| opt.as_mut().unwrap().flush())
+            self.with_message_mut(|opt| opt.as_mut().unwrap().flush())
         }
     }
 
@@ -102,7 +100,7 @@ pub mod pgp {
             &self,
             writer: W,
             time: SystemTime,
-        ) -> Result<openpgp::serialize::stream::Signer<'a>, anyhow::Error>
+        ) -> Result<openpgp::serialize::stream::Message<'a>, anyhow::Error>
         where
             W: Write + Send + Sync + 'a,
         {
@@ -129,8 +127,9 @@ pub mod pgp {
             let signer = Signer::new(message, keypair)?
                 .detached()
                 .creation_time(time);
+            let message = signer.build()?;
 
-            Ok(signer)
+            Ok(message)
         }
     }
 }
