@@ -5,11 +5,10 @@
 
 //! Verification logic.
 
-use std::io::Seek as _;
 use std::sync::Arc;
 
 use crate::BackupService;
-use crate::stores::{ObjectId, ObjectStore as _, ReadObjectError, ReadSizedObjectError};
+use crate::stores::{ObjectId, ReadObjectError, ReadSizedObjectError};
 use crate::util::PathGuard;
 
 pub(crate) use self::VerificationContext as Context;
@@ -97,46 +96,13 @@ impl BackupService {
         report: &mut VerificationReport,
     ) -> Result<VerificationOutput, VerificationError> {
         use anyhow::{Context as _, anyhow};
-        use composable_stream::OptionalStream;
-        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
         let backup_id = ObjectId::from(backup_id);
-
-        // Open local file paths.
-        // If permissions are not sufficient, avoids unnecessary network
-        // calls (potentially billed).
-        let fixme = "Remove unwrap";
-        let backup_path = tempfile::tempdir_in(self.backup_store.cache_dir())
-            .unwrap()
-            .keep()
-            .join(&backup_id);
-
-        let backup_file = std::fs::File::options()
-            // Allow creating the file and writing to it.
-            .create_new(true)
-            .write(true)
-            // Allow reading the file (necessary when verifying).
-            .read(true)
-            // Only allow read and write for the current user.
-            // This is very important, as not doing so would virtually leak all
-            // Prose data if the backup is unencrypted (default mode is `644`).
-            .mode(0o600)
-            .open(&backup_path)
-            .context("Failed opening a file path to download the backup to")
-            .map_err(VerificationError::Other)?;
-        if cfg!(debug_assertions) {
-            let metadata = std::fs::metadata(&backup_path).unwrap();
-            debug_assert_eq!(metadata.permissions().mode(), 0o100600);
-        }
-
-        let mut backup_file = OptionalStream::Some(backup_file);
-
-        let backup_path = Arc::new(PathGuard::new(backup_path));
 
         // Make sure the backup exists.
         // Integrity checks cannot be deleted; checking this first avoids
         // unnecessary network calls (potentially billed) and computation.
-        let mut backup_reader = match self.backup_store.reader(&backup_id).await {
+        let mut backup_reader = match self.backup_store.cached_reader(&backup_id).await {
             Ok(reader) => reader,
             Err(ReadObjectError::ObjectNotFound(err)) => {
                 return Err(VerificationError::BackupNotFound(err));
@@ -205,22 +171,8 @@ impl BackupService {
                     .context(format!("Invalid OpenPGP signature: `{check_name}`"))
                     .map_err(VerificationError::InvalidSignature)?;
 
-            // Read the backup to a temporary file.
-            {
-                let copied = std::io::copy(&mut backup_reader, &mut backup_file)
-                    .context(format!("Failed reading backup: `{backup_id}`"))
-                    .map_err(VerificationError::Other)?;
-                debug_assert_ne!(copied, 0);
-            }
-
-            let fixme = "Cleanup";
-            backup_file = backup_file.map(|mut s| {
-                s.rewind().unwrap();
-                s
-            });
-
             // Verify the signature.
-            let pgp_verification_res = verifier.verify_reader(&mut backup_file);
+            let pgp_verification_res = verifier.verify_reader(&mut backup_reader);
 
             let pgp_report = verifier.report();
             report.known_signing_keys = pgp_report.known_signing_keys;
@@ -232,12 +184,14 @@ impl BackupService {
                         tracing::debug!(
                             "All OpenPGP signing keys for `{check_name}` are untrusted. Falling back to integrity checks. (Source: {err:#})"
                         );
-                        backup_file = OptionalStream::None;
-                        backup_reader = Box::new(
-                            std::fs::File::open(backup_path.as_path())
-                                .context("Failed opening the backup file")
-                                .map_err(VerificationError::Other)?,
-                        );
+
+                        backup_reader = self
+                            .backup_store
+                            .persist_cache_and_rewind(backup_reader)
+                            .await
+                            .context("Failed saving cache")
+                            .map_err(VerificationError::Other)?;
+
                         break 'pgp_sig;
                     } else {
                         return Err(VerificationError::InvalidSignature(err.context(format!(
@@ -249,9 +203,7 @@ impl BackupService {
 
             tracing::debug!("OpenPGP signature verified.");
 
-            self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&backup_path))
-                .await;
+            let backup_path = self.backup_store.persist_cache(backup_reader).await;
 
             // Don’t process any other integrity check.
             return Ok(VerificationOutput { backup_path });
@@ -264,8 +216,6 @@ impl BackupService {
 
         #[cfg(feature = "blake3")]
         'blake3_check: {
-            use composable_stream::Tee;
-
             let check_name = backup_id.with_extension("blake3");
 
             let reader = self
@@ -306,21 +256,16 @@ impl BackupService {
                     "Invalid BLAKE3 checksum: `{check_name}`."
                 )));
             }
-            let verifier = blake3::Hasher::new();
+            let mut verifier = blake3::Hasher::new();
 
             // Read the backup to a temporary file, but also feed it to the
             // BLAKE3 hasher in parallel.
-            let mut tee_writer = Tee(verifier, backup_file);
             {
-                let copied = std::io::copy(&mut backup_reader, &mut tee_writer)
+                let copied = std::io::copy(&mut backup_reader, &mut verifier)
                     .context(format!("Failed reading backup: `{backup_id}`"))
                     .map_err(VerificationError::Other)?;
                 debug_assert_ne!(copied, 0);
             }
-
-            // NOTE: It’s okay to drop the file as-is:
-            //   the OS will flush before closing the file.
-            let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
             #[cfg(debug_assertions)]
@@ -336,9 +281,7 @@ impl BackupService {
             tracing::debug!("BLAKE3 checksum verified.");
             report.is_intact = true;
 
-            self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&backup_path))
-                .await;
+            let backup_path = self.backup_store.persist_cache(backup_reader).await;
 
             // Don’t process any other integrity check.
             return Ok(VerificationOutput { backup_path });
@@ -346,7 +289,6 @@ impl BackupService {
 
         #[cfg(feature = "sha2")]
         'sha256_check: {
-            use composable_stream::Tee;
             use sha2::{Digest as _, Sha256};
 
             let check_name = backup_id.with_extension("sha256");
@@ -389,21 +331,16 @@ impl BackupService {
                     "Invalid SHA-256 checksum: `{check_name}`."
                 )));
             }
-            let verifier = Sha256::new();
+            let mut verifier = Sha256::new();
 
             // Read the backup to a temporary file, but also feed it to the
             // SHA-256 hasher in parallel.
-            let mut tee_writer = Tee(verifier, backup_file);
             {
-                let copied = std::io::copy(&mut backup_reader, &mut tee_writer)
+                let copied = std::io::copy(&mut backup_reader, &mut verifier)
                     .context(format!("Failed reading backup: `{backup_id}`"))
                     .map_err(VerificationError::Other)?;
                 debug_assert_ne!(copied, 0);
             }
-
-            // NOTE: It’s okay to drop the file as-is:
-            //   the OS will flush before closing the file.
-            let Tee(verifier, _backup_file_opt) = tee_writer;
 
             let computed_hash = verifier.finalize();
             #[cfg(debug_assertions)]
@@ -419,9 +356,7 @@ impl BackupService {
             tracing::debug!("SHA-256 checksum verified.");
             report.is_intact = true;
 
-            self.backup_store
-                .cache(backup_id.to_string(), Arc::clone(&backup_path))
-                .await;
+            let backup_path = self.backup_store.persist_cache(backup_reader).await;
 
             // Don’t process any other integrity check.
             return Ok(VerificationOutput { backup_path });

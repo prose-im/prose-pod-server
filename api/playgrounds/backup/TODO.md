@@ -35,7 +35,6 @@ Medium priority (unordered):
 Low priority (unordered):
 
 - Add tests for all features and supported edge cases.
-- Use `tempfile::tempfile` instead of `tempfile::tempdir` to save backups.
 
 ## Feature ideas (unordered)
 

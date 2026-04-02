@@ -5,11 +5,14 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use tokio::sync::RwLock;
 
+use crate::stats::{MeteredStream, StreamStats, WriterStats};
 use crate::util::PathGuard;
 use crate::{config::CachingConfig, util::debug_panic_or_log_error};
 
@@ -58,22 +61,21 @@ where
         &self.store
     }
 
-    pub fn cache_dir(&self) -> &PathBuf {
-        let todo = "Remove";
-        &self.cache_dir
-    }
-
-    pub async fn cache(&self, key: String, path: Arc<PathGuard>) {
+    async fn cache(&self, key: String, path: Arc<PathGuard>, size: u64) {
         let mut cache = self.cache.write().await;
 
-        let Ok(metadata) = path.as_path().metadata() else {
-            debug_panic_or_log_error!(
-                "Cannot read metadata at `{path}`",
-                path = path.as_path().display()
-            );
-            return;
-        };
-        let size = metadata.len();
+        for entry in cache.entries.iter() {
+            if entry.key == key {
+                debug_panic_or_log_error!(
+                    "Object `{key}` already exists, not caching `{path}`.",
+                    path = path.display()
+                );
+                return;
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        assert_eq!(size, path.metadata().unwrap().len());
 
         if let Some(max_size) = self.max_cache_size_bytes {
             // Ensure object fits in cache.
@@ -118,6 +120,127 @@ where
         cache.total_size += size;
     }
 
+    pub async fn cached_reader(
+        &self,
+        key: &str,
+    ) -> Result<CachedReader<Box<DynObjectReader>>, ReadObjectError> {
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+        let cache = self.cache.read().await;
+
+        for entry in cache.entries.iter() {
+            if entry.key == key {
+                match File::open(entry.path.as_ref()) {
+                    Ok(file) => {
+                        tracing::debug!(
+                            "Object `{key}` was cached. Reading from `{path}`.",
+                            path = entry.path.display()
+                        );
+                        return Ok(CachedReader::Cached {
+                            reader: file,
+                            path: Arc::clone(&entry.path),
+                        });
+                    }
+                    Err(err) => {
+                        debug_panic_or_log_error!(
+                            "Failed opening `{path}`: {err:?}",
+                            path = entry.path.display()
+                        );
+
+                        // Skip reading from cache (we’ve found the entry
+                        // and it’s broken).
+                        break;
+                    }
+                }
+            }
+        }
+        drop(cache);
+
+        // Open local file paths.
+        // If permissions are not sufficient, avoids unnecessary network
+        // calls (potentially billed).
+        let object_path = self.cache_dir.join(key);
+
+        tracing::debug!(
+            "Will cache object `{key}` in `{path}`.",
+            path = object_path.display()
+        );
+        let cache_file = std::fs::File::options()
+            // Allow creating the file and writing to it.
+            .create_new(true)
+            .write(true)
+            // Allow reading the file (necessary when verifying).
+            .read(true)
+            // Only allow read and write for the current user.
+            // This is very important, as not doing so would virtually leak
+            // data if the backup is unencrypted (default mode is `644`).
+            .mode(0o600)
+            .open(&object_path)
+            .context("Failed opening a file path to cache the object at")
+            .map_err(ReadObjectError::Other)?;
+        if cfg!(debug_assertions) {
+            let metadata = std::fs::metadata(&object_path).unwrap();
+            debug_assert_eq!(metadata.permissions().mode(), 0o100600);
+        }
+
+        let reader = self.store.reader(key).await?;
+
+        Ok(CachedReader::Caching {
+            reader,
+            writer: MeteredStream::new(cache_file, SizeRef(0)),
+            key: key.to_owned(),
+            path: Arc::new(PathGuard::new(object_path)),
+        })
+    }
+
+    /// Persists the cache entry.
+    pub async fn persist_cache<R>(&self, reader: CachedReader<R>) -> Arc<PathGuard> {
+        match reader {
+            CachedReader::Caching {
+                writer, key, path, ..
+            } => {
+                let size = writer.into_stats();
+
+                self.cache(key, Arc::clone(&path), *size).await;
+
+                path
+            }
+            CachedReader::Cached { path, .. } => path,
+        }
+    }
+
+    /// Helper for [`CachedStore::persist_cache`] then
+    /// [`std::io::Seek::rewind`].
+    pub async fn persist_cache_and_rewind<R>(
+        &self,
+        mut reader: CachedReader<R>,
+    ) -> Result<CachedReader<R>, std::io::Error> {
+        use std::io::Seek as _;
+
+        match reader {
+            CachedReader::Caching { .. } => {
+                let path = self.persist_cache(reader).await;
+
+                tracing::trace!("Rewinding (re-opening)…");
+
+                // Re-open the file, with read access this time.
+                let file = File::open(path.as_ref())?;
+
+                // TODO: MADV_SEQUENTIAL?
+
+                Ok(CachedReader::Cached { reader: file, path })
+            }
+            CachedReader::Cached {
+                reader: ref mut file,
+                ..
+            } => {
+                tracing::trace!("Rewinding…");
+                file.rewind()?;
+                Ok(reader)
+            }
+        }
+    }
+
     /// Remove a cached entry.
     pub async fn remove(&self, key: &str) {
         let mut cache = self.cache.write().await;
@@ -153,35 +276,10 @@ where
 
     #[inline]
     async fn reader(&self, key: &str) -> Result<Box<DynObjectReader>, ReadObjectError> {
-        let cache = self.cache.read().await;
-
-        for entry in cache.entries.iter() {
-            if entry.key == key {
-                let path = entry.path.as_path();
-                match File::open(path) {
-                    Ok(file) => {
-                        tracing::debug!(
-                            "Object `{key}` was cached. Reading from `{path}`.",
-                            path = path.display()
-                        );
-                        return Ok(Box::new(file));
-                    }
-                    Err(err) => {
-                        debug_panic_or_log_error!(
-                            "Failed opening `{path}`: {err:?}",
-                            path = path.display()
-                        );
-
-                        // Skip reading from cache (we’ve found the entry
-                        // and it’s broken).
-                        break;
-                    }
-                }
-            }
+        match self.cached_reader(key).await {
+            Ok(reader) => Ok(Box::new(reader)),
+            Err(err) => Err(err),
         }
-        drop(cache);
-
-        self.store.reader(key).await
     }
 
     #[inline]
@@ -226,5 +324,85 @@ where
     #[inline]
     async fn delete_all(&self, prefix: &str) -> Result<BulkDeleteOutput, anyhow::Error> {
         self.store.delete_all(prefix).await
+    }
+}
+
+// MARK: Cached reader
+
+pub enum CachedReader<R> {
+    Caching {
+        reader: R,
+        writer: MeteredStream<File, SizeRef>,
+        key: String,
+        path: Arc<PathGuard>,
+    },
+    Cached {
+        reader: File,
+        // NOTE: Keep a reference to the temporary path in case
+        //   `CachedStore::cache` failed to store the cache entry
+        //   (which would try to delete the file while it’s being read,
+        //   resulting in a silent failure, resulting in a leaking cache
+        //   potentially getting larger than `max_backup_cache_size`).
+        path: Arc<PathGuard>,
+    },
+}
+
+impl<R> std::io::Read for CachedReader<R>
+where
+    R: std::io::Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        match self {
+            CachedReader::Caching { reader, writer, .. } => {
+                let n = reader.read(buf)?;
+
+                // NOTE: The OS will flush before closing the file,
+                //   no need to care about it.
+                writer.write_all(&buf[..n])?;
+
+                Ok(n)
+            }
+            CachedReader::Cached { reader, .. } => reader.read(buf),
+        }
+    }
+}
+
+impl<R> std::fmt::Debug for CachedReader<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Caching { key, path, .. } => f
+                .debug_struct("Caching")
+                .field("key", key)
+                .field("path", path)
+                .finish_non_exhaustive(),
+            Self::Cached { path, .. } => f
+                .debug_struct("Cached")
+                .field("path", path)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+#[repr(transparent)]
+pub struct SizeRef(u64);
+
+impl StreamStats for SizeRef {
+    fn record_chunk(&mut self, len: usize) {
+        self.0 = self.0.saturating_add(len as u64);
+    }
+
+    #[cfg(debug_assertions)]
+    fn record_duration(&mut self, _duration: &std::time::Duration) {}
+}
+
+impl WriterStats for SizeRef {
+    fn record_flush(&mut self) {}
+}
+
+impl std::ops::Deref for SizeRef {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
