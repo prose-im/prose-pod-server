@@ -353,7 +353,7 @@ pub enum EncryptionConfig {
     #[serde(rename = "off")]
     Off,
 
-    #[serde(rename = "pgp", alias = "gpg")]
+    #[serde(rename = "pgp", alias = "OpenPGP", alias = "gpg")]
     Pgp {
         #[serde(rename = "pgp", alias = "gpg")]
         config: EncryptionPgpConfig,

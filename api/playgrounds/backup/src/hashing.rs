@@ -37,7 +37,7 @@ impl Write for DigestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             #[cfg(feature = "blake3")]
-            DigestWriter::Blake3(writer) => writer.write(buf),
+            Self::Blake3(writer) => writer.write(buf),
             #[cfg(feature = "sha2")]
             Self::Sha256(writer) => writer.write(buf),
         }
@@ -46,7 +46,7 @@ impl Write for DigestWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             #[cfg(feature = "blake3")]
-            DigestWriter::Blake3(writer) => writer.flush(),
+            Self::Blake3(writer) => writer.flush(),
             #[cfg(feature = "sha2")]
             Self::Sha256(writer) => writer.flush(),
         }
@@ -57,7 +57,7 @@ impl DigestWriter {
     pub fn finalize(self) -> Vec<u8> {
         match self {
             #[cfg(feature = "blake3")]
-            DigestWriter::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
+            Self::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
             #[cfg(feature = "sha2")]
             Self::Sha256(hasher) => sha2::Digest::finalize(hasher).to_vec(),
         }
