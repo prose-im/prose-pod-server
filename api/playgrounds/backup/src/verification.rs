@@ -155,10 +155,12 @@ impl BackupService {
                 report.is_signed = true;
 
                 let mut signature: Vec<u8> = Vec::new();
+
                 let signature_len = std::io::copy(&mut reader, &mut signature)
                     .context("Failed reading OpenPGP signature")
                     .map_err(VerificationError::Other)?;
                 debug_assert_ne!(signature_len, 0);
+
                 &*report.signature.insert(signature)
             };
 
@@ -218,58 +220,67 @@ impl BackupService {
         'blake3_check: {
             let check_name = backup_id.with_extension("blake3");
 
-            let reader = self
-                .check_store
-                .reader_if_not_too_large(&check_name, blake3::OUT_LEN as u64)
-                .await;
+            // Read stored hash.
+            let expected_hash: Vec<u8> = {
+                let reader = self
+                    .check_store
+                    .reader_if_not_too_large(&check_name, blake3::OUT_LEN as u64)
+                    .await;
 
-            let mut reader = match reader {
-                Ok(reader) => reader,
-                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
-                    tracing::debug!(
-                        "BLAKE3 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
-                    );
-                    break 'blake3_check;
+                let mut reader = match reader {
+                    Ok(reader) => reader,
+                    Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                        tracing::debug!(
+                            "BLAKE3 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
+                        );
+                        break 'blake3_check;
+                    }
+                    Err(
+                        err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_)),
+                    ) => {
+                        tracing::debug!(
+                            "BLAKE3 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
+                        );
+                        break 'blake3_check;
+                    }
+                    Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                        return Err(VerificationError::Other(err.context(format!(
+                            "Failed opening BLAKE3 checksum reader for `{check_name}`"
+                        ))));
+                    }
+                };
+
+                let mut expected_hash: Vec<u8> = Vec::new();
+                let hash_len = std::io::copy(&mut reader, &mut expected_hash)
+                    .context("Failed reading BLAKE3 checksum")
+                    .map_err(VerificationError::Other)?;
+
+                // Abort early if the hash is invalid.
+                if hash_len != blake3::OUT_LEN as u64 {
+                    return Err(VerificationError::InvalidChecksum(anyhow!(
+                        "Invalid BLAKE3 checksum: `{check_name}`."
+                    )));
                 }
-                Err(err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_))) => {
-                    tracing::debug!(
-                        "BLAKE3 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
-                    );
-                    break 'blake3_check;
-                }
-                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
-                    return Err(VerificationError::Other(err.context(format!(
-                        "Failed opening BLAKE3 checksum reader for `{check_name}`"
-                    ))));
-                }
+
+                expected_hash
             };
 
-            // Read signature.
-            let mut expected_hash: Vec<u8> = Vec::new();
-            let hash_len = std::io::copy(&mut reader, &mut expected_hash)
-                .context("Failed reading BLAKE3 checksum")
-                .map_err(VerificationError::Other)?;
+            // Compute the hash again.
+            let computed_hash: blake3::Hash = {
+                let mut verifier = blake3::Hasher::new();
 
-            // Create the verifier and abort early if the hash is invalid.
-            if hash_len != blake3::OUT_LEN as u64 {
-                return Err(VerificationError::InvalidChecksum(anyhow!(
-                    "Invalid BLAKE3 checksum: `{check_name}`."
-                )));
-            }
-            let mut verifier = blake3::Hasher::new();
-
-            // Read the backup to a temporary file, but also feed it to the
-            // BLAKE3 hasher in parallel.
-            {
                 let copied = std::io::copy(&mut backup_reader, &mut verifier)
                     .context(format!("Failed reading backup: `{backup_id}`"))
                     .map_err(VerificationError::Other)?;
                 debug_assert_ne!(copied, 0);
-            }
 
-            let computed_hash = verifier.finalize();
-            #[cfg(debug_assertions)]
-            assert_ne!(computed_hash, blake3::Hasher::new().finalize());
+                let computed_hash = verifier.finalize();
+
+                #[cfg(debug_assertions)]
+                assert_ne!(computed_hash, blake3::Hasher::new().finalize());
+
+                computed_hash
+            };
 
             // Verify the checksum.
             if computed_hash.as_bytes() != expected_hash.as_slice() {
@@ -293,58 +304,71 @@ impl BackupService {
 
             let check_name = backup_id.with_extension("sha256");
 
-            let reader = self
-                .check_store
-                .reader_if_not_too_large(&check_name, Sha256::output_size() as u64)
-                .await;
+            // Read stored hash.
+            let expected_hash: Vec<u8> = {
+                let reader = self
+                    .check_store
+                    .reader_if_not_too_large(&check_name, Sha256::output_size() as u64)
+                    .await;
 
-            let mut reader = match reader {
-                Ok(reader) => reader,
-                Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
-                    tracing::debug!(
-                        "SHA-256 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
-                    );
-                    break 'sha256_check;
+                let mut reader = match reader {
+                    Ok(reader) => reader,
+                    Err(err @ ReadSizedObjectError::ObjectTooLarge { .. }) => {
+                        tracing::debug!(
+                            "SHA-256 checksum file `{check_name}` too large. Skipping. (Source: {err:#})"
+                        );
+                        break 'sha256_check;
+                    }
+                    Err(
+                        err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_)),
+                    ) => {
+                        tracing::debug!(
+                            "SHA-256 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
+                        );
+                        break 'sha256_check;
+                    }
+                    Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
+                        return Err(VerificationError::Other(err.context(format!(
+                            "Failed opening SHA-256 checksum reader for `{check_name}`"
+                        ))));
+                    }
+                };
+
+                let mut expected_hash: Vec<u8> = Vec::new();
+                let hash_len = std::io::copy(&mut reader, &mut expected_hash)
+                    .context("Failed reading SHA-256 checksum")
+                    .map_err(VerificationError::Other)?;
+
+                // Abort early if the hash is invalid.
+                if hash_len != Sha256::output_size() as u64 {
+                    return Err(VerificationError::InvalidChecksum(anyhow!(
+                        "Invalid SHA-256 checksum: `{check_name}`."
+                    )));
                 }
-                Err(err @ ReadSizedObjectError::ReadFailed(ReadObjectError::ObjectNotFound(_))) => {
-                    tracing::debug!(
-                        "SHA-256 checksum file `{check_name}` not found. Skipping. (Source: {err:#})"
-                    );
-                    break 'sha256_check;
-                }
-                Err(ReadSizedObjectError::ReadFailed(ReadObjectError::Other(err))) => {
-                    return Err(VerificationError::Other(err.context(format!(
-                        "Failed opening SHA-256 checksum reader for `{check_name}`"
-                    ))));
-                }
+
+                expected_hash
             };
 
-            // Read signature.
-            let mut expected_hash: Vec<u8> = Vec::new();
-            let hash_len = std::io::copy(&mut reader, &mut expected_hash)
-                .context("Failed reading SHA-256 checksum")
-                .map_err(VerificationError::Other)?;
+            // Compute the hash again.
+            let computed_hash: sha2::digest::crypto_common::Output<Sha256> = {
+                let mut verifier = Sha256::new();
 
-            // Create the verifier and abort early if the hash is invalid.
-            if hash_len != Sha256::output_size() as u64 {
-                return Err(VerificationError::InvalidChecksum(anyhow!(
-                    "Invalid SHA-256 checksum: `{check_name}`."
-                )));
-            }
-            let mut verifier = Sha256::new();
+                // Read the backup to a temporary file, but also feed it to the
+                // SHA-256 hasher in parallel.
+                {
+                    let copied = std::io::copy(&mut backup_reader, &mut verifier)
+                        .context(format!("Failed reading backup: `{backup_id}`"))
+                        .map_err(VerificationError::Other)?;
+                    debug_assert_ne!(copied, 0);
+                }
 
-            // Read the backup to a temporary file, but also feed it to the
-            // SHA-256 hasher in parallel.
-            {
-                let copied = std::io::copy(&mut backup_reader, &mut verifier)
-                    .context(format!("Failed reading backup: `{backup_id}`"))
-                    .map_err(VerificationError::Other)?;
-                debug_assert_ne!(copied, 0);
-            }
+                let computed_hash = verifier.finalize();
 
-            let computed_hash = verifier.finalize();
-            #[cfg(debug_assertions)]
-            assert_ne!(computed_hash, Sha256::new().finalize());
+                #[cfg(debug_assertions)]
+                assert_ne!(computed_hash, Sha256::new().finalize());
+
+                computed_hash
+            };
 
             // Verify the checksum.
             if computed_hash.as_ref() != expected_hash {
