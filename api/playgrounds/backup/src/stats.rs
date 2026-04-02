@@ -56,6 +56,10 @@ impl<Stream, Stats: StreamStats> MeteredStream<Stream, Stats> {
         self.inner
     }
 
+    pub fn stats(&self) -> &Stats {
+        &self.stats
+    }
+
     pub fn into_stats(self) -> Stats {
         self.stats
     }

@@ -8,6 +8,7 @@ mod common;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use prose_backup::archiving::ArchiveBlueprint;
 use prose_backup::config::HashingAlgorithm;
+use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{BackupService, CreateBackupCommand, CreateBackupSuccess};
 use tempfile::TempPath;
 
@@ -90,7 +91,10 @@ fn bench_file_size_no_file_io(c: &mut Criterion) {
             created_at: std::time::SystemTime::now(),
         };
 
-        service.create_backup(command).await.unwrap();
+        service
+            .create_backup(command, &mut NoopEventHandler)
+            .await
+            .unwrap();
     }
 
     let file_count = 1;
@@ -238,7 +242,10 @@ async fn benchmark_create_backup(
         created_at: std::time::SystemTime::now(),
     };
 
-    let CreateBackupSuccess { output, .. } = service.create_backup(command).await.unwrap();
+    let CreateBackupSuccess { output, .. } = service
+        .create_backup(command, &mut NoopEventHandler)
+        .await
+        .unwrap();
 
     // Create path guards for created files, so it’s cleaned up when the
     // function result is dropped (avoids measuring the deletion as part

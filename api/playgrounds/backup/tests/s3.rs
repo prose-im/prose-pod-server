@@ -101,23 +101,29 @@ async fn s3_happy_path() {
 
     println!();
     tracing::info!("Create backup");
+    let mut event_handler = DebugEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
-        stats: creation_stats,
         ..
     } = service
-        .create_backup(CreateBackupCommand {
-            prefix: &test_id,
-            description: "Test backup",
-            version: backup_version,
-            blueprint: &blueprint,
-            additional_archive_data: vec![],
-            created_at: now,
-        })
+        .create_backup(
+            CreateBackupCommand {
+                prefix: &test_id,
+                description: "Test backup",
+                version: backup_version,
+                blueprint: &blueprint,
+                additional_archive_data: vec![],
+                created_at: now,
+            },
+            &mut event_handler,
+        )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
-    tracing::info!("Upload stats: {creation_stats:#?}");
+    tracing::info!(
+        "Upload stats: {upload_stats:#?}",
+        upload_stats = event_handler.upload_durations
+    );
 
     // Register cleanup function.
     context.cleanup_functions.push({
@@ -235,23 +241,29 @@ async fn s3_single_bucket_same_prefix() {
 
     println!();
     tracing::info!("Create backup");
+    let mut event_handler = DebugEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
-        stats: creation_stats,
         ..
     } = service
-        .create_backup(CreateBackupCommand {
-            prefix: &test_id,
-            description: "Test backup",
-            version: backup_version,
-            blueprint: &blueprint,
-            additional_archive_data: vec![],
-            created_at: now,
-        })
+        .create_backup(
+            CreateBackupCommand {
+                prefix: &test_id,
+                description: "Test backup",
+                version: backup_version,
+                blueprint: &blueprint,
+                additional_archive_data: vec![],
+                created_at: now,
+            },
+            &mut event_handler,
+        )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
-    tracing::info!("Upload stats: {creation_stats:#?}");
+    tracing::info!(
+        "Upload stats: {upload_stats:#?}",
+        upload_stats = event_handler.upload_durations
+    );
 
     // Register cleanup function.
     context.cleanup_functions.push({
@@ -389,23 +401,29 @@ async fn s3_object_locking() {
 
     println!();
     tracing::info!("Create backup");
+    let mut event_handler = DebugEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
-        stats: creation_stats,
         ..
     } = service
-        .create_backup(CreateBackupCommand {
-            prefix: &test_id,
-            description: "Test backup",
-            version: 0,
-            blueprint: &blueprint,
-            additional_archive_data: vec![],
-            created_at: now,
-        })
+        .create_backup(
+            CreateBackupCommand {
+                prefix: &test_id,
+                description: "Test backup",
+                version: 0,
+                blueprint: &blueprint,
+                additional_archive_data: vec![],
+                created_at: now,
+            },
+            &mut event_handler,
+        )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
-    tracing::info!("Upload stats: {creation_stats:#?}");
+    tracing::info!(
+        "Upload stats: {upload_stats:#?}",
+        upload_stats = event_handler.upload_durations
+    );
 
     // Register cleanup function.
     context.cleanup_functions.push({

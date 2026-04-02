@@ -40,7 +40,6 @@ Low priority (unordered):
 - Return all layer sizes when getting backup details (?).
 - Return stats after restore (?).
 - Stream stats when restoring.
-- Stream stats when creating a backup.
 - Recover a recently deleted backup.
   - Do not delete objects directly, but rather create a delete marker and truly
     delete only after some (configurable) time.

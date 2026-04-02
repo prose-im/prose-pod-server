@@ -172,7 +172,10 @@ async fn happy_path_atomic_restore() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 
@@ -290,7 +293,10 @@ async fn happy_path_file_permissions() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 
@@ -392,6 +398,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
     .unwrap();
 
     println!();
+    let mut event_handler = DebugEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -405,7 +412,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command)
+            .create_backup(command, &mut event_handler)
             .await
             .context("create_backup")
             .unwrap()
@@ -417,6 +424,14 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
     } = creation_output;
     tracing::info!("Created backup '{backup_id}'.");
     tracing::info!("Integrity checks: {digest_ids:#?}");
+    tracing::debug!(
+        "Effective archive size: {}",
+        event_handler.effective_archive_size
+    );
+    assert_eq!(
+        event_handler.expected_archive_size,
+        event_handler.effective_archive_size
+    );
 
     println!();
     if let EncryptionConfig::Pgp { config: pgp } = &encryption_config {

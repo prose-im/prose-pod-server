@@ -94,7 +94,10 @@ async fn alternate_path_single_store() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput {
         backup_id,
@@ -176,7 +179,10 @@ async fn alternate_path_unknown_archive_entry_no_error() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 
@@ -267,7 +273,10 @@ async fn alternate_path_lost_signing_key() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 
@@ -370,7 +379,10 @@ async fn alternate_path_change_hashing_algorithm() {
                 additional_archive_data: vec![],
                 created_at,
             };
-            service.create_backup(command).await.unwrap()
+            service
+                .create_backup(command, &mut DebugEventHandler::default())
+                .await
+                .unwrap()
         };
         let CreateBackupOutput { backup_id, .. } = creation_output;
 

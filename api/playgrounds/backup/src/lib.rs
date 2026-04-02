@@ -28,6 +28,7 @@ mod compression;
 pub mod config;
 pub mod decryption;
 pub mod encryption;
+pub mod event_handlers;
 mod hashing;
 mod pgp;
 mod restoration;
@@ -116,8 +117,9 @@ impl BackupService {
     pub async fn create_backup(
         &self,
         command: create::CreateBackupCommand<'_>,
+        event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<create::CreateBackupSuccess, create::CreateBackupError> {
-        crate::create::create_backup(self, command).await
+        crate::create::create_backup(self, command, event_handler).await
     }
 
     /// List all backups, in alphabetically descending order.
@@ -466,8 +468,9 @@ mod create {
             #[cfg(feature = "test")]
             created_at,
         }: CreateBackupCommand<'_>,
+        event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
-        check_archiving_will_succeed(&blueprint)?;
+        let expected_archive_size = check_archiving_will_succeed(&blueprint)?;
 
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();
@@ -491,6 +494,8 @@ mod create {
         };
         let raw_backup_id = ObjectId::from(&backup_id);
 
+        event_handler.on_archive_start(&backup_id, expected_archive_size);
+
         // Try to open sink first, to abort early if something is wrong.
         let upload_backup = service
             .backup_store
@@ -501,6 +506,10 @@ mod create {
         let start = std::time::Instant::now();
 
         let archive_writer = archive(&blueprint, version, additional_archive_data)
+            .then(meter_writes(BackupStatsReader {
+                backup_id: &backup_id,
+                event_handler,
+            }))
             .then(compress(&service.compression_config))
             .then(eventually(service.encryption_context.as_ref(), |ctx| {
                 encrypt(ctx, created_at)
@@ -520,6 +529,8 @@ mod create {
             .into_inner()
             .context("Could not init archive")
             .map_err(CreateBackupError::ArchivingFailed)?;
+
+        let compression_writer = compression_writer.into_inner();
 
         let encryption_writer_opt = compression_writer
             .finalize()
@@ -582,10 +593,10 @@ mod create {
         () = backup_upload
             .finalize()
             .map_err(CreateBackupError::UploadFailed)?;
-        let backup_upload_duration = start.elapsed();
-
         let size_bytes = backup_stats.bytes_written;
-        tracing::info!("Created backup {backup_id:?} ({size_bytes}B).");
+        let elapsed = start.elapsed();
+        tracing::info!("Created backup {backup_id:?} ({size_bytes}B) in {elapsed:?}.");
+        event_handler.on_backup_uploaded(&backup_id, size_bytes, elapsed);
 
         // Construct the response.
         Ok(CreateBackupSuccess {
@@ -604,10 +615,6 @@ mod create {
                 backup_id,
                 digest_ids,
                 signature_ids,
-            },
-            stats: CreateBackupStats {
-                backup_upload_duration,
-                checks_upload_durations,
             },
         })
     }
@@ -665,6 +672,51 @@ mod create {
         pub created_at: std::time::SystemTime,
     }
 
+    #[allow(unused_variables)]
+    pub trait CreateBackupEventHandler: Send + Sync {
+        #[inline]
+        fn on_archive_start(&mut self, backup_id: &BackupId, expected_archive_size: u64) {}
+
+        #[inline]
+        fn on_archive_progress(&mut self, backup_id: &BackupId, archived_bytes: usize) {}
+
+        #[inline]
+        fn on_upload_progress(&mut self, object_id: &ObjectId, uploaded_bytes: usize) {}
+
+        #[inline]
+        fn on_backup_uploaded(
+            &mut self,
+            backup_id: &BackupId,
+            size_bytes: u64,
+            duration: std::time::Duration,
+        ) {
+        }
+
+        #[inline]
+        fn on_digest_uploaded(&mut self, object_id: &ObjectId, duration: std::time::Duration) {}
+
+        #[inline]
+        fn on_signature_uploaded(&mut self, object_id: &ObjectId, duration: std::time::Duration) {}
+    }
+
+    struct BackupStatsReader<'a, H: CreateBackupEventHandler> {
+        backup_id: &'a BackupId,
+        event_handler: &'a mut H,
+    }
+
+    impl<'a, H: CreateBackupEventHandler> StreamStats for BackupStatsReader<'a, H> {
+        fn record_chunk(&mut self, len: usize) {
+            self.event_handler.on_archive_progress(self.backup_id, len);
+        }
+
+        #[cfg(debug_assertions)]
+        fn record_duration(&mut self, _duration: &std::time::Duration) {}
+    }
+
+    impl<'a, H: CreateBackupEventHandler> WriterStats for BackupStatsReader<'a, H> {
+        fn record_flush(&mut self) {}
+    }
+
     #[derive(Debug)]
     pub struct CreateBackupOutput {
         /// Unique identifier (file name / object key) of the backup.
@@ -685,16 +737,9 @@ mod create {
     }
 
     #[derive(Debug)]
-    pub struct CreateBackupStats {
-        pub backup_upload_duration: std::time::Duration,
-        pub checks_upload_durations: Vec<(ObjectId, std::time::Duration)>,
-    }
-
-    #[derive(Debug)]
     pub struct CreateBackupSuccess {
         pub backup: BackupDto<BackupMetadataPartialDto>,
         pub output: CreateBackupOutput,
-        pub stats: CreateBackupStats,
     }
 
     #[derive(Debug, thiserror::Error)]

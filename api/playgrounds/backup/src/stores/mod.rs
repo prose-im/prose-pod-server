@@ -80,7 +80,7 @@ pub trait ObjectStore: Send + Sync {
 ///
 /// E.g. `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp`,
 /// `prose%2Dbackup-1772432392-Automatic%20backup.tar.zst.pgp.sha256`.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct ObjectId(String);
 

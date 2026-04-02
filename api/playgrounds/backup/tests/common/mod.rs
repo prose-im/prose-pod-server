@@ -6,6 +6,7 @@
 #![allow(dead_code, unused_imports, unused_macros)]
 
 pub mod blueprints;
+pub mod event_handlers;
 pub mod fs;
 pub mod lifecycle;
 pub mod pgp;
@@ -31,6 +32,7 @@ pub mod prelude {
     pub use toml::toml;
 
     pub use super::blueprints::*;
+    pub use super::event_handlers::*;
     pub use super::fs::*;
     pub use super::lifecycle::*;
     pub(crate) use super::macros::*;

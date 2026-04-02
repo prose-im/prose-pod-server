@@ -67,7 +67,9 @@ async fn error_path_backup_missing_file() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
     };
     assert!(res.is_err());
     let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
@@ -137,7 +139,10 @@ async fn error_path_restore_missing_file() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 

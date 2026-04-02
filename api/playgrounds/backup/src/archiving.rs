@@ -15,7 +15,7 @@ use composable_stream::ComposableStreamBuilder;
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats};
-use crate::util::debug_panic;
+use crate::util::{debug_panic, debug_panic_or_log_error};
 use crate::verification::VerificationOutput;
 use crate::{BackupId, CreateBackupError};
 
@@ -64,16 +64,29 @@ pub(crate) struct BackupInternalMetadata {
 
 // MARK: - Archiving
 
+/// Returns the expected size of the archive
 pub(crate) fn check_archiving_will_succeed(
     blueprint: &ArchiveBlueprint,
-) -> Result<(), CannotArchive> {
+) -> Result<u64, CannotArchive> {
+    let mut paths = Vec::with_capacity(blueprint.paths.len());
+
     for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
             return Err(CannotArchive::MissingFile(local_path.to_owned()));
         }
+        paths.push(local_path.as_path());
     }
 
-    Ok(())
+    // NOTE: 1024 = 512 bytes for the header + few bytes of data from
+    //   `metadata.json` (≈13) padded up to the next 512-byte block boundary.
+    let expected_size = 1024
+        + crate::util::estimate_tar_size(&paths)
+            .inspect_err(|err| {
+                debug_panic_or_log_error!("Failed computing estimated archive size: {err:#}")
+            })
+            .unwrap_or(0);
+
+    Ok(expected_size)
 }
 
 fn archive_writer<W: Write>(
@@ -216,7 +229,7 @@ pub(crate) fn extract<'a>(
 
     // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
     //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
-    let compressed_archive_reader = decryption::reader(
+    let archive_reader = decryption::reader(
         backup_reader,
         &decryption_context,
         &backup_id,
@@ -224,12 +237,18 @@ pub(crate) fn extract<'a>(
         decryption_report,
     )?;
 
-    let archive_bytes =
-        zstd::Decoder::new(compressed_archive_reader).context("Cannot decompress")?;
+    #[cfg(feature = "zstd")]
+    let archive_reader: Box<dyn std::io::Read> = if backup_id.extensions.contains(&Box::from("zst"))
+    {
+        let decoder = zstd::Decoder::new(archive_reader).context("Cannot decompress")?;
+        Box::new(decoder)
+    } else {
+        Box::new(archive_reader)
+    };
 
-    let archive_bytes = MeteredStream::new(archive_bytes, &mut stats.decompression_stats);
+    let archive_reader = MeteredStream::new(archive_reader, &mut stats.decompression_stats);
 
-    extract_archive_(archive_bytes, blueprints, &mut stats.extracted_bytes_count)
+    extract_archive_(archive_reader, blueprints, &mut stats.extracted_bytes_count)
 }
 
 pub(crate) fn extract_archive_<'a, R>(

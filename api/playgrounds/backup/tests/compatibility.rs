@@ -92,7 +92,10 @@ async fn compatibility_openpgp() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut DebugEventHandler::default())
+            .await
+            .unwrap()
     };
     let CreateBackupOutput {
         backup_id,

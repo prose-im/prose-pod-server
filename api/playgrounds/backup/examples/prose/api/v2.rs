@@ -11,7 +11,7 @@ use std::{path::Path, str::FromStr as _};
 use anyhow::Context;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, ExtractionSuccess,
-    archiving::ArchiveBlueprint,
+    archiving::ArchiveBlueprint, event_handlers::NoopEventHandler,
 };
 use tokio::sync::RwLock;
 
@@ -130,7 +130,11 @@ impl ProsePodServerApiV2 {
             Box::new(std::io::Cursor::new(prose_pod_api_data)),
         )];
 
-        let response = state.backup_service.create_backup(command).await?;
+        let todo = "Stream backup progress";
+        let response = state
+            .backup_service
+            .create_backup(command, &mut NoopEventHandler)
+            .await?;
 
         Ok(response)
     }

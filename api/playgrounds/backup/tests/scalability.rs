@@ -72,9 +72,9 @@ async fn scalability_large_files() {
 
     println!();
     tracing::info!("Creating backup…");
+    let mut event_handler = DebugEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
-        stats: creation_stats,
         ..
     } = {
         let command = CreateBackupCommand {
@@ -85,10 +85,16 @@ async fn scalability_large_files() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service.create_backup(command).await.unwrap()
+        service
+            .create_backup(command, &mut event_handler)
+            .await
+            .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
-    tracing::info!("creation_stats: {creation_stats:#?}");
+    tracing::info!(
+        "Upload stats: {upload_stats:#?}",
+        upload_stats = event_handler.upload_durations
+    );
 
     println!();
     tracing::info!("Restoring backup…");
