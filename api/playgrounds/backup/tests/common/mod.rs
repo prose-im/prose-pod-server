@@ -25,8 +25,8 @@ pub mod prelude {
     pub use prose_backup::config::*;
     pub use prose_backup::decryption::PgpDecryptionContext;
     pub use prose_backup::{
-        BackupConfig, BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess,
-        ExtractAndRestoreSuccess, ExtractionSuccess,
+        BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupOutput,
+        CreateBackupSuccess, ExtractAndRestoreSuccess, ExtractionSuccess,
     };
     pub use toml::toml;
 

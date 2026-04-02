@@ -69,7 +69,7 @@ sha2 = ["dep:sha2"]
 
 [[test]]
 name = "alternate_paths"
-required-features = ["test", "provider_fs", "blake3"]
+required-features = ["test", "provider_fs", "blake3", "sha2"]
 
 [[test]]
 name = "compatibility"

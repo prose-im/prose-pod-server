@@ -305,3 +305,99 @@ async fn alternate_path_lost_signing_key() {
         assert!(verification_report.known_signing_keys.is_empty());
     }
 }
+
+/// Ensures one can change the hashing algorithm without breaking older backups
+/// created using the default one. For better generalization, it tests the
+/// other way around too.
+#[tokio::test(flavor = "multi_thread")]
+async fn alternate_path_change_hashing_algorithm() {
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
+
+    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
+        .src_relative_to(&test_data_path);
+
+    create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
+
+    async fn make(
+        algorithm: &'static str,
+        test_data_path: impl AsRef<Path>,
+        blueprint: &ArchiveBlueprint,
+        created_at: SystemTime,
+    ) -> (BackupService, BackupId) {
+        let backup_config = {
+            let mut toml = toml! {
+                [hashing]
+                algorithm = algorithm
+
+                [storage]
+                provider = "fs"
+                fs.directory = "store"
+            };
+
+            map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
+
+            BackupConfig::try_from(toml).unwrap()
+        };
+
+        let backup_version: u8 = 1;
+        let blueprints = BlueprintsBuilder::new()
+            .insert(backup_version, blueprint.clone())
+            .build();
+
+        let service = BackupService::from_config_custom(
+            &backup_config,
+            ArchivingContext { blueprints },
+            |_| unreachable!(),
+            || unreachable!() as openpgp::policy::StandardPolicy,
+        )
+        .unwrap();
+
+        println!();
+        let CreateBackupSuccess {
+            output: creation_output,
+            ..
+        } = {
+            let command = CreateBackupCommand {
+                prefix: "prose-backup",
+                description: "Test backup",
+                version: backup_version,
+                blueprint,
+                additional_archive_data: vec![],
+                created_at,
+            };
+            service.create_backup(command).await.unwrap()
+        };
+        let CreateBackupOutput { backup_id, .. } = creation_output;
+
+        (service, backup_id)
+    }
+
+    let (blake3_service, blake3_backup_id) = make(
+        "BLAKE3",
+        test_data_path,
+        &blueprint,
+        now - Duration::from_mins(90),
+    )
+    .await;
+    let (sha256_service, sha256_backup_id) = make(
+        "SHA-256",
+        test_data_path,
+        &blueprint,
+        now - Duration::from_mins(60),
+    )
+    .await;
+
+    blake3_service
+        .restore_backup(&sha256_backup_id, &blueprint)
+        .await
+        .unwrap();
+    sha256_service
+        .restore_backup(&blake3_backup_id, &blueprint)
+        .await
+        .unwrap();
+}
