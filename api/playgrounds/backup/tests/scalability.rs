@@ -3,23 +3,20 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-//! Tests that backing up and restoring both work with very large files.
+//! Tests that the library scales properly (e.g. very large files).
+//!
+//! It’s not stress tests, as we don’t apply much load. It just ensures the
+//! library doesn’t have virtual limits we hadn’t noticed.
 
 mod common;
 
-use std::{process::Command, time::Duration};
-
-use prose_backup::{
-    BackupConfig, BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess,
-    ExtractAndRestoreSuccess,
-    archiving::{ArchiveBlueprint, ArchivingContext},
-};
-use toml::toml;
+use std::process::Command;
 
 use crate::common::prelude::*;
 
+/// Ensures that backing up and restoring both work with very large files.
 #[tokio::test(flavor = "multi_thread")]
-async fn large_files() {
+async fn scalability_large_files() {
     let context = init();
     let TestContext {
         now,

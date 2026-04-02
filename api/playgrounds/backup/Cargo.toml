@@ -68,6 +68,10 @@ blake3 = ["dep:blake3"]
 sha2 = ["dep:sha2"]
 
 [[test]]
+name = "alternate_paths"
+required-features = ["test", "provider_fs", "blake3"]
+
+[[test]]
 name = "error_paths"
 required-features = ["test", "provider_fs", "blake3"]
 
@@ -76,15 +80,11 @@ name = "happy_paths"
 required-features = ["test", "provider_fs", "blake3"]
 
 [[test]]
-name = "large_files"
-required-features = ["test", "provider_fs", "blake3"]
-
-[[test]]
 name = "s3"
 required-features = ["test", "provider_s3", "blake3"]
 
 [[test]]
-name = "single_store"
+name = "scalability"
 required-features = ["test", "provider_fs", "blake3"]
 
 [[bench]]

@@ -5,19 +5,12 @@
 
 mod common;
 
-use std::{collections::HashMap, path::PathBuf, time::Duration};
-
-use anyhow::{Context as _, anyhow};
 use prose_backup::{
-    BackupConfig, BackupService, CreateBackupCommand, CreateBackupSuccess,
-    ExtractAndRestoreSuccess,
-    archiving::{ArchiveBlueprint, ArchivingContext},
     config::{S3ObjectLockConfig, StorageS3Config},
     stores::{ObjectId, ObjectStore, S3Store},
 };
-use toml::toml;
 
-use crate::common::{log_error, prelude::*, print::print_stats};
+use crate::common::{prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_happy_path() {

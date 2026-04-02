@@ -15,10 +15,25 @@ pub mod s3;
 
 #[allow(unused_imports)]
 pub mod prelude {
+    pub use std::collections::HashMap;
+    pub use std::path::{Path, PathBuf};
+    pub use std::sync::Arc;
+    pub use std::time::{Duration, SystemTime};
+
+    pub use anyhow::{Context as _, anyhow};
+    pub use prose_backup::archiving::{ArchiveBlueprint, ArchivingContext};
+    pub use prose_backup::config::*;
+    pub use prose_backup::decryption::PgpDecryptionContext;
+    pub use prose_backup::{
+        BackupConfig, BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess,
+        ExtractAndRestoreSuccess, ExtractionSuccess,
+    };
+    pub use toml::toml;
+
     pub use super::blueprints::*;
-    pub(crate) use super::env_required;
     pub use super::fs::*;
     pub use super::lifecycle::*;
+    pub(crate) use super::macros::*;
     pub use super::pgp::*;
     pub use super::unique_hex;
 }
@@ -39,21 +54,23 @@ pub fn unique_hex() -> Result<String, std::io::Error> {
     Ok(hex)
 }
 
-macro_rules! env_required {
-    ($name:literal) => {
-        std::env::var($name).expect(concat!(
-            "Environment variable `",
-            $name,
-            "` should be defined"
-        ))
-    };
-}
-pub(crate) use env_required;
+mod macros {
+    macro_rules! env_required {
+        ($name:literal) => {
+            std::env::var($name).expect(concat!(
+                "Environment variable `",
+                $name,
+                "` should be defined"
+            ))
+        };
+    }
+    pub(crate) use env_required;
 
-macro_rules! log_error {
-    () => {
-        #[inline]
-        |error| tracing::error!("{:#}", error)
-    };
+    macro_rules! log_error {
+        () => {
+            #[inline]
+            |error| tracing::error!("{:#}", error)
+        };
+    }
+    pub(crate) use log_error;
 }
-pub(crate) use log_error;

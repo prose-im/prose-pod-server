@@ -204,7 +204,8 @@ tasks:
             ' --args{{ range .BENCHES }} {{ . }}{{ end }}
 
 vars:
-  CARGO_EXPENSIVE_TESTS: [s3, large_files]
+  # NOTE: Tests are not sorted alphabetically, but rather by “expensiveness”.
+  CARGO_EXPENSIVE_TESTS: [scalability, s3]
   CARGO_ALL_TESTS_JSON:
     sh: |-
       cargo metadata --format-version 1 --no-deps | jq '

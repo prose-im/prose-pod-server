@@ -10,23 +10,6 @@
 
 mod common;
 
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    time::{Duration, SystemTime},
-};
-
-use anyhow::{Context as _, anyhow};
-use openpgp::types::ReasonForRevocation;
-use prose_backup::{
-    BackupService, CreateBackupCommand, CreateBackupOutput, CreateBackupSuccess, ExtractionSuccess,
-    archiving::{ArchiveBlueprint, ArchivingContext},
-    config::*,
-    decryption::PgpDecryptionContext,
-    openpgp,
-};
-use toml::toml;
-
 use crate::common::{prelude::*, print::print_stats};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -116,6 +99,129 @@ async fn happy_path_enc_pgp_sign_pgp() {
 
     test_happy_path_(config).await
 }
+
+/// Tests that backup restorations are atomic.
+#[tokio::test(flavor = "multi_thread")]
+async fn happy_path_atomic_restore() {
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
+
+    println!();
+    let backup_config = {
+        let mut toml = toml! {
+            [storage.backups]
+            provider = "fs"
+            fs.directory = "store"
+
+            [storage.checks]
+            provider = "fs"
+            fs.directory = "store"
+        };
+
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
+
+        BackupConfig::try_from(toml).unwrap()
+    };
+    tracing::debug!("Parsed config: {backup_config:#?}");
+
+    let mut blueprint = ArchiveBlueprint::from_iter(
+        [
+            ("foo-data", "foo"),
+            ("bar-data", "bar"),
+        ]
+        .into_iter(),
+    )
+    .src_relative_to(&test_data_path);
+
+    create_files(
+        &test_data_path,
+        [
+            "foo/", "foo/a", "bar/", "bar/a",
+        ],
+    )
+    .unwrap();
+
+    let backup_version: u8 = 1;
+    let blueprints = BlueprintsBuilder::new()
+        .insert(backup_version, blueprint.clone())
+        .build();
+
+    let service = BackupService::from_config_custom(
+        &backup_config,
+        ArchivingContext { blueprints },
+        |_| unreachable!(),
+        || -> openpgp::policy::StandardPolicy { unreachable!() },
+    )
+    .unwrap();
+
+    // Write some random content in `foo/a` to check reversion.
+    let original_data = unique_hex().unwrap();
+    let foo_a = test_data_path.join("foo/a");
+    std::fs::write(&foo_a, &original_data).unwrap();
+
+    println!();
+    let CreateBackupSuccess {
+        output: creation_output,
+        ..
+    } = {
+        let command = CreateBackupCommand {
+            prefix: "prose-backup",
+            description: "Test backup",
+            version: backup_version,
+            blueprint: &blueprint.clone(),
+            additional_archive_data: vec![],
+            created_at: now - Duration::from_mins(90),
+        };
+        service.create_backup(command).await.unwrap()
+    };
+    let CreateBackupOutput { backup_id, .. } = creation_output;
+
+    {
+        // Override `foo/a`.
+        std::fs::write(&foo_a, "overriden").unwrap();
+
+        // Restore the backup.
+        println!();
+        let res = service.restore_backup(&backup_id, &blueprint).await;
+        assert!(res.is_ok(), "Error: {:#?}", res.err().unwrap());
+
+        // Test that `foo/a` was reverted.
+        assert_eq!(std::fs::read_to_string(&foo_a).unwrap(), original_data);
+    }
+
+    {
+        // Override `foo/a` again.
+        std::fs::write(&foo_a, "overriden").unwrap();
+
+        // Change the second path to one that cannot be written to. Since
+        // restoration happens in a sequential manner, we suppose that the
+        // file `foo/a` will be written, then reverted when `bar/` fails to be
+        // restored. We could use the `notify` crate to watch for file changes
+        // and make this test more robust. Note that test coverage confirms
+        // that we do indeed revert the directory (as expected).
+        blueprint.paths[1].1 = Path::new("/dev/null").to_path_buf();
+
+        // Try to restore the backup (should fail).
+        println!();
+        let res = service.restore_backup(&backup_id, &blueprint).await;
+        assert!(res.is_err());
+        let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
+        tracing::info!("Error: {err}");
+        assert!(err.contains("Move failed"));
+
+        // Test that `foo/a` wasn’t changed.
+        assert_eq!(std::fs::read_to_string(&foo_a).unwrap(), "overriden");
+    }
+
+    // TODO: Test that no new directory was created (i.e. backup directories
+    //   cleaned up).
+}
+
+// MARK: - Helpers
 
 /// Tests all features of the library, given a configuration.
 async fn test_happy_path_(mut config_toml: toml::Table) {
@@ -220,7 +326,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
             pgp_cert,
             |keys| keys.for_storage_encryption(),
             SystemTime::now() - Duration::from_mins(10),
-            ReasonForRevocation::KeySuperseded,
+            openpgp::types::ReasonForRevocation::KeySuperseded,
         )
         .unwrap();
 

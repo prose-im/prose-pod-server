@@ -10,7 +10,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::common::log_error;
+use crate::common::macros::log_error;
 
 static INIT: Once = Once::new();
 
