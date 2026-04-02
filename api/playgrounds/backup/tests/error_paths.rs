@@ -22,11 +22,7 @@ async fn error_path_backup_missing_file() {
     println!();
     let backup_config = {
         let mut toml = toml! {
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };
@@ -92,11 +88,7 @@ async fn error_path_restore_missing_file() {
     println!();
     let backup_config = {
         let mut toml = toml! {
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };

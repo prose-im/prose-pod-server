@@ -17,6 +17,10 @@ use crate::common::prelude::*;
 ///
 /// This test uses the `fs` storage provider for faster execution time, but
 /// it’d be the same with S3.
+///
+/// NOTE: Other tests happen to cover this path already, but that’s just an
+///   implementation detail which could be changed without noticing. This test
+///   makes it explicit this is the tested scenario.
 #[tokio::test(flavor = "multi_thread")]
 async fn alternate_path_single_store() {
     let context = init();
@@ -130,11 +134,7 @@ async fn alternate_path_unknown_archive_entry_no_error() {
     println!();
     let backup_config = {
         let mut toml = toml! {
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };
@@ -213,11 +213,7 @@ async fn alternate_path_lost_signing_key() {
             pgp.enabled = true
             pgp.tsk = "sign.pgp"
 
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };

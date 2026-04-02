@@ -27,13 +27,9 @@ async fn scalability_large_files() {
     println!();
     let backup_config = {
         let mut toml = toml! {
-            [storage.backups]
+            [storage]
             provider = "fs"
-            fs.directory = "backups"
-
-            [storage.checks]
-            provider = "fs"
-            fs.directory = "checks"
+            fs.directory = "store"
         };
 
         map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();

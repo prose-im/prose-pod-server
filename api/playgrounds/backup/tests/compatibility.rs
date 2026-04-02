@@ -37,11 +37,7 @@ async fn compatibility_openpgp() {
             pgp.enabled = true
             pgp.tsk = "cert.tsk"
 
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };

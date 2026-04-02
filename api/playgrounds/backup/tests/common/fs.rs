@@ -93,15 +93,23 @@ pub fn map_storage_directories_in_test_dir(
 ) -> Result<(), std::io::Error> {
     let test_data_path = test_data_path.as_ref();
 
-    let backups_dir = &mut config_toml["storage"]["backups"]["fs"]["directory"];
-    let backups_store_path = test_data_path.join(backups_dir.as_str().unwrap());
-    std::fs::create_dir_all(&backups_store_path)?;
-    *backups_dir = toml::Value::String(backups_store_path.display().to_string());
+    let storage = config_toml["storage"].as_table_mut().unwrap();
+    if storage.contains_key("backups") {
+        let backups_dir = &mut storage["backups"]["fs"]["directory"];
+        let backups_store_path = test_data_path.join(backups_dir.as_str().unwrap());
+        std::fs::create_dir_all(&backups_store_path)?;
+        *backups_dir = toml::Value::String(backups_store_path.display().to_string());
 
-    let checks_dir = &mut config_toml["storage"]["checks"]["fs"]["directory"];
-    let checks_store_path = test_data_path.join(checks_dir.as_str().unwrap());
-    std::fs::create_dir_all(&checks_store_path)?;
-    *checks_dir = toml::Value::String(checks_store_path.display().to_string());
+        let checks_dir = &mut storage["checks"]["fs"]["directory"];
+        let checks_store_path = test_data_path.join(checks_dir.as_str().unwrap());
+        std::fs::create_dir_all(&checks_store_path)?;
+        *checks_dir = toml::Value::String(checks_store_path.display().to_string());
+    } else {
+        let dir = &mut storage["fs"]["directory"];
+        let store_path = test_data_path.join(dir.as_str().unwrap());
+        std::fs::create_dir_all(&store_path)?;
+        *dir = toml::Value::String(store_path.display().to_string());
+    }
 
     let caching = config_toml
         .entry("caching")

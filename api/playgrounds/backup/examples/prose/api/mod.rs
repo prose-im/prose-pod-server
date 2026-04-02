@@ -116,10 +116,7 @@ fn init_prose_config(fs_root: impl AsRef<std::path::Path>) -> Result<(), anyhow:
         pgp.enabled = true
         pgp.tsk = pgp_tsk_path
 
-        [backups.storage.backups]
-        provider = "s3"
-
-        [backups.storage.checks]
+        [backups.storage]
         provider = "s3"
     };
 

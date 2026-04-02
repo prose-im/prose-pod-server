@@ -113,11 +113,7 @@ async fn happy_path_atomic_restore() {
     println!();
     let backup_config = {
         let mut toml = toml! {
-            [storage.backups]
-            provider = "fs"
-            fs.directory = "store"
-
-            [storage.checks]
+            [storage]
             provider = "fs"
             fs.directory = "store"
         };
