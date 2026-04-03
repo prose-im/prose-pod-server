@@ -19,8 +19,9 @@ use anyhow::Context as _;
 use tokio::sync::RwLock;
 
 use crate::common::lifecycle::{ExampleContext, keep_tmpdir};
+use crate::common::util::progress_bar;
 use crate::prose::api::ProsePodApi;
-use crate::prose::dashboard::Dashboard;
+use crate::prose::dashboard::{BackupEntryModel, Dashboard};
 
 /// Happy path of running the Prose Pod Dashboard to create, read and delete
 /// backups.
@@ -39,26 +40,41 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
 
     let dashboard = Dashboard::new(Arc::clone(&api));
 
-    let backups = dashboard.show_backups().await?;
-    let backup_count_before = backups.len();
+    let mut backups = dashboard.show_backups().await?;
+    println!();
 
-    let backup_details = dashboard.create_backup_stream("Example 1").await?;
-    debug_assert_eq!(backup_details.description.as_str(), "Example 1");
+    let backup = dashboard
+        .create_backup_stream("Example 1", |progress, total| {
+            println!(
+                "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                bar = progress_bar::<10>(progress, total),
+                percent = (progress as f32 / total as f32) * 100.,
+            )
+        })
+        .await?;
+    println!("Created backup: {}\n", backup.display());
+    debug_assert_eq!(backup.description.as_str(), "Example 1");
 
     // TODO: Register cleanup function.
 
-    let backups = dashboard.show_backups().await?;
-    debug_assert_eq!(backups.len(), backup_count_before + 1);
+    backups.insert(0, backup);
+    println!("Backups list:\n{}", BackupEntryModel::table_header());
+    for backup in backups.iter() {
+        println!("{}", backup.table_row());
+    }
+    println!("{}\n", BackupEntryModel::table_footer());
 
     let backup_id = &backups[0].backup_id;
 
     let details = dashboard.inspect_backup(String::clone(&backup_id)).await?;
+    println!("Backup details: {}\n", details.display());
     debug_assert!(details.is_encrypted);
 
     let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
     // Manually test that the URL works (it does).
     // tracing::info!("Download URL: {download_url}");
     // crate::common::util::press_enter_to_continue();
+    println!();
 
     // Modify some files to test that restoration works.
     override_files!([
@@ -72,6 +88,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     ], in: context.tmpdir(), eq: "bar");
 
     () = dashboard.restore_backup(String::clone(&backup_id)).await?;
+    println!();
 
     assert_file_contents!([
         "etc/prose/prose.env",
@@ -79,6 +96,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     ], in: context.tmpdir(), eq: "foo");
 
     () = dashboard.delete_backup(String::clone(&backup_id)).await?;
+    println!();
 
     Ok(())
 }

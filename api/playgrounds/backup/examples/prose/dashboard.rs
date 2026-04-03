@@ -12,7 +12,7 @@ use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartial
 use time::UtcDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-use crate::{common::util::progress_bar, prose::api::ProsePodApi};
+use crate::prose::api::ProsePodApi;
 
 use super::api::CreateBackupEvent;
 
@@ -58,6 +58,7 @@ pub struct BackupDetailsModel {
 impl Dashboard {
     pub async fn show_backups(&self) -> Result<Vec<BackupEntryModel>, anyhow::Error> {
         let backups = {
+            tracing::trace!("Listing backups…");
             let api = self.api().await?;
             api.get_backups().await?
         };
@@ -68,6 +69,12 @@ impl Dashboard {
             list.push(BackupEntryModel::from(dto));
         }
 
+        println!("Backups list:\n{}", BackupEntryModel::table_header());
+        for backup in list.iter() {
+            println!("{}", backup.table_row());
+        }
+        println!("{}", BackupEntryModel::table_footer());
+
         Ok(list)
     }
 
@@ -77,6 +84,7 @@ impl Dashboard {
         description: impl Into<String>,
     ) -> Result<BackupEntryModel, anyhow::Error> {
         let response = {
+            tracing::trace!("Creating a backup…");
             let api = self.api().await?;
             api.post_backups(description.into()).await?
         };
@@ -87,8 +95,10 @@ impl Dashboard {
     pub async fn create_backup_stream(
         &self,
         description: impl Into<String>,
+        on_progress: impl Fn(u64, u64),
     ) -> Result<BackupEntryModel, anyhow::Error> {
         let response = {
+            tracing::trace!("Creating a backup…");
             let api = self.api().await?;
             let mut events = api.post_backups_stream(description.into()).await?;
 
@@ -97,11 +107,7 @@ impl Dashboard {
                 while let Some(event) = events.recv().await {
                     match event {
                         CreateBackupEvent::Progress { progress, total } => {
-                            tracing::info!(
-                                "Upload progress: {bar} {progress}/{total} ({percent:.02}%)",
-                                bar = progress_bar(progress, total),
-                                percent = (progress as f32 / total as f32) * 100.,
-                            );
+                            on_progress(progress, total)
                         }
                         CreateBackupEvent::End(create_backup_success) => {
                             break 'ret create_backup_success?;
@@ -120,6 +126,7 @@ impl Dashboard {
         backup_id: String,
     ) -> Result<BackupDetailsModel, anyhow::Error> {
         let backup = {
+            tracing::trace!("Inspecting backup…");
             let api = self.api().await?;
             api.get_backup(backup_id).await?
         };
@@ -129,6 +136,7 @@ impl Dashboard {
 
     pub async fn download_backup(&self, backup_id: String) -> Result<String, anyhow::Error> {
         let download_url = {
+            tracing::trace!("Getting backup download URL…");
             let api = self.api().await?;
             api.get_backup_download_url(backup_id, Duration::from_mins(5))
                 .await?
@@ -141,6 +149,7 @@ impl Dashboard {
 
     pub async fn restore_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let result: () = {
+            tracing::trace!("Restoring backup…");
             let api = self.api().await?;
             api.put_backup_restore(backup_id).await?
         };
@@ -150,11 +159,134 @@ impl Dashboard {
 
     pub async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let result: () = {
+            tracing::trace!("Deleting backup…");
             let api = self.api().await?;
             api.delete_backup(backup_id).await?
         };
 
         Ok(result)
+    }
+}
+
+// MARK: - Display
+
+impl BackupEntryModel {
+    pub(crate) fn table_header() -> String {
+        let col1_width = 32;
+        let col2_width = 6;
+        let col3_width = 30;
+        let col4_width = 7;
+
+        [
+            format!(
+                "┌─{:─>col1_width$}─┬─{:─>col2_width$}─┬─{:─>col3_width$}─┬─{:─>col4_width$}─┐",
+                "", "", "", "",
+            ),
+            format!(
+                "│ {:<col1_width$} │ {:<col2_width$} │ {:<col3_width$} │ {:>col4_width$} │",
+                "Description", "Status", "Created", "Size",
+            ),
+            format!(
+                "├─{:─>col1_width$}─┼─{:─>col2_width$}─┼─{:─>col3_width$}─┼─{:─>col4_width$}─┤",
+                "", "", "", "",
+            ),
+        ]
+        .join("\n")
+    }
+
+    pub(crate) fn table_footer() -> String {
+        let col1_width = 32;
+        let col2_width = 6;
+        let col3_width = 30;
+        let col4_width = 7;
+
+        format!(
+            "└─{:─>col1_width$}─┴─{:─>col2_width$}─┴─{:─>col3_width$}─┴─{:─>col4_width$}─┘",
+            "", "", "", "",
+        )
+    }
+
+    pub(crate) fn table_row(&self) -> String {
+        let Self {
+            backup_id: _,
+            description,
+            is_signed,
+            is_encrypted,
+            created_at,
+            size_bytes,
+        } = self;
+
+        format!(
+            "│ {description:<32} │ {signed}{encrypted}     │ {created_at:<30} │ {size_bytes:>6}B │",
+            signed = if *is_signed { "S" } else { "" },
+            encrypted = if *is_encrypted { "E" } else { "" }
+        )
+    }
+
+    pub(crate) fn display(&self) -> String {
+        let Self {
+            backup_id,
+            description,
+            is_signed,
+            is_encrypted,
+            created_at,
+            size_bytes,
+        } = self;
+
+        let is_signed = is_signed.to_string();
+        let is_encrypted = is_encrypted.to_string();
+        let created_at = created_at.to_string();
+        let size_bytes = size_bytes.to_string();
+
+        #[rustfmt::skip]
+        let parts = [
+            backup_id.as_str(),
+            "\n  Description: ", description.as_str(),
+            "\n  Signed? ", is_signed.as_str(),
+            "\n  Encrypted? ", is_encrypted.as_str(),
+            "\n  Created at: ", created_at.as_str(),
+            "\n  Size: ", size_bytes.as_str(), "B",
+        ];
+
+        let mut str = String::new();
+        for part in parts {
+            str.push_str(part);
+        }
+        str
+    }
+}
+
+impl BackupDetailsModel {
+    pub(crate) fn display(&self) -> String {
+        let Self {
+            backup_id,
+            description,
+            is_signed,
+            is_encrypted,
+            created_at,
+            size_bytes,
+        } = self;
+
+        let is_signed = is_signed.to_string();
+        let is_encrypted = is_encrypted.to_string();
+        let created_at = created_at.to_string();
+        let size_bytes = size_bytes.to_string();
+
+        #[rustfmt::skip]
+        let parts = [
+            backup_id.as_str(),
+            "\n  Description: ", description.as_str(),
+            "\n  Signed? ", is_signed.as_str(),
+            "\n  Encrypted? ", is_encrypted.as_str(),
+            "\n  Created at: ", created_at.as_str(),
+            "\n  Size: ", size_bytes.as_str(), "B",
+        ];
+
+        let mut str = String::new();
+        for part in parts {
+            str.push_str(part);
+        }
+        str
     }
 }
 

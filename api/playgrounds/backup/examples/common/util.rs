@@ -64,26 +64,23 @@ impl<'a> CreateBackupCommandExt<'a> for prose_backup::CreateBackupCommand<'a> {
     }
 }
 
-/// Creates a progress bar string like `[#######---]` given two `u64`.
-pub fn progress_bar(progress: u64, total: u64) -> String {
-    let mut s = String::with_capacity(12); // '[' + 10 chars + ']'
+/// Creates a progress bar string like `━━━━━━━┈┈┈` given two `u64`.
+pub fn progress_bar<const LEN: usize>(progress: u64, total: u64) -> String {
+    use std::fmt::Write as _;
 
-    s.push('[');
+    let mut s = String::with_capacity(LEN);
 
     let filled = if total == 0 {
         0
     } else {
-        // clamp to avoid overflow past 10
-        ((progress.saturating_mul(10)) / total).min(10) as usize
+        // Clamp to avoid overflow past `LEN`.
+        ((progress.saturating_mul(LEN as u64)) / total).min(LEN as u64) as usize
     };
 
-    for _ in 0..filled {
-        s.push('#');
-    }
-    for _ in filled..10 {
-        s.push('-');
-    }
+    // write!(&mut s, "{0:#>1$}{0:->2$}", "", filled, LEN - filled).unwrap();
+    // write!(&mut s, "{0:█>1$}{0:░>2$}", "", filled, LEN - filled).unwrap();
+    // write!(&mut s, "{0:━>1$}{0:─>2$}", "", filled, LEN - filled).unwrap();
+    write!(&mut s, "{0:━>1$}{0:┈>2$}", "", filled, LEN - filled).unwrap();
 
-    s.push(']');
     s
 }
