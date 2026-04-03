@@ -6,12 +6,12 @@
 //! The version 2 of the Prose Pod API, where the Prose Pod API has state
 //! and it calls the Prose Pod Server API for some operations.
 
-use std::{path::Path, str::FromStr as _};
+use std::{path::Path, str::FromStr as _, sync::Arc};
 
 use anyhow::Context;
 use prose_backup::{
-    BackupConfig, BackupId, BackupService, CreateBackupCommand, ExtractionSuccess,
-    archiving::ArchiveBlueprint, event_handlers::NoopEventHandler,
+    BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
+    ExtractionSuccess, archiving::ArchiveBlueprint, event_handlers::NoopEventHandler,
 };
 use tokio::sync::RwLock;
 
@@ -23,7 +23,6 @@ use super::*;
 
 #[async_trait::async_trait]
 impl ProsePodApi for ProsePodApiV2 {
-    /// `POST /backups`.
     async fn post_backups(
         &self,
         description: String,
@@ -45,12 +44,31 @@ impl ProsePodApi for ProsePodApiV2 {
             .await
     }
 
-    /// `GET /backups`.
+    async fn post_backups_stream(
+        &self,
+        description: String,
+    ) -> Result<mpsc::Receiver<CreateBackupEvent>, anyhow::Error> {
+        let buf: Vec<u8> = Vec::new();
+        let mut builder = tar::Builder::new(buf);
+
+        // NOTE: Example data, the Prose Pod API saves other files.
+        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
+        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
+        builder
+            .append_dir_all(&self.constants.backup_data_key_self, &api_data_path)
+            .context(format!("Dir: {api_data_path:?}"))?;
+
+        let prose_pod_api_data = builder.into_inner()?;
+
+        self.server_api
+            .post_backups_stream(description, prose_pod_api_data.into())
+            .await
+    }
+
     async fn get_backups(&self) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
         self.server_api.get_backups().await
     }
 
-    /// `GET /backups/{backup_id}`.
     async fn get_backup(
         &self,
         backup_id: String,
@@ -58,17 +76,14 @@ impl ProsePodApi for ProsePodApiV2 {
         self.server_api.get_backup(backup_id).await
     }
 
-    /// `DELETE /backups/{backup_id}`.
     async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         self.server_api.delete_backup(backup_id).await
     }
 
-    /// `PUT /backups/{backup_id}/restore`.
     async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
         self.server_api.put_backup_restore(backup_id, self).await
     }
 
-    /// `GET /backups/{backup_id}/download-url`.
     async fn get_backup_download_url(
         &self,
         backup_id: String,
@@ -107,17 +122,14 @@ pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
 const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
 
 impl ProsePodServerApiV2 {
-    /// `POST /backups`.
-    async fn post_backups(
-        &self,
+    async fn post_backups_(
+        backup_service: &BackupService,
         description: String,
         prose_pod_api_data: bytes::Bytes,
+        backups_version: u8,
+        blueprint: &ArchiveBlueprint,
+        event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
-        let state = self.state().await;
-
-        let backups_version = self.constants.backups_version;
-        let blueprint = &self.constants.backup_blueprints[&backups_version];
-
         let mut command = CreateBackupCommand::new(
             concat!("example-", env!("CARGO_CRATE_NAME")),
             &description,
@@ -130,13 +142,131 @@ impl ProsePodServerApiV2 {
             Box::new(std::io::Cursor::new(prose_pod_api_data)),
         )];
 
-        let todo = "Stream backup progress";
-        let response = state
-            .backup_service
-            .create_backup(command, &mut NoopEventHandler)
-            .await?;
+        let response = backup_service.create_backup(command, event_handler).await?;
 
         Ok(response)
+    }
+
+    /// `POST /backups`.
+    async fn post_backups(
+        &self,
+        description: String,
+        prose_pod_api_data: bytes::Bytes,
+    ) -> Result<CreateBackupSuccess, anyhow::Error> {
+        let state = self.state().await;
+
+        let backups_version = self.constants.backups_version;
+        let blueprint = &self.constants.backup_blueprints[&backups_version];
+
+        Self::post_backups_(
+            &state.backup_service,
+            description,
+            prose_pod_api_data,
+            backups_version,
+            blueprint,
+            &mut NoopEventHandler,
+        )
+        .await
+    }
+
+    /// `POST /backups Accept:text/event-stream`.
+    async fn post_backups_stream(
+        &self,
+        description: String,
+        prose_pod_api_data: bytes::Bytes,
+    ) -> Result<mpsc::Receiver<CreateBackupEvent>, anyhow::Error> {
+        // Stream backup progress.
+        let (mut event_handler, sender, receiver) = {
+            let (sender, receiver) = mpsc::channel(8);
+
+            struct EventHandler {
+                expected_archive_size: u64,
+                effective_archive_size: u64,
+                progress_sender: Arc<mpsc::Sender<CreateBackupEvent>>,
+            }
+
+            impl CreateBackupEventHandler for EventHandler {
+                fn on_archive_start(&mut self, _backup_id: &BackupId, expected_archive_size: u64) {
+                    self.expected_archive_size = expected_archive_size;
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(CreateBackupEvent::Progress {
+                                    progress: 0,
+                                    total: expected_archive_size,
+                                })
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress init error: {err:#}")
+                                });
+                        })
+                    })
+                }
+
+                fn on_archive_progress(&mut self, _backup_id: &BackupId, archived_bytes: usize) {
+                    assert_ne!(self.expected_archive_size, 0);
+
+                    self.effective_archive_size += archived_bytes as u64;
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(CreateBackupEvent::Progress {
+                                    progress: self.effective_archive_size,
+                                    total: self.expected_archive_size,
+                                })
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress send error: {err:#}")
+                                });
+                        })
+                    })
+                }
+            }
+
+            let sender = Arc::new(sender);
+
+            (
+                EventHandler {
+                    expected_archive_size: 0,
+                    effective_archive_size: 0,
+                    progress_sender: Arc::clone(&sender),
+                },
+                sender,
+                receiver,
+            )
+        };
+
+        let backup_service = {
+            let state = self.state().await;
+            Arc::clone(&state.backup_service)
+        };
+
+        let backups_version = self.constants.backups_version;
+        let blueprint = self.constants.backup_blueprints[&backups_version].clone();
+
+        // NOTE: In a real API there would likely be a system for awaiting this
+        //   handle. Here it’s not necessary because we wait for all events to
+        //   arrive anyway.
+        let _join_handle = tokio::task::spawn(async move {
+            let result = Self::post_backups_(
+                &backup_service,
+                description,
+                prose_pod_api_data,
+                backups_version,
+                &blueprint,
+                &mut event_handler,
+            )
+            .await;
+
+            sender
+                .send(CreateBackupEvent::End(result.map_err(anyhow::Error::from)))
+                .await
+                .unwrap_or_else(|err| debug_panic_or_log_error!("End event send error: {err:#}"));
+        });
+
+        Ok(receiver)
     }
 
     /// `GET /backups`.
@@ -407,7 +537,7 @@ pub struct ProsePodServerState {
     //   doesn’t consume its configuration.
     #[allow(dead_code)]
     config: ProsePodServerConfig,
-    backup_service: BackupService,
+    backup_service: Arc<BackupService>,
 }
 
 impl ProsePodServerState {
@@ -423,7 +553,7 @@ impl ProsePodServerState {
 
         Ok(Self {
             config,
-            backup_service,
+            backup_service: Arc::new(backup_service),
         })
     }
 }

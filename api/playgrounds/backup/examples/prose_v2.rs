@@ -42,7 +42,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     let backups = dashboard.show_backups().await?;
     let backup_count_before = backups.len();
 
-    let backup_details = dashboard.create_backup("Example 1").await?;
+    let backup_details = dashboard.create_backup_stream("Example 1").await?;
     debug_assert_eq!(backup_details.description.as_str(), "Example 1");
 
     // TODO: Register cleanup function.

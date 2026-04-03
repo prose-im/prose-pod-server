@@ -12,7 +12,9 @@ use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartial
 use time::UtcDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-use crate::prose::api::ProsePodApi;
+use crate::{common::util::progress_bar, prose::api::ProsePodApi};
+
+use super::api::CreateBackupEvent;
 
 pub struct Dashboard {
     api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>>,
@@ -69,6 +71,7 @@ impl Dashboard {
         Ok(list)
     }
 
+    #[allow(dead_code)]
     pub async fn create_backup(
         &self,
         description: impl Into<String>,
@@ -76,6 +79,37 @@ impl Dashboard {
         let response = {
             let api = self.api().await?;
             api.post_backups(description.into()).await?
+        };
+
+        Ok(BackupEntryModel::from(response.backup))
+    }
+
+    pub async fn create_backup_stream(
+        &self,
+        description: impl Into<String>,
+    ) -> Result<BackupEntryModel, anyhow::Error> {
+        let response = {
+            let api = self.api().await?;
+            let mut events = api.post_backups_stream(description.into()).await?;
+
+            'ret: {
+                // NOTE: In a real app we’d debounce events here.
+                while let Some(event) = events.recv().await {
+                    match event {
+                        CreateBackupEvent::Progress { progress, total } => {
+                            tracing::info!(
+                                "Upload progress: {bar} {progress}/{total} ({percent:.02}%)",
+                                bar = progress_bar(progress, total),
+                                percent = (progress as f32 / total as f32) * 100.,
+                            );
+                        }
+                        CreateBackupEvent::End(create_backup_success) => {
+                            break 'ret create_backup_success?;
+                        }
+                    }
+                }
+                unreachable!()
+            }
         };
 
         Ok(BackupEntryModel::from(response.backup))

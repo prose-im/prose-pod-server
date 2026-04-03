@@ -13,7 +13,7 @@ use prose_backup::{
     CreateBackupSuccess,
     dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartialDto},
 };
-use tokio::sync::RwLockReadGuard;
+use tokio::sync::{RwLockReadGuard, mpsc};
 
 pub use self::v2::start_v2;
 
@@ -24,6 +24,12 @@ pub trait ProsePodApi: Send + Sync {
     /// `POST /backups`.
     async fn post_backups(&self, description: String)
     -> Result<CreateBackupSuccess, anyhow::Error>;
+
+    /// `POST /backups Accept: text/event-stream`.
+    async fn post_backups_stream(
+        &self,
+        description: String,
+    ) -> Result<mpsc::Receiver<CreateBackupEvent>, anyhow::Error>;
 
     /// `GET /backups`.
     async fn get_backups(&self) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error>;
@@ -46,6 +52,11 @@ pub trait ProsePodApi: Send + Sync {
         backup_id: String,
         ttl: std::time::Duration,
     ) -> Result<String, anyhow::Error>;
+}
+
+pub enum CreateBackupEvent {
+    Progress { progress: u64, total: u64 },
+    End(Result<CreateBackupSuccess, anyhow::Error>),
 }
 
 // MARK: - Helpers
