@@ -10,7 +10,9 @@
 
 mod common;
 
-use crate::common::{prelude::*, print::print_stats};
+use prose_backup::event_handlers::NoopEventHandler;
+
+use crate::common::prelude::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn happy_path_noenc_nosign() {
@@ -173,7 +175,7 @@ async fn happy_path_atomic_restore() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -185,7 +187,9 @@ async fn happy_path_atomic_restore() {
 
         // Restore the backup.
         println!();
-        let res = service.restore_backup(&backup_id, &blueprint).await;
+        let res = service
+            .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
+            .await;
         assert!(res.is_ok(), "Error: {:#?}", res.err().unwrap());
 
         // Test that `foo/a` was reverted.
@@ -206,7 +210,9 @@ async fn happy_path_atomic_restore() {
 
         // Try to restore the backup (should fail).
         println!();
-        let res = service.restore_backup(&backup_id, &blueprint).await;
+        let res = service
+            .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
+            .await;
         assert!(res.is_err());
         let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
         tracing::info!("Error: {err}");
@@ -294,7 +300,7 @@ async fn happy_path_file_permissions() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -306,7 +312,9 @@ async fn happy_path_file_permissions() {
 
     // Restore the backup.
     println!();
-    let res = service.restore_backup(&backup_id, &blueprint).await;
+    let res = service
+        .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
+        .await;
     assert!(res.is_ok(), "Error: {:#?}", res.err().unwrap());
 
     // Test that permissions were reverted.
@@ -398,7 +406,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
     .unwrap();
 
     println!();
-    let mut event_handler = DebugEventHandler::default();
+    let mut creation_event_handler = DebugCreateBackupEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -412,7 +420,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut event_handler)
+            .create_backup(command, &mut creation_event_handler)
             .await
             .context("create_backup")
             .unwrap()
@@ -426,11 +434,11 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
     tracing::info!("Integrity checks: {digest_ids:#?}");
     tracing::debug!(
         "Effective archive size: {}",
-        event_handler.effective_archive_size
+        creation_event_handler.effective_archive_size
     );
     assert_eq!(
-        event_handler.expected_archive_size,
-        event_handler.effective_archive_size
+        creation_event_handler.expected_archive_size,
+        creation_event_handler.effective_archive_size
     );
 
     println!();
@@ -476,22 +484,17 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
     tracing::info!("Download URL: <{download_url}>.");
 
     println!();
+    let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
     let ExtractionSuccess {
         extraction_output,
-        extraction_stats,
         verification_report,
         ..
     } = service
-        .extract_backup(&backup_id)
+        .extract_backup(&backup_id, &mut extraction_event_handler)
         .await
         .context("extract_backup")
         .unwrap();
-    print_stats(
-        &extraction_stats.raw_read_stats,
-        &extraction_stats.decryption_stats,
-        &extraction_stats.decompression_stats,
-        extraction_stats.extracted_bytes_count,
-    );
+    print_stats(&extraction_event_handler);
     if let Some(SigningPgpConfig { tsk, .. }) = &signing_config.pgp {
         let pgp_cert = certs.get(tsk).unwrap().clone();
 
@@ -504,7 +507,12 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
 
     println!();
     service
-        .restore_extracted_backup(extraction_output, &blueprint)
+        .restore_extracted_backup(
+            &backup_id,
+            extraction_output,
+            &blueprint,
+            &mut NoopEventHandler,
+        )
         .await
         .context("restore_extracted_backup")
         .unwrap();

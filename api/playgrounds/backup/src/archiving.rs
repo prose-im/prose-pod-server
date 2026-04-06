@@ -14,10 +14,10 @@ use anyhow::{Context as _, anyhow, bail};
 use composable_stream::ComposableStreamBuilder;
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
-use crate::stats::{MeteredStream, ReadStats};
+use crate::stats::{MeteredStream, ReadStats, StreamStats};
 use crate::util::{debug_panic, debug_panic_or_log_error};
 use crate::verification::VerificationOutput;
-use crate::{BackupId, CreateBackupError};
+use crate::{BackupId, CreateBackupError, ExtractBackupEventHandler};
 
 pub(crate) use self::ArchivingContext as Context;
 use self::errors::*;
@@ -182,16 +182,6 @@ pub struct ExtractionOutput<'a> {
     pub(crate) metadata: BackupInternalMetadata,
 }
 
-#[derive(Debug, Default)]
-pub struct ExtractionStats {
-    pub raw_read_stats: ReadStats,
-    pub decryption_stats: ReadStats,
-    pub decompression_stats: ReadStats,
-
-    /// Total amount of data extracted in [`ExtractionOutput::tmp_dir`].
-    pub extracted_bytes_count: u64,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractionError {
     #[error(transparent)]
@@ -213,28 +203,61 @@ impl From<std::io::Error> for ExtractionError {
     }
 }
 
-pub(crate) fn extract<'a>(
+#[derive(Debug, Default)]
+pub struct ExtractionReport {
+    pub extracted_bytes_count: u64,
+}
+
+struct RawReadStats<'a, H: ExtractBackupEventHandler> {
+    backup_id: &'a BackupId,
+    event_handler: &'a mut H,
+}
+
+impl<'a, H: ExtractBackupEventHandler> StreamStats for RawReadStats<'a, H> {
+    fn record_chunk(&mut self, len: usize) {
+        self.event_handler.on_raw_read(self.backup_id, len);
+    }
+}
+
+pub(crate) fn extract<'a, EventHandler>(
     VerificationOutput { backup_path, .. }: &VerificationOutput,
     backup_id: &BackupId,
     blueprints: &'a HashMap<u8, ArchiveBlueprint>,
     decryption_context: &DecryptionContext,
-    decryption_report: &mut DecryptionReport,
-    stats: &mut ExtractionStats,
-) -> Result<ExtractionOutput<'a>, ExtractionError> {
+    event_handler: &mut EventHandler,
+) -> Result<ExtractionOutput<'a>, ExtractionError>
+where
+    EventHandler: ExtractBackupEventHandler,
+{
+    let backup_size = backup_path
+        .metadata()
+        .context("Could not read backup file metadata")
+        .inspect_err(debug_panic)?
+        .len();
+    event_handler.on_restoration_start(backup_id, backup_size);
+
     let backup_file = std::fs::File::open(backup_path.as_path())
         .context("Could not open backup file")
         .inspect_err(debug_panic)?;
 
-    let backup_reader = MeteredStream::new(backup_file, &mut stats.raw_read_stats);
+    let backup_reader = MeteredStream::new(
+        backup_file,
+        RawReadStats {
+            backup_id,
+            event_handler,
+        },
+    );
 
     // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
     //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
+    let mut decryption_report = DecryptionReport::default();
+    let mut decryption_stats = ReadStats::default();
     let archive_reader = decryption::reader(
         backup_reader,
         &decryption_context,
         &backup_id,
-        &mut stats.decryption_stats,
-        decryption_report,
+        &mut decryption_stats,
+        &mut decryption_report,
     )?;
 
     #[cfg(feature = "zstd")]
@@ -246,15 +269,23 @@ pub(crate) fn extract<'a>(
         Box::new(archive_reader)
     };
 
-    let archive_reader = MeteredStream::new(archive_reader, &mut stats.decompression_stats);
+    let mut decompression_stats = ReadStats::new();
+    let archive_reader = MeteredStream::new(archive_reader, &mut decompression_stats);
 
-    extract_archive_(archive_reader, blueprints, &mut stats.extracted_bytes_count)
+    let mut extraction_report = ExtractionReport::default();
+    let res = extract_archive_(archive_reader, blueprints, &mut extraction_report);
+
+    event_handler.on_decryption_finished(backup_id, decryption_stats, decryption_report);
+    event_handler.on_decompression_finished(backup_id, decompression_stats);
+    event_handler.on_extraction_finished(backup_id, extraction_report);
+
+    res
 }
 
 pub(crate) fn extract_archive_<'a, R>(
     archive_reader: R,
     blueprints: &'a HashMap<u8, ArchiveBlueprint>,
-    extracted_bytes_count: &mut u64,
+    report: &mut ExtractionReport,
 ) -> Result<ExtractionOutput<'a>, ExtractionError>
 where
     R: std::io::Read,
@@ -292,7 +323,7 @@ where
         };
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            *extracted_bytes_count += entry_size;
+            report.extracted_bytes_count += entry_size;
         }
 
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -327,7 +358,7 @@ where
         entry.unpack_in(tmp_dir.path())?;
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            *extracted_bytes_count += entry_size;
+            report.extracted_bytes_count += entry_size;
         }
 
         #[cfg(debug_assertions)]

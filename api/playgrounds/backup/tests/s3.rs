@@ -10,7 +10,7 @@ use prose_backup::{
     stores::{ObjectId, ObjectStore, S3Store},
 };
 
-use crate::common::{prelude::*, print::print_stats};
+use crate::common::prelude::*;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_happy_path() {
@@ -101,7 +101,7 @@ async fn s3_happy_path() {
 
     println!();
     tracing::info!("Create backup");
-    let mut event_handler = DebugEventHandler::default();
+    let mut creation_event_handler = DebugCreateBackupEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -115,14 +115,14 @@ async fn s3_happy_path() {
                 additional_archive_data: vec![],
                 created_at: now,
             },
-            &mut event_handler,
+            &mut creation_event_handler,
         )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
     tracing::info!(
         "Upload stats: {upload_stats:#?}",
-        upload_stats = event_handler.upload_durations
+        upload_stats = creation_event_handler.upload_durations
     );
 
     // Register cleanup function.
@@ -163,18 +163,16 @@ async fn s3_happy_path() {
 
     println!();
     tracing::info!("Restore backup");
-    let ExtractAndRestoreSuccess {
-        extraction_stats, ..
-    } = service
-        .restore_backup(&created_backup_id, &restore_blueprint)
+    let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
+    let ExtractAndRestoreSuccess { .. } = service
+        .restore_backup(
+            &created_backup_id,
+            &restore_blueprint,
+            &mut extraction_event_handler,
+        )
         .await
         .unwrap();
-    print_stats(
-        &extraction_stats.raw_read_stats,
-        &extraction_stats.decryption_stats,
-        &extraction_stats.decompression_stats,
-        extraction_stats.extracted_bytes_count,
-    );
+    print_stats(&extraction_event_handler);
 
     println!();
     tracing::info!("Delete backup");
@@ -241,7 +239,7 @@ async fn s3_single_bucket_same_prefix() {
 
     println!();
     tracing::info!("Create backup");
-    let mut event_handler = DebugEventHandler::default();
+    let mut creation_event_handler = DebugCreateBackupEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -255,14 +253,14 @@ async fn s3_single_bucket_same_prefix() {
                 additional_archive_data: vec![],
                 created_at: now,
             },
-            &mut event_handler,
+            &mut creation_event_handler,
         )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
     tracing::info!(
         "Upload stats: {upload_stats:#?}",
-        upload_stats = event_handler.upload_durations
+        upload_stats = creation_event_handler.upload_durations
     );
 
     // Register cleanup function.
@@ -308,18 +306,16 @@ async fn s3_single_bucket_same_prefix() {
 
     println!();
     tracing::info!("Restore backup");
-    let ExtractAndRestoreSuccess {
-        extraction_stats, ..
-    } = service
-        .restore_backup(&created_backup_id, &blueprint)
+    let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
+    let ExtractAndRestoreSuccess { .. } = service
+        .restore_backup(
+            &created_backup_id,
+            &blueprint,
+            &mut extraction_event_handler,
+        )
         .await
         .unwrap();
-    print_stats(
-        &extraction_stats.raw_read_stats,
-        &extraction_stats.decryption_stats,
-        &extraction_stats.decompression_stats,
-        extraction_stats.extracted_bytes_count,
-    );
+    print_stats(&extraction_event_handler);
 
     println!();
     tracing::info!("Delete backup");
@@ -401,7 +397,7 @@ async fn s3_object_locking() {
 
     println!();
     tracing::info!("Create backup");
-    let mut event_handler = DebugEventHandler::default();
+    let mut creation_event_handler = DebugCreateBackupEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -415,14 +411,14 @@ async fn s3_object_locking() {
                 additional_archive_data: vec![],
                 created_at: now,
             },
-            &mut event_handler,
+            &mut creation_event_handler,
         )
         .await
         .unwrap();
     let created_backup_id = creation_output.backup_id;
     tracing::info!(
         "Upload stats: {upload_stats:#?}",
-        upload_stats = event_handler.upload_durations
+        upload_stats = creation_event_handler.upload_durations
     );
 
     // Register cleanup function.

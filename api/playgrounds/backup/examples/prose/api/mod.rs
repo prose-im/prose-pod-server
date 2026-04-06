@@ -46,6 +46,12 @@ pub trait ProsePodApi: Send + Sync {
     /// `PUT /backups/{backup_id}/restore`.
     async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error>;
 
+    /// `PUT /backups/{backup_id}/restore Accept: text/event-stream`.
+    async fn put_backup_restore_stream(
+        &self,
+        backup_id: String,
+    ) -> Result<mpsc::Receiver<RestoreBackupEvent>, anyhow::Error>;
+
     /// `GET /backups/{backup_id}/download-url`.
     async fn get_backup_download_url(
         &self,
@@ -57,6 +63,11 @@ pub trait ProsePodApi: Send + Sync {
 pub enum CreateBackupEvent {
     Progress { progress: u64, total: u64 },
     End(Result<CreateBackupSuccess, anyhow::Error>),
+}
+
+pub enum RestoreBackupEvent {
+    Progress { progress: u64, total: u64 },
+    End(Result<(), anyhow::Error>),
 }
 
 // MARK: - Helpers

@@ -7,6 +7,8 @@
 
 use composable_stream::Either;
 
+use crate::stats::ReadStats;
+
 pub(crate) use self::DecryptionContext as Context;
 
 #[non_exhaustive]
@@ -15,24 +17,62 @@ pub struct DecryptionContext {
     pub pgp: Option<PgpDecryptionContext>,
 }
 
+#[allow(unused_variables)]
+pub trait DecryptionEventHandler: Send + Sync {
+    #[inline]
+    fn used_cert_and_subkey(
+        &mut self,
+        cert: &openpgp::Cert,
+        subkey: &openpgp::packet::Key<
+            openpgp::packet::key::SecretParts,
+            openpgp::packet::key::UnspecifiedRole,
+        >,
+    ) {
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DecryptionReport {
     pub used_cert_and_subkey: Option<(openpgp::Fingerprint, openpgp::Fingerprint)>,
 }
 
-pub(crate) fn reader<'ctx: 'report, 'report, R>(
+impl DecryptionEventHandler for DecryptionReport {
+    fn used_cert_and_subkey(
+        &mut self,
+        cert: &openpgp::Cert,
+        subkey: &openpgp::packet::Key<
+            openpgp::packet::key::SecretParts,
+            openpgp::packet::key::UnspecifiedRole,
+        >,
+    ) {
+        self.used_cert_and_subkey = Some((cert.fingerprint(), subkey.fingerprint()));
+    }
+}
+
+impl crate::ExtractBackupEventHandler for DecryptionReport {
+    fn on_decryption_finished(
+        &mut self,
+        _backup_id: &crate::BackupId,
+        _stats: ReadStats,
+        report: DecryptionReport,
+    ) {
+        *self = report;
+    }
+}
+
+pub(crate) fn reader<'ctx: 'ev, 'ev, R, EventHandler: DecryptionEventHandler>(
     backup_reader: R,
     context: &'ctx DecryptionContext,
-    backup_id @ crate::BackupId { extensions, .. }: &crate::BackupId,
+    backup_id: &crate::BackupId,
     stats: &mut crate::stats::ReadStats,
-    report: &'report mut DecryptionReport,
+    event_handler: &'ev mut EventHandler,
 ) -> Result<impl std::io::Read, anyhow::Error>
 where
-    R: std::io::Read + Send + Sync + 'ctx + 'report,
+    R: std::io::Read + Send + Sync + 'ctx + 'ev,
 {
-    if extensions.contains(&Box::from("pgp")) {
+    if backup_id.extensions.contains(&Box::from("pgp")) {
         if let Some(context) = context.pgp.as_ref() {
-            let decryptor = pgp::decryptor(backup_reader, context, backup_id, report)?;
+            let decryptor = pgp::decryptor(backup_reader, context, backup_id, event_handler)?;
 
             let decryptor = crate::stats::MeteredStream::new(decryptor, stats);
 
@@ -59,7 +99,7 @@ pub mod pgp {
 
     use crate::pgp::lookup_secret_key;
 
-    use super::DecryptionReport;
+    use super::DecryptionEventHandler;
 
     #[derive(Debug)]
     pub struct PgpDecryptionContext {
@@ -67,18 +107,18 @@ pub mod pgp {
         pub policy: Box<dyn openpgp::policy::Policy>,
     }
 
-    struct PgpDecryptionHelper<'a> {
+    struct PgpDecryptionHelper<'a, EventHandler> {
         tsks: &'a [openpgp::Cert],
         policy: &'a dyn openpgp::policy::Policy,
         time: std::time::SystemTime,
-        report: &'a mut DecryptionReport,
+        event_handler: &'a mut EventHandler,
     }
 
-    pub(crate) fn decryptor<'ctx: 'report, 'report, R>(
+    pub(crate) fn decryptor<'ctx: 'ev, 'ev, R, EventHandler: DecryptionEventHandler>(
         backup_reader: R,
         context: &'ctx PgpDecryptionContext,
         crate::BackupId { created_at, .. }: &crate::BackupId,
-        report: &'report mut DecryptionReport,
+        event_handler: &'ev mut EventHandler,
     ) -> Result<impl std::io::Read, anyhow::Error>
     where
         R: std::io::Read + Send + Sync + 'ctx,
@@ -87,7 +127,7 @@ pub mod pgp {
             tsks: context.tsks.as_slice(),
             policy: context.policy.as_ref(),
             time: (*created_at).into(),
-            report,
+            event_handler,
         };
         let decryptor = DecryptorBuilder::from_reader(backup_reader)
             .context("Failed creating decryptor builder")?
@@ -97,7 +137,10 @@ pub mod pgp {
         Ok(decryptor)
     }
 
-    impl<'keys> openpgp::parse::stream::DecryptionHelper for PgpDecryptionHelper<'keys> {
+    impl<'keys, E> openpgp::parse::stream::DecryptionHelper for PgpDecryptionHelper<'keys, E>
+    where
+        E: DecryptionEventHandler,
+    {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         // TODO: Improve by looking at <https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770> too.
         // TODO: Add support for encrypted secrets (passphrase-protected).
@@ -129,8 +172,7 @@ pub mod pgp {
                             .unwrap_or(false)
                         {
                             tracing::trace!("Found encryption key: `{key}`.");
-                            self.report.used_cert_and_subkey =
-                                Some((cert.fingerprint(), key.fingerprint()));
+                            self.event_handler.used_cert_and_subkey(&cert, &key);
                             return Ok(Some(cert));
                         }
                     }
@@ -146,7 +188,7 @@ pub mod pgp {
         }
     }
 
-    impl<'keys> VerificationHelper for PgpDecryptionHelper<'keys> {
+    impl<'keys, E> VerificationHelper for PgpDecryptionHelper<'keys, E> {
         fn get_certs(
             &mut self,
             // NOTE: Not filtering certs because the certs we have access to

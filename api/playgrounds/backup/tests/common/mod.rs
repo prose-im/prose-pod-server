@@ -25,6 +25,7 @@ pub mod prelude {
     pub use prose_backup::archiving::{ArchiveBlueprint, ArchivingContext};
     pub use prose_backup::config::*;
     pub use prose_backup::decryption::PgpDecryptionContext;
+    pub use prose_backup::event_handlers::NoopEventHandler;
     pub use prose_backup::{
         BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupOutput,
         CreateBackupSuccess, ExtractAndRestoreSuccess, ExtractionSuccess,
@@ -37,6 +38,7 @@ pub mod prelude {
     pub use super::lifecycle::*;
     pub(crate) use super::macros::*;
     pub use super::pgp::*;
+    pub use super::print::print_stats;
     pub use super::run_command;
     pub use super::unique_hex;
 }

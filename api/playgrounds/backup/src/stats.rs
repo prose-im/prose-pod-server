@@ -13,17 +13,22 @@ use composable_stream::ComposableStreamBuilder;
 
 // MARK: Model
 
+#[allow(unused_variables)]
 pub trait StreamStats {
-    fn record_chunk(&mut self, len: usize);
+    #[inline]
+    fn record_chunk(&mut self, len: usize) {}
 
     // NOTE: Do not record active time in release builds, it would just add
     //   unnecessary overhead.
     #[cfg(debug_assertions)]
-    fn record_duration(&mut self, duration: &std::time::Duration);
+    #[inline]
+    fn record_duration(&mut self, duration: &std::time::Duration) {}
 }
 
+#[allow(unused_variables)]
 pub trait WriterStats: StreamStats {
-    fn record_flush(&mut self);
+    #[inline]
+    fn record_flush(&mut self) {}
 }
 
 // MARK: Reader

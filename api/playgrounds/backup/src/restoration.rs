@@ -8,13 +8,16 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 
 use crate::archiving::{ArchiveBlueprint, ExtractionOutput};
+use crate::{BackupId, RestoreBackupEventHandler};
 
 #[derive(Debug)]
 pub struct RestorationOutput;
 
 pub(crate) fn restore<'a>(
+    backup_id: &BackupId,
     ExtractionOutput { tmp_dir, .. }: ExtractionOutput<'a>,
     blueprint: &ArchiveBlueprint,
+    event_handler: &mut impl RestoreBackupEventHandler,
 ) -> Result<RestorationOutput, RestorationError> {
     use crate::util::{PathGuard, safe_replace};
 
@@ -24,7 +27,10 @@ pub(crate) fn restore<'a>(
         let src = tmp_dir.path().join(dir_name);
 
         match safe_replace(&src, &dst) {
-            Ok(backup_guard) => processed.push((src, dst.to_owned(), backup_guard)),
+            Ok(backup_guard) => {
+                processed.push((src, dst.to_owned(), backup_guard));
+                event_handler.on_path_restored(backup_id, dst.as_path());
+            }
             Err(err) => {
                 // Revert previous operations.
                 revert(processed);

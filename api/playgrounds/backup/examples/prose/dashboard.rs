@@ -12,7 +12,7 @@ use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartial
 use time::UtcDateTime;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-use crate::prose::api::ProsePodApi;
+use crate::prose::api::{ProsePodApi, RestoreBackupEvent};
 
 use super::api::CreateBackupEvent;
 
@@ -147,11 +147,41 @@ impl Dashboard {
         Ok(download_url)
     }
 
+    #[allow(dead_code)]
     pub async fn restore_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let result: () = {
             tracing::trace!("Restoring backup…");
             let api = self.api().await?;
             api.put_backup_restore(backup_id).await?
+        };
+
+        Ok(result)
+    }
+
+    pub async fn restore_backup_stream(
+        &self,
+        backup_id: String,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<(), anyhow::Error> {
+        let result = {
+            tracing::trace!("Restoring backup…");
+            let api = self.api().await?;
+            let mut events = api.put_backup_restore_stream(backup_id).await?;
+
+            'ret: {
+                // NOTE: In a real app we’d debounce events here.
+                while let Some(event) = events.recv().await {
+                    match event {
+                        RestoreBackupEvent::Progress { progress, total } => {
+                            on_progress(progress, total)
+                        }
+                        RestoreBackupEvent::End(create_backup_success) => {
+                            break 'ret create_backup_success?;
+                        }
+                    }
+                }
+                unreachable!()
+            }
         };
 
         Ok(result)

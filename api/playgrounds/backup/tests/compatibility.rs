@@ -93,7 +93,7 @@ async fn compatibility_openpgp() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };

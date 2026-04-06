@@ -87,7 +87,15 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
         "var/lib/prose-pod-api/database.sqlite",
     ], in: context.tmpdir(), eq: "bar");
 
-    () = dashboard.restore_backup(String::clone(&backup_id)).await?;
+    () = dashboard
+        .restore_backup_stream(String::clone(&backup_id), |progress, total| {
+            println!(
+                "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                bar = progress_bar::<10>(progress, total),
+                percent = (progress as f32 / total as f32) * 100.,
+            )
+        })
+        .await?;
     println!();
 
     assert_file_contents!([

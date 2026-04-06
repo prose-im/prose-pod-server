@@ -95,7 +95,7 @@ async fn alternate_path_single_store() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -114,7 +114,7 @@ async fn alternate_path_single_store() {
 
     println!();
     service
-        .restore_backup(&backup_id, &blueprint)
+        .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
 
@@ -180,7 +180,7 @@ async fn alternate_path_unknown_archive_entry_no_error() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -189,7 +189,7 @@ async fn alternate_path_unknown_archive_entry_no_error() {
     println!();
     blueprint.paths.swap_remove(0);
     service
-        .restore_backup(&backup_id, &blueprint)
+        .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
 }
@@ -274,7 +274,7 @@ async fn alternate_path_lost_signing_key() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -286,7 +286,7 @@ async fn alternate_path_lost_signing_key() {
             verification_report,
             ..
         } = service
-            .restore_backup(&backup_id, &blueprint)
+            .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
             .await
             .unwrap();
         assert!(verification_report.is_signed);
@@ -306,7 +306,7 @@ async fn alternate_path_lost_signing_key() {
             verification_report,
             ..
         } = service
-            .restore_backup(&backup_id, &blueprint)
+            .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
             .await
             .unwrap();
         assert!(verification_report.is_signed);
@@ -380,7 +380,7 @@ async fn alternate_path_change_hashing_algorithm() {
                 created_at,
             };
             service
-                .create_backup(command, &mut DebugEventHandler::default())
+                .create_backup(command, &mut NoopEventHandler)
                 .await
                 .unwrap()
         };
@@ -405,11 +405,11 @@ async fn alternate_path_change_hashing_algorithm() {
     .await;
 
     blake3_service
-        .restore_backup(&sha256_backup_id, &blueprint)
+        .restore_backup(&sha256_backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
     sha256_service
-        .restore_backup(&blake3_backup_id, &blueprint)
+        .restore_backup(&blake3_backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
 }

@@ -67,9 +67,7 @@ async fn error_path_backup_missing_file() {
             additional_archive_data: vec![],
             created_at: now - Duration::from_mins(90),
         };
-        service
-            .create_backup(command, &mut DebugEventHandler::default())
-            .await
+        service.create_backup(command, &mut NoopEventHandler).await
     };
     assert!(res.is_err());
     let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
@@ -140,7 +138,7 @@ async fn error_path_restore_missing_file() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut DebugEventHandler::default())
+            .create_backup(command, &mut NoopEventHandler)
             .await
             .unwrap()
     };
@@ -149,7 +147,9 @@ async fn error_path_restore_missing_file() {
     println!();
     blueprint.paths.push(entry);
     (service.archiving_context.blueprints).insert(backup_version, blueprint.clone());
-    let res = service.restore_backup(&backup_id, &blueprint).await;
+    let res = service
+        .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
+        .await;
     assert!(res.is_err());
     let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
     tracing::info!("Error: {err}");

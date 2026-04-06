@@ -72,7 +72,7 @@ async fn scalability_large_files() {
 
     println!();
     tracing::info!("Creating backup…");
-    let mut event_handler = DebugEventHandler::default();
+    let mut creation_event_handler = DebugCreateBackupEventHandler::default();
     let CreateBackupSuccess {
         output: creation_output,
         ..
@@ -86,28 +86,30 @@ async fn scalability_large_files() {
             created_at: now - Duration::from_mins(90),
         };
         service
-            .create_backup(command, &mut event_handler)
+            .create_backup(command, &mut creation_event_handler)
             .await
             .unwrap()
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
     tracing::info!(
         "Upload stats: {upload_stats:#?}",
-        upload_stats = event_handler.upload_durations
+        upload_stats = creation_event_handler.upload_durations
     );
 
     println!();
     tracing::info!("Restoring backup…");
+    let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
     let ExtractAndRestoreSuccess {
         verification_report,
-        decryption_report,
-        extraction_stats,
         ..
     } = service
-        .restore_backup(&backup_id, &blueprint)
+        .restore_backup(&backup_id, &blueprint, &mut extraction_event_handler)
         .await
         .unwrap();
     tracing::info!("verification_report: {verification_report:#?}");
-    tracing::info!("decryption_report: {decryption_report:#?}");
-    tracing::info!("extraction_stats: {extraction_stats:#?}");
+    tracing::info!(
+        "decryption_report: {:#?}",
+        extraction_event_handler.decryption_report
+    );
+    print_stats(&extraction_event_handler);
 }
