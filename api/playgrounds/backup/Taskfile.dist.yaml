@@ -88,7 +88,7 @@ tasks:
     desc: Check test coverage using `cargo-llvm-cov`.
     aliases: [cov]
     cmds:
-      - cargo llvm-cov --html -F test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - cargo llvm-cov --html -F test,provider_fs,zstd,blake3,sha2{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - task: cov:llvm-cov:open
     dotenv: [test.env]
 
@@ -102,7 +102,7 @@ tasks:
   cov:tarpaulin:
     desc: Check test coverage using `cargo-tarpaulin`.
     cmds:
-      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,provider_fs{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,provider_fs,zstd,blake3,sha2{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - task: cov:tarpaulin:open
     dotenv: [test.env]
 
