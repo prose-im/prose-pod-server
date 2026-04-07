@@ -50,6 +50,7 @@ pub fn init<const N: usize>(
 }
 
 pub struct ExampleContext {
+    #[allow(dead_code)]
     pub start: SystemTime,
     pub tmpdir: Arc<RwLock<tempfile::TempDir>>,
     pub cleanup_functions: Vec<std::pin::Pin<Box<dyn Future<Output = ()> + Send>>>,
