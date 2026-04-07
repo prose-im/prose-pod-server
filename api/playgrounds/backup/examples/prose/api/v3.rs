@@ -18,151 +18,17 @@ use prose_backup::{
 use tokio::sync::RwLock;
 
 use crate::common::{lifecycle::EXAMPLE_TMPDIR_VAR_NAME, util::*};
+use crate::prose::api::v2::blueprint_v2;
 
 use super::*;
 
 // MARK: - Public API
 
 #[async_trait::async_trait]
-impl ProsePodApi for ProsePodApiV2 {
+impl ProsePodApi for ProsePodApiV3 {
     async fn post_backups(
         &self,
         description: String,
-    ) -> Result<CreateBackupSuccess, anyhow::Error> {
-        let buf: Vec<u8> = Vec::new();
-        let mut builder = tar::Builder::new(buf);
-
-        // NOTE: Example data, the Prose Pod API saves other files.
-        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
-        builder
-            .append_dir_all(&self.constants.backup_data_key_self, &api_data_path)
-            .context(format!("Dir: {api_data_path:?}"))?;
-
-        let prose_pod_api_data = builder.into_inner()?;
-
-        self.server_api
-            .post_backups(description, prose_pod_api_data.into())
-            .await
-    }
-
-    async fn post_backups_stream(
-        &self,
-        description: String,
-    ) -> Result<mpsc::Receiver<CreateBackupEvent>, anyhow::Error> {
-        let buf: Vec<u8> = Vec::new();
-        let mut builder = tar::Builder::new(buf);
-
-        // NOTE: Example data, the Prose Pod API saves other files.
-        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
-        builder
-            .append_dir_all(&self.constants.backup_data_key_self, &api_data_path)
-            .context(format!("Dir: {api_data_path:?}"))?;
-
-        let prose_pod_api_data = builder.into_inner()?;
-
-        self.server_api
-            .post_backups_stream(description, prose_pod_api_data.into())
-            .await
-    }
-
-    async fn get_backups(&self) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
-        self.server_api.get_backups().await
-    }
-
-    async fn get_backup(
-        &self,
-        backup_id: String,
-    ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
-        self.server_api.get_backup(backup_id).await
-    }
-
-    async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
-        self.server_api.delete_backup(backup_id).await
-    }
-
-    async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
-        self.server_api.put_backup_restore(backup_id, self).await
-    }
-
-    async fn put_backup_restore_stream(
-        &self,
-        backup_id: String,
-    ) -> Result<mpsc::Receiver<RestoreBackupEvent>, anyhow::Error> {
-        self.server_api
-            .put_backup_restore_stream(backup_id, self)
-            .await
-    }
-
-    async fn get_backup_download_url(
-        &self,
-        backup_id: String,
-        ttl: std::time::Duration,
-    ) -> Result<String, anyhow::Error> {
-        self.server_api
-            .get_backup_download_url(backup_id, ttl)
-            .await
-    }
-}
-
-pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
-    let tmpdir_path = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-
-    init_tsks(&tmpdir_path).context("Failed creating tsks")?;
-    init_prose_config(&tmpdir_path).context("Failed creating prose.toml")?;
-
-    let server_api = {
-        let constants = ProsePodServerApiConstants::v2();
-        let state = ProsePodServerState::new_v2(&constants)?;
-
-        ProsePodServerApiV2 {
-            constants,
-            state: RwLock::new(state),
-        }
-    };
-
-    Ok(ProsePodApiV2 {
-        constants: Arc::new(ProsePodApiConstants::v2()),
-        server_api: Arc::new(server_api),
-    })
-}
-
-// MARK: - Internals
-
-const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
-
-impl ProsePodServerApiV2 {
-    async fn post_backups_(
-        backup_service: &BackupService,
-        description: String,
-        prose_pod_api_data: bytes::Bytes,
-        backups_version: u8,
-        blueprint: &ArchiveBlueprint,
-        event_handler: &mut impl CreateBackupEventHandler,
-    ) -> Result<CreateBackupSuccess, anyhow::Error> {
-        let mut command = CreateBackupCommand::new(
-            concat!("example-", env!("CARGO_CRATE_NAME")),
-            &description,
-            backups_version,
-            blueprint,
-        );
-        command.additional_archive_data = vec![(
-            PROSE_POD_API_ARCHIVE_KEY.to_owned(),
-            prose_pod_api_data.len() as u64,
-            Box::new(std::io::Cursor::new(prose_pod_api_data)),
-        )];
-
-        let response = backup_service.create_backup(command, event_handler).await?;
-
-        Ok(response)
-    }
-
-    /// `POST /backups`.
-    async fn post_backups(
-        &self,
-        description: String,
-        prose_pod_api_data: bytes::Bytes,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
         let state = self.state().await;
 
@@ -172,7 +38,6 @@ impl ProsePodServerApiV2 {
         Self::post_backups_(
             &state.backup_service,
             description,
-            prose_pod_api_data,
             backups_version,
             blueprint,
             &mut NoopEventHandler,
@@ -180,11 +45,9 @@ impl ProsePodServerApiV2 {
         .await
     }
 
-    /// `POST /backups Accept:text/event-stream`.
     async fn post_backups_stream(
         &self,
         description: String,
-        prose_pod_api_data: bytes::Bytes,
     ) -> Result<mpsc::Receiver<CreateBackupEvent>, anyhow::Error> {
         // Stream backup progress.
         let (mut event_handler, sender, receiver) = {
@@ -267,7 +130,6 @@ impl ProsePodServerApiV2 {
                 let result = Self::post_backups_(
                     &backup_service,
                     description,
-                    prose_pod_api_data,
                     backups_version,
                     &blueprint,
                     &mut event_handler,
@@ -286,7 +148,6 @@ impl ProsePodServerApiV2 {
         Ok(receiver)
     }
 
-    /// `GET /backups`.
     async fn get_backups(&self) -> Result<Vec<BackupDto<BackupMetadataPartialDto>>, anyhow::Error> {
         let state = self.state().await;
 
@@ -295,7 +156,6 @@ impl ProsePodServerApiV2 {
         Ok(backups)
     }
 
-    /// `GET /backups/{backup_id}`.
     async fn get_backup(
         &self,
         backup_id: String,
@@ -309,7 +169,6 @@ impl ProsePodServerApiV2 {
         Ok(backup)
     }
 
-    /// `DELETE /backups/{backup_id}`.
     async fn delete_backup(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
@@ -320,47 +179,7 @@ impl ProsePodServerApiV2 {
         Ok(())
     }
 
-    async fn put_backup_restore_<EventHandler>(
-        backup_service: &BackupService,
-        backup_id: String,
-        blueprint: &ArchiveBlueprint,
-        event_handler: &mut EventHandler,
-        prose_pod_api: &ProsePodApiV2,
-    ) -> Result<(), anyhow::Error>
-    where
-        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
-    {
-        let backup_id = BackupId::from_str(&backup_id)?;
-
-        let ExtractionSuccess {
-            extraction_output, ..
-        } = backup_service
-            .extract_backup(&backup_id, event_handler)
-            .await?;
-
-        let prose_pod_api_data_path = extraction_output
-            .tmp_dir
-            .path()
-            .join(PROSE_POD_API_ARCHIVE_KEY);
-        let prose_pod_api_data_file = std::fs::File::open(&prose_pod_api_data_path)?;
-
-        () = prose_pod_api.put_restore(prose_pod_api_data_file).await?;
-
-        std::fs::remove_file(prose_pod_api_data_path)?;
-
-        let _response = backup_service
-            .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
-            .await?;
-
-        Ok(())
-    }
-
-    /// `PUT /backups/{backup_id}/restore`.
-    async fn put_backup_restore(
-        &self,
-        backup_id: String,
-        prose_pod_api: &ProsePodApiV2,
-    ) -> Result<(), anyhow::Error> {
+    async fn put_backup_restore(&self, backup_id: String) -> Result<(), anyhow::Error> {
         let state = self.state().await;
 
         let blueprint = self
@@ -374,16 +193,13 @@ impl ProsePodServerApiV2 {
             backup_id,
             blueprint,
             &mut NoopEventHandler,
-            prose_pod_api,
         )
         .await
     }
 
-    /// `PUT /backups/{backup_id}/restore Accept:text/event-stream`.
     async fn put_backup_restore_stream(
         &self,
         backup_id: String,
-        prose_pod_api: &ProsePodApiV2,
     ) -> Result<mpsc::Receiver<RestoreBackupEvent>, anyhow::Error> {
         // Stream restore progress.
         let (mut event_handler, sender, receiver) = {
@@ -472,15 +288,12 @@ impl ProsePodServerApiV2 {
                 .unwrap()
                 .to_owned();
 
-            let prose_pod_api = prose_pod_api.to_owned();
-
             async move {
                 let result = Self::put_backup_restore_(
                     &backup_service,
                     backup_id,
                     &blueprint,
                     &mut event_handler,
-                    &prose_pod_api,
                 )
                 .await;
 
@@ -496,7 +309,6 @@ impl ProsePodServerApiV2 {
         Ok(receiver)
     }
 
-    /// `GET /backups/{backup_id}/download-url`.
     async fn get_backup_download_url(
         &self,
         backup_id: String,
@@ -515,92 +327,111 @@ impl ProsePodServerApiV2 {
     }
 }
 
-// MARK: - Implementation details
+pub fn start_v3() -> Result<ProsePodApiV3, anyhow::Error> {
+    let tmpdir_path = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
 
-// MARK: Prose Pod API
+    init_tsks(&tmpdir_path).context("Failed creating tsks")?;
+    init_prose_config(&tmpdir_path).context("Failed creating prose.toml")?;
 
-/// Prose Pod API, as of early 2026. For more information, see
-/// [“Prose Pod Server architecture: Server API vs XMPP server”](https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md).
-#[derive(Clone)]
-pub struct ProsePodApiV2 {
-    constants: Arc<ProsePodApiConstants>,
-    server_api: Arc<ProsePodServerApiV2>,
+    let constants = ProsePodApiConstants::v3();
+    let state = ProsePodServerState::new_v3(&constants)?;
+
+    Ok(ProsePodApiV3 {
+        constants,
+        state: RwLock::new(state),
+    })
 }
 
-/// This would be hard-coded as constants in the Prose Pod API code.
-pub struct ProsePodApiConstants {
-    backup_data_key_self: String,
-}
+// MARK: - Internals
 
-impl ProsePodApiConstants {
-    fn v2() -> Self {
-        Self {
-            backup_data_key_self: "self-data".to_owned(),
-        }
+impl ProsePodApiV3 {
+    async fn post_backups_(
+        backup_service: &BackupService,
+        description: String,
+        backups_version: u8,
+        blueprint: &ArchiveBlueprint,
+        event_handler: &mut impl CreateBackupEventHandler,
+    ) -> Result<CreateBackupSuccess, anyhow::Error> {
+        let command = CreateBackupCommand::new(
+            concat!("example-", env!("CARGO_CRATE_NAME")),
+            &description,
+            backups_version,
+            blueprint,
+        );
+
+        let response = backup_service.create_backup(command, event_handler).await?;
+
+        Ok(response)
     }
-}
 
-impl ProsePodApiV2 {
-    async fn put_restore(&self, data: std::fs::File) -> Result<(), anyhow::Error> {
-        let mut archive = tar::Archive::new(data);
+    async fn put_backup_restore_<EventHandler>(
+        backup_service: &BackupService,
+        backup_id: String,
+        blueprint: &ArchiveBlueprint,
+        event_handler: &mut EventHandler,
+    ) -> Result<(), anyhow::Error>
+    where
+        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
+    {
+        let backup_id = BackupId::from_str(&backup_id)?;
 
-        let tmpdir = tempfile::TempDir::with_prefix(env!("CARGO_CRATE_NAME"))?;
+        let ExtractionSuccess {
+            extraction_output, ..
+        } = backup_service
+            .extract_backup(&backup_id, event_handler)
+            .await?;
 
-        archive.unpack(tmpdir.path())?;
-
-        let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-        let api_data_path = Path::new(&fs_root).join("var/lib/prose-pod-api");
-
-        // NOTE: In the real codebase we’d do this atomically.
-        std::fs::remove_dir_all(&api_data_path)?;
-
-        std::fs::rename(
-            tmpdir.path().join(&self.constants.backup_data_key_self),
-            &api_data_path,
-        )?;
+        let _response = backup_service
+            .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
+            .await?;
 
         Ok(())
     }
 }
 
-// MARK: Prose Pod Server
+// MARK: - Implementation details
 
-struct ProsePodServerApiV2 {
-    constants: ProsePodServerApiConstants,
+// MARK: Prose Pod API
+
+/// Prose Pod API, when [“Prose Pod API as part of Prose Pod Server”](https://github.com/prose-im/prose-pod-api/discussions/368)
+/// will have been implemented.
+pub struct ProsePodApiV3 {
+    constants: ProsePodApiConstants,
     state: RwLock<ProsePodServerState>,
 }
 
-impl ProsePodServerApiV2 {
+impl ProsePodApiV3 {
     async fn state(&self) -> RwLockReadGuard<'_, ProsePodServerState> {
         self.state.read().await
     }
 }
 
-/// This would be hard-coded as constants in the Prose Pod Server API code.
-pub struct ProsePodServerApiConstants {
+/// This would be hard-coded as constants in the Prose Pod API code.
+pub struct ProsePodApiConstants {
     backups_version: u8,
     backup_blueprints: HashMap<u8, ArchiveBlueprint>,
 }
 
-impl ProsePodServerApiConstants {
-    fn v2() -> Self {
+impl ProsePodApiConstants {
+    fn v3() -> Self {
         let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
 
-        let mut blueprints: HashMap<u8, ArchiveBlueprint> = HashMap::with_capacity(1);
+        let mut blueprints: HashMap<u8, ArchiveBlueprint> = HashMap::with_capacity(2);
         blueprints.insert(1, blueprint_v2(&fs_root));
+        blueprints.insert(2, blueprint_v3(&fs_root));
 
         Self {
-            backups_version: 1,
+            backups_version: 2,
             backup_blueprints: blueprints,
         }
     }
 }
 
-pub(super) fn blueprint_v2(root: impl AsRef<Path>) -> ArchiveBlueprint {
+pub(super) fn blueprint_v3(root: impl AsRef<Path>) -> ArchiveBlueprint {
     let root = root.as_ref();
     ArchiveBlueprint::from_iter(
         [
-            ("prose-pod-server-data", "var/lib/prose-pod-server"),
+            ("prose-data", "var/lib/prose"),
             ("prosody-data", "var/lib/prosody"),
             ("prose-config", "etc/prose"),
             ("prosody-config", "etc/prosody"),
@@ -628,7 +459,7 @@ pub struct ProsePodServerState {
 }
 
 impl ProsePodServerState {
-    fn new_v2(constants: &ProsePodServerApiConstants) -> Result<Self, anyhow::Error> {
+    fn new_v3(constants: &ProsePodApiConstants) -> Result<Self, anyhow::Error> {
         let fs_root = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
         let config_path = Path::new(&fs_root).join("etc/prose/prose.toml");
 
@@ -640,6 +471,7 @@ impl ProsePodServerState {
             map_env!("S3_ACCESS_KEY" -> "PROSE_BACKUPS__S3__ACCESS_KEY");
             map_env!("S3_SECRET_KEY" -> "PROSE_BACKUPS__S3__SECRET_KEY");
         };
+
         let config: ProsePodServerConfig = load_config(&config_path)?;
         // tracing::debug!("Parsed config: {api_config:#?}");
 

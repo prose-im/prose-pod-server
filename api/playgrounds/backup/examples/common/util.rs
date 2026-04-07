@@ -84,3 +84,24 @@ pub fn progress_bar<const LEN: usize>(progress: u64, total: u64) -> String {
 
     s
 }
+
+macro_rules! override_files {
+    ($paths:expr, in: $tmpdir:expr, to: $contents:literal) => {
+        for path in $paths.iter() {
+            let path = $tmpdir.path().join(path);
+            std::fs::write(&path, $contents).context(format!("Failed writing in {path:?}"))?;
+        }
+    };
+}
+pub(crate) use override_files;
+
+macro_rules! assert_file_contents {
+    ($paths:expr, in: $tmpdir:expr, eq: $contents:literal) => {
+        for path in $paths.iter() {
+            let path = $tmpdir.path().join(path);
+            let env = std::fs::read_to_string(&path).context(format!("Failed reading {path:?}"))?;
+            assert_eq!(env.as_str(), $contents);
+        }
+    };
+}
+pub(crate) use assert_file_contents;

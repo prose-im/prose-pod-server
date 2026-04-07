@@ -37,7 +37,16 @@ Low priority (unordered):
 
 - Support dynamically adding encryption recipients without breaking checksum
   - Yep, that’s possible!
-- Return all layer sizes when getting backup details (?).
+- Return all layer sizes (raw, decrypted, decompressed…) when getting backup
+  details (?).
+- Return archive contents tree when getting backup details (?).
+  - Iterate on entries but DO NOT EXTRACT.
+  - Return file sizes.
+  - Maybe not full FS tree but a certain level deep (e.g. 2).
+    - Aggregate children sizes if incomplete tree.
+    - Tree depth parameterized at the HTTP API level?
+      - If not, in the static config at least.
+  - Maybe map entry keys to destination paths.
 - Return stats after restore (?).
 - Stream stats when restoring.
 - Recover a recently deleted backup.

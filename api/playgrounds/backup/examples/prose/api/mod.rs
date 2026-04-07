@@ -5,7 +5,10 @@
 
 //! An abstraction of the Prose Pod API.
 
+#![allow(dead_code, unused_imports, unused_macros)]
+
 pub mod v2;
+pub mod v3;
 
 use std::collections::HashMap;
 
@@ -16,6 +19,7 @@ use prose_backup::{
 use tokio::sync::{RwLockReadGuard, mpsc};
 
 pub use self::v2::start_v2;
+pub use self::v3::start_v3;
 
 // MARK: - Public API
 
@@ -150,4 +154,70 @@ fn init_prose_config(fs_root: impl AsRef<std::path::Path>) -> Result<(), anyhow:
         .context(format!("File: {config_path:?}"))?;
 
     Ok(())
+}
+
+// Map env to simulate real configuration.
+macro_rules! map_env {
+    ($from:literal -> $to:literal) => {
+        let val = env_required!($from);
+        std::env::set_var($to, val);
+    };
+}
+pub(crate) use map_env;
+
+fn load_config<'de, T: serde::Deserialize<'de>>(
+    path: impl AsRef<std::path::Path>,
+) -> Result<T, anyhow::Error> {
+    use figment::Figment;
+
+    fn default_config_static() -> toml::Table {
+        use toml::toml;
+
+        let backups_default = prose_backup::config::default_config_static();
+
+        let defaults = toml! {
+            backups = backups_default
+        };
+
+        defaults
+    }
+
+    fn default_figment() -> Figment {
+        use figment::providers::Serialized;
+
+        Figment::from(Serialized::defaults(default_config_static()))
+    }
+
+    fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, anyhow::Error> {
+        use figment::providers::*;
+
+        let backups = prose_backup::config::with_dynamic_defaults(figment.focus("backups"))?;
+        let backups_value = backups.extract::<figment::value::Value>()?;
+
+        figment = figment
+            // NOTE: `Figment::merge` merges objects which does not remove
+            //   existing keys. Merging `()` first does the trick.
+            .merge(Serialized::default("backups", figment::value::Empty::Unit))
+            .merge(Serialized::default("backups", backups_value));
+
+        Ok(figment)
+    }
+
+    pub fn figment_at_path(path: impl AsRef<std::path::Path>) -> Figment {
+        use figment::providers::*;
+
+        default_figment()
+            .merge(Toml::file(path))
+            .merge(Env::prefixed("PROSE_").split("__"))
+    }
+
+    fn try_from<'de, T: serde::Deserialize<'de>>(
+        figment: figment::Figment,
+    ) -> Result<T, anyhow::Error> {
+        with_dynamic_defaults(figment)?
+            .extract::<T>()
+            .map_err(anyhow::Error::from)
+    }
+
+    try_from(figment_at_path(path))
 }

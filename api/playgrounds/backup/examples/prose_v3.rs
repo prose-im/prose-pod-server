@@ -5,10 +5,10 @@
 
 //! This example, in addition to show how this library can be used, ensures
 //! that it supports the use case of [Prose] Pods, in their
-//! [early 2026 architecture].
+//! [late 2026 architecture].
 //!
 //! [Prose]: https://prose.org/ "Prose IM homepage"
-//! [early 2026 architecture]: https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md
+//! [late 2026 architecture]: https://github.com/prose-im/prose-pod-api/discussions/368
 
 mod common;
 mod prose;
@@ -35,7 +35,7 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
-    let api = prose::api::start_v2()?;
+    let api = prose::api::start_v3()?;
     let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
 
     let dashboard = Dashboard::new(Arc::clone(&api));
@@ -79,12 +79,12 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     // Modify some files to test that restoration works.
     override_files!([
         "etc/prose/prose.env",
-        "var/lib/prose-pod-api/database.sqlite",
+        "var/lib/prose/database.sqlite",
     ], in: context.tmpdir(), to: "bar");
 
     assert_file_contents!([
         "etc/prose/prose.env",
-        "var/lib/prose-pod-api/database.sqlite",
+        "var/lib/prose/database.sqlite",
     ], in: context.tmpdir(), eq: "bar");
 
     () = dashboard
@@ -100,7 +100,7 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
 
     assert_file_contents!([
         "etc/prose/prose.env",
-        "var/lib/prose-pod-api/database.sqlite",
+        "var/lib/prose/database.sqlite",
     ], in: context.tmpdir(), eq: "foo");
 
     () = dashboard.delete_backup(String::clone(&backup_id)).await?;
@@ -119,8 +119,8 @@ const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
     ("etc/prose/prose.lic", ""),
     ("etc/prose/prose.toml", ""),
     ("etc/prosody/prosody.cfg.lua", ""),
-    ("var/lib/prose-pod-api/database.sqlite", "foo"),
-    ("var/lib/prose-pod-server/salt.bin", ""),
+    ("var/lib/prose/database.sqlite", "foo"),
+    ("var/lib/prose/salt.bin", ""),
     ("var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
     ("var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
     ("var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),
