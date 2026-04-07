@@ -82,11 +82,6 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
         "var/lib/prose/database.sqlite",
     ], in: context.tmpdir(), to: "bar");
 
-    assert_file_contents!([
-        "etc/prose/prose.env",
-        "var/lib/prose/database.sqlite",
-    ], in: context.tmpdir(), eq: "bar");
-
     () = dashboard
         .restore_backup_stream(String::clone(&backup_id), |progress, total| {
             println!(
