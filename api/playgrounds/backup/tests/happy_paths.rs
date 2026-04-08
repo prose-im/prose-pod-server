@@ -171,7 +171,7 @@ async fn happy_path_atomic_restore() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service
@@ -296,7 +296,7 @@ async fn happy_path_file_permissions() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service
@@ -416,7 +416,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service

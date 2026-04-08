@@ -64,7 +64,7 @@ async fn error_path_backup_missing_file() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service.create_backup(command, &mut NoopEventHandler).await
@@ -134,7 +134,7 @@ async fn error_path_restore_missing_file() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service

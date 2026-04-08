@@ -15,7 +15,8 @@ use composable_stream::ComposableStreamBuilder;
 
 use crate::decryption::{self, DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats, StreamStats};
-use crate::util::{debug_panic, debug_panic_or_log_error};
+use crate::util::debug_panic;
+pub use crate::util::tar::TarSizeCalculator;
 use crate::verification::VerificationOutput;
 use crate::{BackupId, CreateBackupError, ExtractBackupEventHandler};
 
@@ -28,6 +29,9 @@ const METADATA_FILE_NAME: &str = "metadata.json";
 pub mod errors {
     #[derive(Debug, thiserror::Error)]
     pub enum CannotArchive {
+        #[error("Failed computing expected size")]
+        FailedComputingExpectedSize(#[source] anyhow::Error),
+
         #[error("Missing file: '{0}'.")]
         MissingFile(std::path::PathBuf),
     }
@@ -67,35 +71,46 @@ pub(crate) struct BackupInternalMetadata {
 // MARK: - Archiving
 
 /// Returns the expected size of the archive
-pub(crate) fn check_archiving_will_succeed(
+pub(crate) fn check_archiving_will_succeed<D: AdditionalData>(
     blueprint: &ArchiveBlueprint,
+    additional_data: &Option<D>,
 ) -> Result<u64, CannotArchive> {
-    let mut paths = Vec::with_capacity(blueprint.paths.len());
+    let additional_data_size = match additional_data {
+        Some(data) => data
+            .expected_size()
+            .map_err(CannotArchive::FailedComputingExpectedSize)?,
+        None => 0u64,
+    };
 
     for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
             return Err(CannotArchive::MissingFile(local_path.to_owned()));
         }
-        paths.push(local_path.as_path());
     }
 
-    // NOTE: 1024 = 512 bytes for the header + few bytes of data from
-    //   `metadata.json` (≈13) padded up to the next 512-byte block boundary.
-    let expected_size = 1024
-        + crate::util::estimate_tar_size(&paths)
-            .inspect_err(|err| {
-                debug_panic_or_log_error!("Failed computing estimated archive size: {err:#}")
-            })
-            .unwrap_or(0);
+    let expected_size = TarSizeCalculator::estimate_tar_size(&blueprint.paths)
+        .map_err(CannotArchive::FailedComputingExpectedSize)?
+        // Add `metadata.json` (≈13 bytes).
+        + TarSizeCalculator::file_entry_size(METADATA_FILE_NAME, 13)
+        + additional_data_size;
 
     Ok(expected_size)
 }
 
 pub trait AdditionalData {
+    /// TIP: Use [`TarSizeCalculator`] if needed.
+    ///
+    /// [`TarSizeCalculator`]: crate::archiving::TarSizeCalculator
+    fn expected_size(&self) -> Result<u64, anyhow::Error>;
+
     fn append<W: std::io::Write>(self, builder: &mut tar::Builder<W>) -> Result<(), anyhow::Error>;
 }
 
 impl AdditionalData for () {
+    fn expected_size(&self) -> Result<u64, anyhow::Error> {
+        Ok(0)
+    }
+
     fn append<W: std::io::Write>(
         self,
         _builder: &mut tar::Builder<W>,

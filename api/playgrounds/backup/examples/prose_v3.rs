@@ -78,7 +78,6 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
 
     let details = dashboard.inspect_backup(String::clone(&backup_id)).await?;
     println!("Backup details: {}\n", details.display());
-    debug_assert!(details.is_encrypted);
 
     let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
     // Manually test that the URL works (it does).

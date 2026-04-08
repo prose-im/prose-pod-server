@@ -82,6 +82,9 @@ pub(crate) fn init_prose_config(fs_root: impl AsRef<std::path::Path>) -> Result<
     let config = toml! {
         backups.storage = storage_config
 
+        // [backups.compression]
+        // algorithm = "off"
+
         [backups.encryption]
         mode = "pgp"
         pgp.tsk = pgp_tsk_path

@@ -15,7 +15,6 @@ pub use self::fs::*;
 pub use self::measurements::BytesAmount;
 #[cfg(feature = "provider_fs")]
 pub use self::octal::Octal;
-pub use self::tar::estimate_tar_size;
 
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.

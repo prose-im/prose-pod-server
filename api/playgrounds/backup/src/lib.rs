@@ -483,7 +483,8 @@ mod create {
         }: CreateBackupCommand<'_, D>,
         event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
-        let expected_archive_size = check_archiving_will_succeed(&blueprint)?;
+        let expected_archive_size =
+            check_archiving_will_succeed(&blueprint, &additional_archive_data)?;
 
         #[cfg(not(feature = "test"))]
         let created_at = std::time::SystemTime::now();

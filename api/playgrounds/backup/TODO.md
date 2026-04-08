@@ -13,7 +13,9 @@ Medium priority (unordered):
 
 Low priority (unordered):
 
-None.
+- If compression, encryption and signing are all disabled, the progress when
+  restoring doesn’t reach 100% (`tar` skips the last block). Fix this, but also
+  make sure integrity is checked (no issue when signing is enabled).
 
 ## Backlog (planned)
 
@@ -28,10 +30,13 @@ Medium priority (unordered):
   - Also cache metadata when listing objects (it should already be present).
     - Or always return metadata directly; actually that would be better.
 - Type errors more granularly.
+- Test backup progress with long paths (GNU LongLink).
+  - Archive size estimation might be wrong.
 
 Low priority (unordered):
 
 - Add tests for all features and supported edge cases.
+- Read magic bytes instead of checking object extensions.
 
 ## Feature ideas (unordered)
 

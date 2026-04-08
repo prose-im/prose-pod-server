@@ -10,7 +10,7 @@ use std::{path::Path, str::FromStr as _, sync::Arc};
 
 use anyhow::Context;
 use bytes::Buf;
-use prose_backup::archiving::{AdditionalData, ArchiveBlueprint};
+use prose_backup::archiving::{AdditionalData, ArchiveBlueprint, TarSizeCalculator};
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
@@ -132,6 +132,11 @@ pub(super) const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
 struct ProsePodApiData(bytes::Bytes);
 
 impl AdditionalData for ProsePodApiData {
+    fn expected_size(&self) -> Result<u64, anyhow::Error> {
+        let archive_len = self.0.len() as u64;
+        Ok(TarSizeCalculator::archive_contents_size(archive_len))
+    }
+
     fn append<W: std::io::Write>(self, builder: &mut tar::Builder<W>) -> Result<(), anyhow::Error> {
         let mut archive = tar::Archive::new(self.0.reader());
         let entries = archive.entries()?;

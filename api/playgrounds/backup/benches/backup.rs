@@ -6,7 +6,7 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use prose_backup::archiving::{AdditionalData, ArchiveBlueprint};
+use prose_backup::archiving::{AdditionalData, ArchiveBlueprint, TarSizeCalculator};
 use prose_backup::config::HashingAlgorithm;
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{BackupService, CreateBackupCommand, CreateBackupSuccess};
@@ -66,6 +66,11 @@ fn bench_file_size_no_file_io(c: &mut Criterion) {
     }
 
     impl AdditionalData for AdditionalFiles {
+        fn expected_size(&self) -> Result<u64, anyhow::Error> {
+            let entry_size = TarSizeCalculator::file_entry_size("foo/n", self.file_size);
+            Ok((self.file_count as u64) * entry_size)
+        }
+
         fn append<W: std::io::Write>(
             self,
             builder: &mut tar::Builder<W>,

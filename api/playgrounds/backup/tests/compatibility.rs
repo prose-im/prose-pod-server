@@ -89,7 +89,7 @@ async fn compatibility_openpgp() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service

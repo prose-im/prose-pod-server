@@ -91,7 +91,7 @@ async fn alternate_path_single_store() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service
@@ -176,7 +176,7 @@ async fn alternate_path_unknown_archive_entry_no_error() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service
@@ -270,7 +270,7 @@ async fn alternate_path_lost_signing_key() {
             description: "Test backup",
             version: backup_version,
             blueprint: &blueprint.clone(),
-            additional_archive_data: vec![],
+            additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
         };
         service
@@ -376,7 +376,7 @@ async fn alternate_path_change_hashing_algorithm() {
                 description: "Test backup",
                 version: backup_version,
                 blueprint,
-                additional_archive_data: vec![],
+                additional_archive_data: Option::<()>::None,
                 created_at,
             };
             service
