@@ -22,12 +22,18 @@ use crate::common::lifecycle::{ExampleContext, keep_tmpdir};
 use crate::common::util::*;
 use crate::prose::api::ProsePodApi;
 use crate::prose::dashboard::{BackupEntryModel, Dashboard};
+use crate::prose::{init_prose_config, init_tsks};
 
 /// Happy path of running the Prose Pod Dashboard to create, read and delete
 /// backups.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
+
+    let tmpdir = context.tmpdir();
+    init_tsks(tmpdir.path()).context("Failed creating tsks")?;
+    init_prose_config(tmpdir.path()).context("Failed creating prose.toml")?;
+    drop(tmpdir);
 
     try_main(&context)
         .await
@@ -44,13 +50,17 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     println!();
 
     let backup = dashboard
-        .create_backup_stream("Example 1", |progress, total| {
-            println!(
-                "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
-                bar = progress_bar::<10>(progress, total),
-                percent = (progress as f32 / total as f32) * 100.,
-            )
-        })
+        .create_backup_stream(
+            "Example 1",
+            |progress, total| {
+                println!(
+                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                    bar = progress_bar::<10>(progress, total),
+                    percent = (progress as f32 / total as f32) * 100.,
+                )
+            },
+            || println!("Done."),
+        )
         .await?;
     println!("Created backup: {}\n", backup.display());
     debug_assert_eq!(backup.description.as_str(), "Example 1");
@@ -83,13 +93,17 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     ], in: context.tmpdir(), to: "bar");
 
     () = dashboard
-        .restore_backup_stream(String::clone(&backup_id), |progress, total| {
-            println!(
-                "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
-                bar = progress_bar::<10>(progress, total),
-                percent = (progress as f32 / total as f32) * 100.,
-            )
-        })
+        .restore_backup_stream(
+            String::clone(&backup_id),
+            |progress, total| {
+                println!(
+                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                    bar = progress_bar::<10>(progress, total),
+                    percent = (progress as f32 / total as f32) * 100.,
+                )
+            },
+            || println!("Done."),
+        )
         .await?;
     println!();
 

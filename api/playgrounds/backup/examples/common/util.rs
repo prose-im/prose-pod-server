@@ -57,7 +57,7 @@ impl<'a> CreateBackupCommandExt<'a> for prose_backup::CreateBackupCommand<'a> {
             description,
             version,
             blueprint,
-            additional_archive_data: Vec::with_capacity(0),
+            additional_archive_data: None,
             #[cfg(feature = "test")]
             created_at: std::time::SystemTime::now(),
         }
@@ -65,6 +65,7 @@ impl<'a> CreateBackupCommandExt<'a> for prose_backup::CreateBackupCommand<'a> {
 }
 
 /// Creates a progress bar string like `━━━━━━━┈┈┈` given two `u64`.
+#[allow(dead_code)]
 pub fn progress_bar<const LEN: usize>(progress: u64, total: u64) -> String {
     use std::fmt::Write as _;
 

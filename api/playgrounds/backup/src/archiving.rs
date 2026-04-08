@@ -37,9 +37,10 @@ pub struct ArchivingContext {
     pub blueprints: HashMap<u8, ArchiveBlueprint>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArchiveBlueprint {
     pub paths: Vec<(String, PathBuf)>,
+    pub migrate_paths: Vec<(String, String)>,
 }
 
 impl<Dst, Src> FromIterator<(Dst, Src)> for ArchiveBlueprint
@@ -53,6 +54,7 @@ where
                 .into_iter()
                 .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
                 .collect(),
+            migrate_paths: Vec::with_capacity(0),
         }
     }
 }
@@ -89,14 +91,29 @@ pub(crate) fn check_archiving_will_succeed(
     Ok(expected_size)
 }
 
-fn archive_writer<W: Write>(
+pub trait AdditionalData {
+    fn append<W: std::io::Write>(self, builder: &mut tar::Builder<W>) -> Result<(), anyhow::Error>;
+}
+
+impl AdditionalData for () {
+    fn append<W: std::io::Write>(
+        self,
+        _builder: &mut tar::Builder<W>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+}
+
+fn archive_writer<W: Write, D: AdditionalData>(
     builder: &mut tar::Builder<W>,
     blueprint: &ArchiveBlueprint,
-    additional_data: impl IntoIterator<Item = (String, u64, Box<dyn std::io::Read + Send>)>,
+    additional_data: Option<D>,
 ) -> Result<(), anyhow::Error> {
     // Add in-memory data first, to avoid filesystem I/O if it fails.
-    for (archive_path, size, reader) in additional_data {
-        append_data(reader, archive_path, size, builder)?;
+    if let Some(additional_data) = additional_data {
+        additional_data
+            .append(builder)
+            .context("Could not archive additional data")?;
     }
 
     for (archive_path, local_path) in blueprint.paths.iter() {
@@ -123,10 +140,10 @@ fn archive_writer<W: Write>(
 /// NOTE: We don’t start from zero as the Prose Pod API has to send its own
 ///   backup to the Prose Pod Server. The Pod Server then merges it with
 ///   the rest of the server’s data and creates the backup file.
-pub(crate) fn archive<W: Write>(
+pub(crate) fn archive<W: Write, D: AdditionalData>(
     blueprint: &ArchiveBlueprint,
     version: u8,
-    additional_data: impl IntoIterator<Item = (String, u64, Box<dyn std::io::Read + Send>)>,
+    additional_data: Option<D>,
 ) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>> {
     ComposableStreamBuilder {
         make: move |writer: W| {
@@ -340,17 +357,23 @@ where
 
         json::from_reader(entry).context("Invalid metadata file")?
     };
+    tracing::debug!("Backup is version {}.", metadata.version);
 
     // Find where to extract entries based on the backup version.
     // NOTE: This is done before computing-heavy tasks, to fail faster.
     let Some(blueprint) = blueprints.get(&metadata.version) else {
         return Err(ExtractionError::UnknownBackupVersion(metadata.version));
     };
+    tracing::debug!("Selected blueprint: {blueprint:#?}");
 
     // Extract into temporary directory.
     let tmp_dir = tempfile::TempDir::new()
         .context("Could not create temporary directory to extract the backup in")
         .map_err(ExtractionError::Other)?;
+    tracing::debug!(
+        "Extracting backup in `{path}`…",
+        path = tmp_dir.path().display()
+    );
     for entry in entries {
         let mut entry = entry?;
 
@@ -401,46 +424,16 @@ where
     })
 }
 
-/// Note that, as confirmed by unit tests, this function will fail if the
-/// provided `size` is different than the total amount of bytes read.
-/// This is on purpose, to prevent tar header manipulation.
-fn append_data<W: std::io::Write>(
-    data: impl std::io::Read,
-    path: impl AsRef<std::path::Path>,
-    size: u64,
-    builder: &mut tar::Builder<W>,
-) -> Result<(), std::io::Error> {
-    let mut header = tar::Header::new_gnu();
-    header.set_size(size);
-    header.set_cksum();
+// MARK: - Boilerplate
 
-    let mut read_stats = ReadStats::new();
-    let data = MeteredStream::new(data, &mut read_stats);
-
-    builder.append_data(&mut header, path, data)?;
-
-    if read_stats.bytes_read == size {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("Wrong size provided."))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io::Read;
-
-    #[test]
-    fn ensure_append_data_fails_if_stream_len_different_than_provided() {
-        fn try_builder(data_len: u64, given_size: u64) -> Result<(), std::io::Error> {
-            let mut builder = tar::Builder::new(Vec::new());
-            let data = std::io::repeat(0).take(data_len);
-
-            super::append_data(data, "foo", given_size, &mut builder)
-        }
-
-        assert!(try_builder(10, 9).is_err());
-        assert!(try_builder(10, 10).is_ok());
-        assert!(try_builder(10, 11).is_err());
+impl std::fmt::Debug for ArchiveBlueprint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArchiveBlueprint")
+            .field("paths", &crate::util::fmt::AsMap(&self.paths))
+            .field(
+                "migrate_paths",
+                &crate::util::fmt::AsMap(&self.migrate_paths),
+            )
+            .finish()
     }
 }

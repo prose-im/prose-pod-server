@@ -6,7 +6,7 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use prose_backup::archiving::ArchiveBlueprint;
+use prose_backup::archiving::{AdditionalData, ArchiveBlueprint};
 use prose_backup::config::HashingAlgorithm;
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{BackupService, CreateBackupCommand, CreateBackupSuccess};
@@ -60,33 +60,50 @@ fn bench_file_size_no_file_io(c: &mut Criterion) {
     // No need to warm up for 3 seconds (default).
     group.warm_up_time(Duration::from_secs(1));
 
-    fn additional_archive_data(
-        mut file_count: u32,
+    struct AdditionalFiles {
+        file_count: u32,
         file_size: u64,
-    ) -> Vec<(String, u64, Box<dyn std::io::Read + Send>)> {
-        let mut additional_archive_data = Vec::with_capacity(file_count as usize);
+    }
 
-        while file_count > 0 {
-            let reader: Box<dyn std::io::Read + Send> =
-                black_box(Box::new(io::repeat(0).take(file_size)));
+    impl AdditionalData for AdditionalFiles {
+        fn append<W: std::io::Write>(
+            self,
+            builder: &mut tar::Builder<W>,
+        ) -> Result<(), anyhow::Error> {
+            let Self {
+                mut file_count,
+                file_size,
+            } = self;
 
-            additional_archive_data.push((format!("foo/{file_count}"), file_size, reader));
+            while file_count > 0 {
+                let reader = black_box(io::repeat(0).take(file_size));
 
-            file_count -= 1;
+                let mut header = tar::Header::new_gnu();
+                header.set_size(file_size);
+                header.set_cksum();
+
+                builder.append_data(&mut header, format!("foo/{file_count}"), reader)?;
+
+                file_count -= 1;
+            }
+
+            Ok(())
         }
-
-        additional_archive_data
     }
 
     async fn benchmark(service: &BackupService, file_count: u32, file_size: u64) {
-        let additional_archive_data = additional_archive_data(file_count, file_size);
-
         let command = CreateBackupCommand {
             prefix: "bench",
             description: "Benchmark",
             version: 1,
-            blueprint: &ArchiveBlueprint { paths: vec![] },
-            additional_archive_data,
+            blueprint: &ArchiveBlueprint {
+                paths: vec![],
+                migrate_paths: vec![],
+            },
+            additional_archive_data: Some(AdditionalFiles {
+                file_count,
+                file_size,
+            }),
             #[cfg(feature = "test")]
             created_at: std::time::SystemTime::now(),
         };
@@ -232,12 +249,12 @@ async fn benchmark_create_backup(
     blueprint: &ArchiveBlueprint,
     test_store_path: impl AsRef<std::path::Path>,
 ) -> Vec<TempPath> {
-    let command = CreateBackupCommand {
+    let command: CreateBackupCommand = CreateBackupCommand {
         prefix: "bench",
         description: &format!("Benchmark {}", unique_hex().unwrap()),
         version: 1,
         blueprint,
-        additional_archive_data: vec![],
+        additional_archive_data: None,
         #[cfg(feature = "test")]
         created_at: std::time::SystemTime::now(),
     };

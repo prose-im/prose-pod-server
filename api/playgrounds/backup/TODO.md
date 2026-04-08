@@ -39,7 +39,9 @@ Low priority (unordered):
   - Yep, that’s possible!
 - Return all layer sizes (raw, decrypted, decompressed…) when getting backup
   details (?).
+- (A) Return backup version in backup details.
 - Return archive contents tree when getting backup details (?).
+  - Requires (A).
   - Iterate on entries but DO NOT EXTRACT.
   - Return file sizes.
   - Maybe not full FS tree but a certain level deep (e.g. 2).

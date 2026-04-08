@@ -4,11 +4,12 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 //! This example, in addition to show how this library can be used, ensures
-//! that it supports the use case of [Prose] Pods, in their
-//! [early 2026 architecture].
+//! that it supports the use case of migrating [Prose] Pods from their
+//! [early 2026 architecture] to their [late 2026 architecture].
 //!
 //! [Prose]: https://prose.org/ "Prose IM homepage"
 //! [early 2026 architecture]: https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md
+//! [late 2026 architecture]: https://github.com/prose-im/prose-pod-api/discussions/368
 
 mod common;
 mod prose;
@@ -16,12 +17,10 @@ mod prose;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use tokio::sync::RwLock;
 
 use crate::common::lifecycle::{ExampleContext, keep_tmpdir};
 use crate::common::util::*;
-use crate::prose::api::ProsePodApi;
-use crate::prose::dashboard::{BackupEntryModel, Dashboard};
+use crate::prose::dashboard::Dashboard;
 use crate::prose::{init_prose_config, init_tsks};
 
 /// Happy path of running the Prose Pod Dashboard to create, read and delete
@@ -41,78 +40,45 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
-    let api = prose::api::start_v2()?;
-    let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
-
+    let api = Arc::default();
     let dashboard = Dashboard::new(Arc::clone(&api));
 
-    let mut backups = dashboard.show_backups().await?;
-    println!();
+    // Start v2 API.
+    let api_v2 = prose::api::start_v2()?;
+    *api.write().await = Some(Box::new(api_v2));
 
-    let backup = dashboard
-        .create_backup_stream(
-            "Example 1",
-            |progress, total| {
-                println!(
-                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
-                    bar = progress_bar::<10>(progress, total),
-                    percent = (progress as f32 / total as f32) * 100.,
-                )
-            },
-            || println!("Done."),
-        )
-        .await?;
-    println!("Created backup: {}\n", backup.display());
-    debug_assert_eq!(backup.description.as_str(), "Example 1");
+    // Create v2 backup.
+    let backup_v2 = dashboard.create_backup("Example 1").await?;
+    println!("Created backup: {}\n", backup_v2.display());
 
     // TODO: Register cleanup function.
 
-    backups.insert(0, backup);
-    println!("Backups list:\n{}", BackupEntryModel::table_header());
-    for backup in backups.iter() {
-        println!("{}", backup.table_row());
-    }
-    println!("{}\n", BackupEntryModel::table_footer());
-
-    let backup_id = &backups[0].backup_id;
-
-    let details = dashboard.inspect_backup(String::clone(&backup_id)).await?;
-    println!("Backup details: {}\n", details.display());
-    debug_assert!(details.is_encrypted);
-
-    let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
-    // Manually test that the URL works (it does).
-    // tracing::info!("Download URL: {download_url}");
-    // crate::common::util::press_enter_to_continue();
-    println!();
+    // Start v3 API.
+    let api_v3 = prose::api::start_v3()?;
+    *api.write().await = Some(Box::new(api_v3));
 
     // Modify some files to test that restoration works.
     override_files!([
         "etc/prose/prose.env",
+        "var/lib/prose-pod-server/salt.bin",
         "var/lib/prose-pod-api/database.sqlite",
     ], in: context.tmpdir(), to: "bar");
 
+    // Try to restore v2 backup from v3.
     () = dashboard
-        .restore_backup_stream(
-            String::clone(&backup_id),
-            |progress, total| {
-                println!(
-                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
-                    bar = progress_bar::<10>(progress, total),
-                    percent = (progress as f32 / total as f32) * 100.,
-                )
-            },
-            || println!("Done."),
-        )
+        .restore_backup(String::clone(&backup_v2.backup_id))
         .await?;
     println!();
 
     assert_file_contents!([
         "etc/prose/prose.env",
-        "var/lib/prose-pod-api/database.sqlite",
+        "var/lib/prose/salt.bin",
+        "var/lib/prose/database.sqlite",
     ], in: context.tmpdir(), eq: "foo");
 
-    () = dashboard.delete_backup(String::clone(&backup_id)).await?;
+    () = dashboard
+        .delete_backup(String::clone(&backup_v2.backup_id))
+        .await?;
     println!();
 
     Ok(())
@@ -129,7 +95,7 @@ const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
     ("etc/prose/prose.toml", ""),
     ("etc/prosody/prosody.cfg.lua", ""),
     ("var/lib/prose-pod-api/database.sqlite", "foo"),
-    ("var/lib/prose-pod-server/salt.bin", ""),
+    ("var/lib/prose-pod-server/salt.bin", "foo"),
     ("var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
     ("var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
     ("var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),

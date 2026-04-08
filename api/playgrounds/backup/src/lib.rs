@@ -114,9 +114,9 @@ impl BackupService {
     ///                                            ◯
     /// ```
     #[inline]
-    pub async fn create_backup(
+    pub async fn create_backup<D: archiving::AdditionalData>(
         &self,
-        command: create::CreateBackupCommand<'_>,
+        command: create::CreateBackupCommand<'_, D>,
         event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<create::CreateBackupSuccess, create::CreateBackupError> {
         crate::create::create_backup(self, command, event_handler).await
@@ -470,7 +470,7 @@ mod create {
     use crate::stats::*;
     use crate::stores::*;
 
-    pub(crate) async fn create_backup(
+    pub(crate) async fn create_backup<D: archiving::AdditionalData>(
         service: &BackupService,
         CreateBackupCommand {
             prefix,
@@ -480,7 +480,7 @@ mod create {
             additional_archive_data,
             #[cfg(feature = "test")]
             created_at,
-        }: CreateBackupCommand<'_>,
+        }: CreateBackupCommand<'_, D>,
         event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, CreateBackupError> {
         let expected_archive_size = check_archiving_will_succeed(&blueprint)?;
@@ -663,7 +663,7 @@ mod create {
         Ok(())
     }
 
-    pub struct CreateBackupCommand<'a> {
+    pub struct CreateBackupCommand<'a, D: archiving::AdditionalData = ()> {
         /// Desired backup prefix (e.g. “prose-backup”).
         pub prefix: &'a str,
 
@@ -675,7 +675,7 @@ mod create {
         pub blueprint: &'a ArchiveBlueprint,
 
         /// Some more data to insert in the archive before it’s built.
-        pub additional_archive_data: Vec<(String, u64, Box<dyn std::io::Read + Send>)>,
+        pub additional_archive_data: Option<D>,
 
         /// Timestamp which should be associated with the backup.
         ///

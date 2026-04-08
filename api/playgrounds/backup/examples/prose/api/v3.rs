@@ -328,11 +328,6 @@ impl ProsePodApi for ProsePodApiV3 {
 }
 
 pub fn start_v3() -> Result<ProsePodApiV3, anyhow::Error> {
-    let tmpdir_path = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-
-    init_tsks(&tmpdir_path).context("Failed creating tsks")?;
-    init_prose_config(&tmpdir_path).context("Failed creating prose.toml")?;
-
     let constants = ProsePodApiConstants::v3();
     let state = ProsePodServerState::new_v3(&constants)?;
 
@@ -429,7 +424,7 @@ impl ProsePodApiConstants {
 
 pub(super) fn blueprint_v3(root: impl AsRef<Path>) -> ArchiveBlueprint {
     let root = root.as_ref();
-    ArchiveBlueprint::from_iter(
+    let mut blueprint = ArchiveBlueprint::from_iter(
         [
             ("prose-data", "var/lib/prose"),
             ("prosody-data", "var/lib/prosody"),
@@ -438,7 +433,17 @@ pub(super) fn blueprint_v3(root: impl AsRef<Path>) -> ArchiveBlueprint {
         ]
         .into_iter()
         .map(|(dst, src)| (dst, root.join(src))),
-    )
+    );
+
+    blueprint.migrate_paths = [
+        ("prose-pod-server-data", "prose-data"),
+        (v2::PROSE_POD_API_ARCHIVE_KEY, "prose-data"),
+    ]
+    .into_iter()
+    .map(|(dst, src)| (dst.to_owned(), src.to_owned()))
+    .collect();
+
+    blueprint
 }
 
 // MARK: API config

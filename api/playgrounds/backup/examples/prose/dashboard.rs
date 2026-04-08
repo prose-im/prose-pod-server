@@ -55,6 +55,7 @@ pub struct BackupDetailsModel {
 // NOTE: Features return `Result`s. GUIs should save app state and display
 //   errors as alert-looking elements, not be binary like `Result`. However,
 //   for the purpose of this example, we won’t go into such detail.
+#[allow(dead_code)]
 impl Dashboard {
     pub async fn show_backups(&self) -> Result<Vec<BackupEntryModel>, anyhow::Error> {
         let backups = {
@@ -96,6 +97,7 @@ impl Dashboard {
         &self,
         description: impl Into<String>,
         on_progress: impl Fn(u64, u64),
+        on_finish: impl FnOnce(),
     ) -> Result<BackupEntryModel, anyhow::Error> {
         let response = {
             tracing::trace!("Creating a backup…");
@@ -110,6 +112,7 @@ impl Dashboard {
                             on_progress(progress, total)
                         }
                         CreateBackupEvent::End(create_backup_success) => {
+                            on_finish();
                             break 'ret create_backup_success?;
                         }
                     }
@@ -162,6 +165,7 @@ impl Dashboard {
         &self,
         backup_id: String,
         on_progress: impl Fn(u64, u64),
+        on_finish: impl FnOnce(),
     ) -> Result<(), anyhow::Error> {
         let result = {
             tracing::trace!("Restoring backup…");
@@ -176,6 +180,7 @@ impl Dashboard {
                             on_progress(progress, total)
                         }
                         RestoreBackupEvent::End(create_backup_success) => {
+                            on_finish();
                             break 'ret create_backup_success?;
                         }
                     }
@@ -248,8 +253,8 @@ impl BackupEntryModel {
 
         format!(
             "│ {description:<32} │ {signed}{encrypted}     │ {created_at:<30} │ {size_bytes:>6}B │",
-            signed = if *is_signed { "S" } else { "" },
-            encrypted = if *is_encrypted { "E" } else { "" }
+            signed = if *is_signed { "S" } else { " " },
+            encrypted = if *is_encrypted { "E" } else { " " }
         )
     }
 
@@ -287,6 +292,7 @@ impl BackupEntryModel {
 }
 
 impl BackupDetailsModel {
+    #[allow(dead_code)]
     pub(crate) fn display(&self) -> String {
         let Self {
             backup_id,

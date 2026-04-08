@@ -72,6 +72,7 @@ fn init_tracing() {
         match arg.as_str() {
             "--trace" => level = "trace",
             "--debug" => level = "debug",
+            "--local" => {}
             arg => panic!("Unknown arg: {arg:?}"),
         }
     }

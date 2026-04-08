@@ -9,7 +9,8 @@
 use std::{path::Path, str::FromStr as _, sync::Arc};
 
 use anyhow::Context;
-use prose_backup::archiving::ArchiveBlueprint;
+use bytes::Buf;
+use prose_backup::archiving::{AdditionalData, ArchiveBlueprint};
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
@@ -107,11 +108,6 @@ impl ProsePodApi for ProsePodApiV2 {
 }
 
 pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
-    let tmpdir_path = env_required!(EXAMPLE_TMPDIR_VAR_NAME);
-
-    init_tsks(&tmpdir_path).context("Failed creating tsks")?;
-    init_prose_config(&tmpdir_path).context("Failed creating prose.toml")?;
-
     let server_api = {
         let constants = ProsePodServerApiConstants::v2();
         let state = ProsePodServerState::new_v2(&constants)?;
@@ -130,7 +126,25 @@ pub fn start_v2() -> Result<ProsePodApiV2, anyhow::Error> {
 
 // MARK: - Internals
 
-const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
+pub(super) const PROSE_POD_API_ARCHIVE_KEY: &str = "prose-pod-api-data";
+
+#[repr(transparent)]
+struct ProsePodApiData(bytes::Bytes);
+
+impl AdditionalData for ProsePodApiData {
+    fn append<W: std::io::Write>(self, builder: &mut tar::Builder<W>) -> Result<(), anyhow::Error> {
+        let mut archive = tar::Archive::new(self.0.reader());
+        let entries = archive.entries()?;
+
+        for entry in entries {
+            let entry = entry?;
+
+            builder.append(&entry.header().clone(), entry)?;
+        }
+
+        Ok(())
+    }
+}
 
 impl ProsePodServerApiV2 {
     async fn post_backups_(
@@ -141,17 +155,15 @@ impl ProsePodServerApiV2 {
         blueprint: &ArchiveBlueprint,
         event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
-        let mut command = CreateBackupCommand::new(
-            concat!("example-", env!("CARGO_CRATE_NAME")),
-            &description,
-            backups_version,
+        let command = CreateBackupCommand {
+            prefix: concat!("example-", env!("CARGO_CRATE_NAME")),
+            description: &description,
+            version: backups_version,
             blueprint,
-        );
-        command.additional_archive_data = vec![(
-            PROSE_POD_API_ARCHIVE_KEY.to_owned(),
-            prose_pod_api_data.len() as u64,
-            Box::new(std::io::Cursor::new(prose_pod_api_data)),
-        )];
+            additional_archive_data: Some(ProsePodApiData(prose_pod_api_data)),
+            #[cfg(feature = "test")]
+            created_at: std::time::SystemTime::now(),
+        };
 
         let response = backup_service.create_backup(command, event_handler).await?;
 
@@ -342,11 +354,18 @@ impl ProsePodServerApiV2 {
             .tmp_dir
             .path()
             .join(PROSE_POD_API_ARCHIVE_KEY);
-        let prose_pod_api_data_file = std::fs::File::open(&prose_pod_api_data_path)?;
 
-        () = prose_pod_api.put_restore(prose_pod_api_data_file).await?;
+        let prose_pod_api_data = {
+            let mut tar = tar::Builder::new(Vec::<u8>::new());
+            tar.append_dir_all(PROSE_POD_API_ARCHIVE_KEY, &prose_pod_api_data_path)?;
+            tar.into_inner()?
+        };
 
-        std::fs::remove_file(prose_pod_api_data_path)?;
+        () = prose_pod_api
+            .put_restore(std::io::Cursor::new(prose_pod_api_data))
+            .await?;
+
+        std::fs::remove_dir_all(prose_pod_api_data_path)?;
 
         let _response = backup_service
             .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
@@ -535,13 +554,13 @@ pub struct ProsePodApiConstants {
 impl ProsePodApiConstants {
     fn v2() -> Self {
         Self {
-            backup_data_key_self: "self-data".to_owned(),
+            backup_data_key_self: PROSE_POD_API_ARCHIVE_KEY.to_owned(),
         }
     }
 }
 
 impl ProsePodApiV2 {
-    async fn put_restore(&self, data: std::fs::File) -> Result<(), anyhow::Error> {
+    async fn put_restore(&self, data: impl std::io::Read) -> Result<(), anyhow::Error> {
         let mut archive = tar::Archive::new(data);
 
         let tmpdir = tempfile::TempDir::with_prefix(env!("CARGO_CRATE_NAME"))?;

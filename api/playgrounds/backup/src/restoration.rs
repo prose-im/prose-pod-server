@@ -21,6 +21,48 @@ pub(crate) fn restore<'a>(
 ) -> Result<RestorationOutput, RestorationError> {
     use crate::util::{PathGuard, safe_replace};
 
+    tracing::debug!("Restoring with: {blueprint:#?}");
+
+    // Migrate data if needed.
+    for (from_key, to_key) in blueprint.migrate_paths.iter() {
+        let from = tmp_dir.path().join(from_key);
+        let to = tmp_dir.path().join(to_key);
+
+        let from_metadata = match from.metadata() {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                tracing::debug!("Cannot read {from:?} metadata, skipping. (Error: {err:?})");
+                continue;
+            }
+        };
+
+        // NOTE: Not using `Path::metadata` in case `to` doesn’t exist.
+        if to.is_dir() {
+            if from_metadata.is_dir() {
+                // Merge files into destination.
+                let entries =
+                    std::fs::read_dir(&from).with_context(|| format!("Cannot walk {from:?}"))?;
+                for entry in entries {
+                    let entry = entry.with_context(|| format!("Invalid entry in {from:?}"))?;
+                    let file_name = entry.file_name();
+                    let from = from.join(&file_name);
+                    let to = to.join(&file_name);
+                    std::fs::rename(&from, &to).with_context(|| {
+                        format!("Could not migrate (dir -> dir) {from:?} to {to:?}")
+                    })?;
+                }
+            } else {
+                let to = to.join(from_key);
+                std::fs::rename(&from, &to).with_context(|| {
+                    format!("Could not migrate (file -> dir) {from:?} to {to:?}")
+                })?;
+            }
+        } else {
+            std::fs::rename(&from, &to)
+                .with_context(|| format!("Could not migrate {from:?} to {to:?}"))?;
+        }
+    }
+
     let mut processed: Vec<(PathBuf, PathBuf, Option<PathGuard>)> = Vec::new();
 
     for (dir_name, dst) in blueprint.paths.iter() {
