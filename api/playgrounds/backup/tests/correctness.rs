@@ -3,7 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-//! Ensure the library output is valid and compatible with outside tooling.
+//! Ensures the library is correct by verifying its output with outside tooling.
 //!
 //! The library could _work_ without being _correct_ (it happened at some point
 //! during development). These tests ensure things like OpenPGP signatures
