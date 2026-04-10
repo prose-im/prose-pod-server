@@ -114,7 +114,7 @@ tasks:
     desc: Run CI tests (doesn’t test S3).
     cmds:
       - task: lint
-      - cargo test --locked --lib --tests -F test,all_providers -- --skip s3
+      - cargo test --locked --lib --tests --all-features -- --skip s3
       - cargo test --locked --doc -p backup
       - cargo test --locked --doc -p composable-stream -F doc
       - task: check:release
