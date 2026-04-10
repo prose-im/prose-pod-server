@@ -14,7 +14,8 @@
 //!   let backup_config = BackupConfig::try_from(toml)?;
 //!
 //!   let blueprints = unimplemented!();
-//!   let service = BackupService::from_config(&backup_config, blueprints)?;
+//!   let migrations = unimplemented!();
+//!   let service = BackupService::from_config(&backup_config, blueprints, migrations)?;
 //!
 //!   let _backups = service.list_backups().await?;
 //! }
@@ -31,7 +32,7 @@ pub mod encryption;
 pub mod event_handlers;
 mod hashing;
 mod pgp;
-mod restoration;
+pub mod restoration;
 pub mod signing;
 pub mod stats;
 pub mod stores;
@@ -61,6 +62,7 @@ pub struct BackupService {
     pub signing_context: signing::Context,
     pub verification_context: verification::Context,
     pub decryption_context: decryption::Context,
+    pub restoration_context: restoration::Context,
     pub download_config: config::DownloadConfig,
 
     pub backup_store: stores::CachedStore<Box<dyn stores::ObjectStore>>,
@@ -182,6 +184,7 @@ impl BackupService {
             backup_id,
             extraction_output,
             blueprint,
+            &self.restoration_context,
             event_handler,
         )
         .await
@@ -197,11 +200,13 @@ impl BackupService {
     pub fn from_config(
         config: &BackupConfig,
         blueprints: HashMap<u8, archiving::ArchiveBlueprint>,
+        migrations: Vec<restoration::ArchiveMigration>,
     ) -> Result<Self, anyhow::Error> {
         // NOTE: This gets inlined in release builds.
         Self::from_config_custom(
             config,
             archiving::Context { blueprints },
+            restoration::Context { migrations },
             |path| {
                 use openpgp::parse::Parse as _;
                 openpgp::Cert::from_file(path)
@@ -219,6 +224,7 @@ impl BackupService {
     pub fn from_config_custom<P>(
         config: &BackupConfig,
         archiving_context: archiving::Context,
+        restoration_context: restoration::Context,
         get_pgp_cert: impl Fn(&std::path::PathBuf) -> Result<openpgp::Cert, anyhow::Error>,
         pgp_policy: impl Fn() -> P,
     ) -> Result<Self, anyhow::Error>
@@ -311,6 +317,7 @@ impl BackupService {
             signing_context,
             verification_context,
             decryption_context,
+            restoration_context,
             backup_store: stores::CachedStore::new(backup_store, Arc::default(), &config.caching),
             check_store,
             download_config: config.download.to_owned(),
@@ -475,7 +482,6 @@ mod create {
         CreateBackupCommand {
             prefix,
             description,
-            version,
             blueprint,
             additional_archive_data,
             #[cfg(feature = "test")]
@@ -519,7 +525,7 @@ mod create {
 
         let start = std::time::Instant::now();
 
-        let archive_writer = archive(&blueprint, version, additional_archive_data)
+        let archive_writer = archive(&blueprint, additional_archive_data)
             .then(meter_writes(BackupStatsReader {
                 backup_id: &backup_id,
                 event_handler,
@@ -670,8 +676,6 @@ mod create {
 
         /// Desired backup description (e.g. “Automatic backup”).
         pub description: &'a str,
-
-        pub version: u8,
 
         pub blueprint: &'a ArchiveBlueprint,
 
@@ -1011,6 +1015,7 @@ mod restore {
     use crate::archiving::*;
     use crate::backup_id::*;
     use crate::decryption::*;
+    use crate::restoration;
     use crate::restoration::*;
     use crate::stats::*;
     use crate::verification::*;
@@ -1116,9 +1121,16 @@ mod restore {
         backup_id: &BackupId,
         extraction_output: ExtractionOutput<'a>,
         blueprint: &ArchiveBlueprint,
+        context: &restoration::Context,
         event_handler: &mut impl RestoreBackupEventHandler,
     ) -> Result<RestorationOutput, RestorationError> {
-        restore(backup_id, extraction_output, blueprint, event_handler)
+        restore(
+            backup_id,
+            extraction_output,
+            blueprint,
+            context,
+            event_handler,
+        )
     }
 }
 

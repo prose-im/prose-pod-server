@@ -36,7 +36,6 @@ pub trait CreateBackupCommandExt<'a> {
     fn new<'p: 'a, 'd: 'a>(
         prefix: &'p str,
         description: &'d str,
-        version: u8,
         blueprint: &'a prose_backup::archiving::ArchiveBlueprint,
     ) -> Self;
 }
@@ -49,13 +48,11 @@ impl<'a> CreateBackupCommandExt<'a> for prose_backup::CreateBackupCommand<'a> {
     fn new<'p: 'a, 'd: 'a>(
         prefix: &'p str,
         description: &'d str,
-        version: u8,
         blueprint: &'a prose_backup::archiving::ArchiveBlueprint,
     ) -> Self {
         Self {
             prefix,
             description,
-            version,
             blueprint,
             additional_archive_data: None,
             #[cfg(feature = "test")]

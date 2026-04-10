@@ -26,6 +26,7 @@ pub mod prelude {
     pub use prose_backup::config::*;
     pub use prose_backup::decryption::PgpDecryptionContext;
     pub use prose_backup::event_handlers::NoopEventHandler;
+    pub use prose_backup::restoration::{ArchiveMigration, RestorationContext};
     pub use prose_backup::{
         BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupOutput,
         CreateBackupSuccess, ExtractAndRestoreSuccess, ExtractionSuccess,

@@ -33,25 +33,23 @@ async fn error_path_backup_missing_file() {
     };
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    let blueprint = ArchiveBlueprint::from_iter(
+    let blueprint = ArchiveBlueprint::new(
+        1,
         [
             ("foo-data", "foo"),
             ("bar-data", "bar"),
-        ]
-        .into_iter(),
+        ],
     )
     .src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -62,7 +60,6 @@ async fn error_path_backup_missing_file() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
@@ -99,26 +96,24 @@ async fn error_path_restore_missing_file() {
     };
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    let mut blueprint = ArchiveBlueprint::from_iter(
+    let mut blueprint = ArchiveBlueprint::new(
+        1,
         [
             ("foo-data", "foo"),
             ("bar-data", "bar"),
-        ]
-        .into_iter(),
+        ],
     )
     .src_relative_to(&test_data_path);
     let entry = blueprint.paths.pop().unwrap();
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     let mut service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -132,7 +127,6 @@ async fn error_path_restore_missing_file() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
@@ -146,7 +140,7 @@ async fn error_path_restore_missing_file() {
 
     println!();
     blueprint.paths.push(entry);
-    (service.archiving_context.blueprints).insert(backup_version, blueprint.clone());
+    (service.archiving_context.blueprints).insert(blueprint.version, blueprint.clone());
     let res = service
         .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
         .await;

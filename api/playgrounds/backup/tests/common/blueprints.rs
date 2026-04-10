@@ -19,7 +19,8 @@ pub trait ArchiveBlueprintExt {
 
 impl ArchiveBlueprintExt for ArchiveBlueprint {
     fn src_relative_to(&self, origin: impl AsRef<Path>) -> Self {
-        Self::from_iter(
+        Self::new(
+            self.version,
             self.paths
                 .iter()
                 .map(|(dst, src)| (dst.to_owned(), origin.as_ref().join(src))),
@@ -38,8 +39,8 @@ impl BlueprintsBuilder {
         }
     }
 
-    pub fn insert(mut self, version: u8, blueprint: ArchiveBlueprint) -> Self {
-        self.res.insert(version, blueprint);
+    pub fn insert(mut self, blueprint: ArchiveBlueprint) -> Self {
+        self.res.insert(blueprint.version, blueprint);
         self
     }
 

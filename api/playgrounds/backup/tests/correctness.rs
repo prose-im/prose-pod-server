@@ -49,15 +49,12 @@ async fn compatibility_openpgp() {
     .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> =
@@ -69,6 +66,7 @@ async fn compatibility_openpgp() {
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |path| {
             certs
                 .get(path)
@@ -87,7 +85,6 @@ async fn compatibility_openpgp() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),

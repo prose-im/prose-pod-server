@@ -100,10 +100,9 @@ fn bench_file_size_no_file_io(c: &mut Criterion) {
         let command = CreateBackupCommand {
             prefix: "bench",
             description: "Benchmark",
-            version: 1,
             blueprint: &ArchiveBlueprint {
+                version: 1,
                 paths: vec![],
-                migrate_paths: vec![],
             },
             additional_archive_data: Some(AdditionalFiles {
                 file_count,
@@ -167,7 +166,7 @@ fn bench_file_size(c: &mut Criterion) {
 
     for file_size in FILE_SIZE_TEST_CASES {
         let files_path = init_files(file_count, file_size, &test_data_path);
-        let blueprint = ArchiveBlueprint::from_iter([("foo", files_path)]);
+        let blueprint = ArchiveBlueprint::new(1, [("foo", files_path)]);
 
         group.throughput(Throughput::Bytes(file_count as u64 * file_size));
 
@@ -217,7 +216,7 @@ fn bench_file_count(c: &mut Criterion) {
         let file_size = total_file_size / file_count as u64;
 
         let files_path = init_files(file_count, file_size, &test_data_path);
-        let blueprint = ArchiveBlueprint::from_iter([("foo", files_path)]);
+        let blueprint = ArchiveBlueprint::new(1, [("foo", files_path)]);
 
         group.throughput(Throughput::Bytes(total_file_size));
 
@@ -257,7 +256,6 @@ async fn benchmark_create_backup(
     let command: CreateBackupCommand = CreateBackupCommand {
         prefix: "bench",
         description: &format!("Benchmark {}", unique_hex().unwrap()),
-        version: 1,
         blueprint,
         additional_archive_data: None,
         #[cfg(feature = "test")]

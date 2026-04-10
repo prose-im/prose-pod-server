@@ -19,6 +19,7 @@ use prose_backup::{
         HashingConfig,
     },
     decryption::DecryptionContext,
+    restoration::RestorationContext,
     signing::SigningContext,
     stores::{CachedStore, FsStore, StoreCache},
     verification::VerificationContext,
@@ -48,6 +49,7 @@ pub fn sinking_service(
         signing_context: SigningContext::default(),
         verification_context: VerificationContext::default(),
         decryption_context: DecryptionContext::default(),
+        restoration_context: RestorationContext::default(),
         download_config: DownloadConfig {
             url_max_ttl: std::time::Duration::ZERO,
         },
@@ -89,6 +91,7 @@ pub fn fs_service(
         signing_context: SigningContext::default(),
         verification_context: VerificationContext::default(),
         decryption_context: DecryptionContext::default(),
+        restoration_context: RestorationContext::default(),
         download_config: DownloadConfig {
             url_max_ttl: std::time::Duration::ZERO,
         },

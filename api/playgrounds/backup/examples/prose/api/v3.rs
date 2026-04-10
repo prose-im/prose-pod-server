@@ -11,6 +11,7 @@ use std::{path::Path, str::FromStr as _, sync::Arc};
 use anyhow::Context;
 use prose_backup::archiving::ArchiveBlueprint;
 use prose_backup::event_handlers::NoopEventHandler;
+use prose_backup::restoration::ArchiveMigration;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
     ExtractBackupEventHandler, ExtractionSuccess, RestoreBackupEventHandler,
@@ -38,7 +39,6 @@ impl ProsePodApi for ProsePodApiV3 {
         Self::post_backups_(
             &state.backup_service,
             description,
-            backups_version,
             blueprint,
             &mut NoopEventHandler,
         )
@@ -130,7 +130,6 @@ impl ProsePodApi for ProsePodApiV3 {
                 let result = Self::post_backups_(
                     &backup_service,
                     description,
-                    backups_version,
                     &blueprint,
                     &mut event_handler,
                 )
@@ -343,14 +342,12 @@ impl ProsePodApiV3 {
     async fn post_backups_(
         backup_service: &BackupService,
         description: String,
-        backups_version: u8,
         blueprint: &ArchiveBlueprint,
         event_handler: &mut impl CreateBackupEventHandler,
     ) -> Result<CreateBackupSuccess, anyhow::Error> {
         let command = CreateBackupCommand::new(
             concat!("example-", env!("CARGO_CRATE_NAME")),
             &description,
-            backups_version,
             blueprint,
         );
 
@@ -405,6 +402,7 @@ impl ProsePodApiV3 {
 pub struct ProsePodApiConstants {
     backups_version: u8,
     backup_blueprints: HashMap<u8, ArchiveBlueprint>,
+    backup_migrations: Vec<ArchiveMigration>,
 }
 
 impl ProsePodApiConstants {
@@ -415,16 +413,27 @@ impl ProsePodApiConstants {
         blueprints.insert(1, blueprint_v2(&fs_root));
         blueprints.insert(2, blueprint_v3(&fs_root));
 
+        let migrations = vec![
+            ArchiveMigration::new(
+                2,
+                [
+                    ("prose-pod-server-data", "prose-data"),
+                    (v2::PROSE_POD_API_ARCHIVE_KEY, "prose-data"),
+                ],
+            ),
+        ];
+
         Self {
             backups_version: 2,
             backup_blueprints: blueprints,
+            backup_migrations: migrations,
         }
     }
 }
 
 pub(super) fn blueprint_v3(root: impl AsRef<Path>) -> ArchiveBlueprint {
-    let root = root.as_ref();
-    let mut blueprint = ArchiveBlueprint::from_iter(
+    ArchiveBlueprint::new(
+        2,
         [
             ("prose-data", "var/lib/prose"),
             ("prosody-data", "var/lib/prosody"),
@@ -432,18 +441,8 @@ pub(super) fn blueprint_v3(root: impl AsRef<Path>) -> ArchiveBlueprint {
             ("prosody-config", "etc/prosody"),
         ]
         .into_iter()
-        .map(|(dst, src)| (dst, root.join(src))),
-    );
-
-    blueprint.migrate_paths = [
-        ("prose-pod-server-data", "prose-data"),
-        (v2::PROSE_POD_API_ARCHIVE_KEY, "prose-data"),
-    ]
-    .into_iter()
-    .map(|(dst, src)| (dst.to_owned(), src.to_owned()))
-    .collect();
-
-    blueprint
+        .map(|(dst, src)| (dst, root.as_ref().join(src))),
+    )
 }
 
 // MARK: API config
@@ -480,8 +479,11 @@ impl ProsePodServerState {
         let config: ProsePodServerConfig = load_config(&config_path)?;
         // tracing::debug!("Parsed config: {api_config:#?}");
 
-        let backup_service =
-            BackupService::from_config(&config.backups, constants.backup_blueprints.clone())?;
+        let backup_service = BackupService::from_config(
+            &config.backups,
+            constants.backup_blueprints.clone(),
+            constants.backup_migrations.clone(),
+        )?;
 
         Ok(Self {
             config,

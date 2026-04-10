@@ -43,22 +43,22 @@ pub struct ArchivingContext {
 
 #[derive(Clone)]
 pub struct ArchiveBlueprint {
+    pub version: u8,
     pub paths: Vec<(String, PathBuf)>,
-    pub migrate_paths: Vec<(String, String)>,
 }
 
-impl<Dst, Src> FromIterator<(Dst, Src)> for ArchiveBlueprint
-where
-    Dst: ToString,
-    Src: AsRef<std::path::Path>,
-{
-    fn from_iter<T: IntoIterator<Item = (Dst, Src)>>(iter: T) -> Self {
+impl ArchiveBlueprint {
+    pub fn new<Dst, Src>(version: u8, paths: impl IntoIterator<Item = (Dst, Src)>) -> Self
+    where
+        Dst: ToString,
+        Src: AsRef<std::path::Path>,
+    {
         Self {
-            paths: iter
+            version,
+            paths: paths
                 .into_iter()
                 .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
                 .collect(),
-            migrate_paths: Vec::with_capacity(0),
         }
     }
 }
@@ -157,15 +157,19 @@ fn archive_writer<W: Write, D: AdditionalData>(
 ///   the rest of the server’s data and creates the backup file.
 pub(crate) fn archive<W: Write, D: AdditionalData>(
     blueprint: &ArchiveBlueprint,
-    version: u8,
     additional_data: Option<D>,
 ) -> ComposableStreamBuilder<impl FnOnce(W) -> Result<tar::Builder<W>, CreateBackupError>> {
     ComposableStreamBuilder {
         make: move |writer: W| {
             let mut builder: tar::Builder<_> = tar::Builder::new(writer);
 
-            add_metadata_file(&BackupInternalMetadata { version }, &mut builder)
-                .map_err(CreateBackupError::ArchivingFailed)?;
+            add_metadata_file(
+                &BackupInternalMetadata {
+                    version: blueprint.version,
+                },
+                &mut builder,
+            )
+            .map_err(CreateBackupError::ArchivingFailed)?;
 
             archive_writer(&mut builder, blueprint, additional_data)
                 .map_err(CreateBackupError::ArchivingFailed)?;
@@ -210,7 +214,6 @@ pub struct ExtractionOutput<'a> {
     pub blueprint: &'a ArchiveBlueprint,
 
     /// Metadata stored inside of the backup.
-    #[allow(dead_code)]
     pub(crate) metadata: BackupInternalMetadata,
 }
 
@@ -443,12 +446,11 @@ where
 
 impl std::fmt::Debug for ArchiveBlueprint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { version, paths } = self;
+
         f.debug_struct("ArchiveBlueprint")
-            .field("paths", &crate::util::fmt::AsMap(&self.paths))
-            .field(
-                "migrate_paths",
-                &crate::util::fmt::AsMap(&self.migrate_paths),
-            )
+            .field("version", version)
+            .field("paths", &crate::util::fmt::AsMap(paths))
             .finish()
     }
 }

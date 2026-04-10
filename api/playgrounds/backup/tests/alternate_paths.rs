@@ -49,15 +49,12 @@ async fn alternate_path_single_store() {
     .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> = make_test_certs([
@@ -71,6 +68,7 @@ async fn alternate_path_single_store() {
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |path| {
             certs
                 .get(path)
@@ -89,7 +87,6 @@ async fn alternate_path_single_store() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
@@ -148,19 +145,17 @@ async fn alternate_path_unknown_archive_entry_no_error() {
     };
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    let mut blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let mut blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -174,7 +169,6 @@ async fn alternate_path_unknown_archive_entry_no_error() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
@@ -230,15 +224,12 @@ async fn alternate_path_lost_signing_key() {
     };
     tracing::debug!("Parsed config: {backup_config:#?}");
 
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     println!();
     let certs: HashMap<PathBuf, openpgp::Cert> =
@@ -250,6 +241,7 @@ async fn alternate_path_lost_signing_key() {
     let mut service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |path| {
             certs
                 .get(path)
@@ -268,7 +260,6 @@ async fn alternate_path_lost_signing_key() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
@@ -327,8 +318,8 @@ async fn alternate_path_change_hashing_algorithm() {
         ..
     } = context;
 
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
@@ -353,14 +344,12 @@ async fn alternate_path_change_hashing_algorithm() {
             BackupConfig::try_from(toml).unwrap()
         };
 
-        let backup_version: u8 = 1;
-        let blueprints = BlueprintsBuilder::new()
-            .insert(backup_version, blueprint.clone())
-            .build();
+        let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
         let service = BackupService::from_config_custom(
             &backup_config,
             ArchivingContext { blueprints },
+            RestorationContext { migrations: vec![] },
             |_| unreachable!(),
             || unreachable!() as openpgp::policy::StandardPolicy,
         )
@@ -374,7 +363,6 @@ async fn alternate_path_change_hashing_algorithm() {
             let command = CreateBackupCommand {
                 prefix: "prose-backup",
                 description: "Test backup",
-                version: backup_version,
                 blueprint,
                 additional_archive_data: Option::<()>::None,
                 created_at,
@@ -412,4 +400,187 @@ async fn alternate_path_change_hashing_algorithm() {
         .restore_backup(&blake3_backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
+}
+
+/// Ensures backups can be restored even if they are older than one version old.
+/// Naive migrations could only support migrating from v1 to v2 fr example.
+/// This ensures one can migrate from v1 to v3.
+/// Note that this doesn’t test v3 to v1.
+#[tokio::test(flavor = "multi_thread")]
+async fn alternate_path_transitive_migrations() {
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
+
+    println!();
+    let backup_config = {
+        let mut toml = toml! {
+            [storage]
+            provider = "fs"
+            fs.directory = "store"
+        };
+
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
+
+        BackupConfig::try_from(toml).unwrap()
+    };
+    tracing::debug!("Parsed config: {backup_config:#?}");
+
+    let blueprints = BlueprintsBuilder::new()
+        .insert(
+            ArchiveBlueprint::new(
+                1,
+                [
+                    ("foo1-data", "foo1"),
+                    ("foo1-data.d", "foo1.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .insert(
+            ArchiveBlueprint::new(
+                2,
+                [
+                    ("foo2-data", "foo2"),
+                    ("foo2-data.d", "foo2.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .insert(
+            ArchiveBlueprint::new(
+                3,
+                [
+                    ("foo3-data", "foo3"),
+                    ("foo3-data.d", "foo3.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .insert(
+            ArchiveBlueprint::new(
+                4,
+                [
+                    ("foo4-data", "foo4"),
+                    ("foo4-data.d", "foo4.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .insert(
+            ArchiveBlueprint::new(
+                5,
+                [
+                    ("foo5-data", "foo5"),
+                    ("foo5-data.d", "foo5.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .insert(
+            ArchiveBlueprint::new(
+                6,
+                [
+                    ("foo6-data", "foo6"),
+                    ("foo6-data.d", "foo6.d"),
+                ],
+            )
+            .src_relative_to(&test_data_path),
+        )
+        .build();
+
+    create_files(
+        &test_data_path,
+        [
+            "foo2", "foo2.d/", "foo2.d/a",
+        ],
+    )
+    .unwrap();
+
+    let service = BackupService::from_config_custom(
+        &backup_config,
+        ArchivingContext {
+            blueprints: blueprints.clone(),
+        },
+        RestorationContext {
+            migrations: vec![
+                ArchiveMigration::new(
+                    2,
+                    [
+                        ("foo1-data", "foo2-data"),
+                        ("foo1-data.d", "foo2-data.d"),
+                    ],
+                ),
+                ArchiveMigration::new(
+                    3,
+                    [
+                        ("foo2-data", "foo3-data"),
+                        ("foo2-data.d", "foo3-data.d"),
+                    ],
+                ),
+                ArchiveMigration::new(
+                    4,
+                    [
+                        ("foo3-data", "foo4-data"),
+                        ("foo3-data.d", "foo4-data.d"),
+                    ],
+                ),
+                ArchiveMigration::new(
+                    5,
+                    [
+                        ("foo4-data", "foo5-data"),
+                        ("foo4-data.d", "foo5-data.d"),
+                    ],
+                ),
+            ],
+        },
+        |_| unreachable!(),
+        || -> openpgp::policy::StandardPolicy { unreachable!() },
+    )
+    .unwrap();
+
+    println!();
+    let CreateBackupSuccess {
+        output: creation_output,
+        ..
+    } = {
+        let command = CreateBackupCommand {
+            prefix: "prose-backup",
+            description: "Test backup",
+            blueprint: &blueprints.get(&2).unwrap(),
+            additional_archive_data: Option::<()>::None,
+            created_at: now - Duration::from_mins(90),
+        };
+        service
+            .create_backup(command, &mut NoopEventHandler)
+            .await
+            .unwrap()
+    };
+    let CreateBackupOutput { backup_id, .. } = creation_output;
+
+    // Restoring version 2 to 4 should work.
+    // NOTE: This has the side effect of ensuring we don’t apply unnecessary
+    //   migrations (1 to 2 and 4 to 5).
+    service
+        .restore_backup(
+            &backup_id,
+            blueprints.get(&4).unwrap(),
+            &mut NoopEventHandler,
+        )
+        .await
+        .unwrap();
+
+    // Restoring version 2 to 6 should fail because no migration is known
+    // from 5 to 6.
+    let res = service
+        .restore_backup(
+            &backup_id,
+            blueprints.get(&6).unwrap(),
+            &mut NoopEventHandler,
+        )
+        .await;
+    assert!(res.is_err());
 }

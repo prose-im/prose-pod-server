@@ -67,16 +67,12 @@ async fn s3_happy_path() {
     .unwrap();
 
     // Create blueprints.
-    let pod_api_demo_blueprint =
-        ArchiveBlueprint::from_iter(BLUEPRINT_PATHS_POD_API_DEMO.into_iter());
+    let pod_api_demo_blueprint = ArchiveBlueprint::new(1, BLUEPRINT_PATHS_POD_API_DEMO);
     let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
     let restore_blueprint = pod_api_demo_blueprint.src_relative_to(test_data_path.join("restore"));
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     let pgp_policy = openpgp::policy::StandardPolicy::new();
 
@@ -85,6 +81,7 @@ async fn s3_happy_path() {
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |path| {
             certs
                 .get(path)
@@ -110,7 +107,6 @@ async fn s3_happy_path() {
             CreateBackupCommand {
                 prefix: &test_id,
                 description: "Test backup",
-                version: backup_version,
                 blueprint: &blueprint,
                 additional_archive_data: Option::<()>::None,
                 created_at: now,
@@ -213,21 +209,19 @@ async fn s3_single_bucket_same_prefix() {
     tracing::debug!("Parsed config: {backup_config:#?}");
 
     // Create blueprints.
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     println!();
     tracing::info!("Create service");
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -248,7 +242,6 @@ async fn s3_single_bucket_same_prefix() {
             CreateBackupCommand {
                 prefix: &test_id,
                 description: "Test backup",
-                version: backup_version,
                 blueprint: &blueprint,
                 additional_archive_data: Option::<()>::None,
                 created_at: now,
@@ -381,14 +374,13 @@ async fn s3_object_locking() {
     };
 
     // Create blueprints.
-    let pod_api_demo_blueprint =
-        ArchiveBlueprint::from_iter(BLUEPRINT_PATHS_POD_API_DEMO.into_iter());
+    let pod_api_demo_blueprint = ArchiveBlueprint::new(1, BLUEPRINT_PATHS_POD_API_DEMO);
     let blueprint = pod_api_demo_blueprint
         .src_relative_to(format!("{prose_pod_api_dir}/local-run/scenarios/demo"));
 
     println!();
     tracing::info!("Create service");
-    let service = BackupService::from_config(&backup_config, HashMap::new()).unwrap();
+    let service = BackupService::from_config(&backup_config, HashMap::new(), Vec::new()).unwrap();
 
     // Store some values for later use.
     let backup_store = as_s3_store(&service.backup_store.inner());
@@ -406,7 +398,6 @@ async fn s3_object_locking() {
             CreateBackupCommand {
                 prefix: &test_id,
                 description: "Test backup",
-                version: 0,
                 blueprint: &blueprint,
                 additional_archive_data: Option::<()>::None,
                 created_at: now,

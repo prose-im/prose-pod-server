@@ -39,8 +39,8 @@ async fn scalability_large_files() {
     .unwrap();
     tracing::info!("Parsed config: {backup_config:#?}");
 
-    let blueprint = ArchiveBlueprint::from_iter([("foo-data", "foo")].into_iter())
-        .src_relative_to(&test_data_path);
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
 
     println!();
     tracing::info!("Creating test files…");
@@ -55,16 +55,14 @@ async fn scalability_large_files() {
         .unwrap();
     assert!(dd_status.success());
 
-    let backup_version: u8 = 1;
-    let blueprints = BlueprintsBuilder::new()
-        .insert(backup_version, blueprint.clone())
-        .build();
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
 
     println!();
     tracing::info!("Creating service…");
     let service = BackupService::from_config_custom(
         &backup_config,
         ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
         |_| unreachable!(),
         || -> openpgp::policy::StandardPolicy { unreachable!() },
     )
@@ -80,7 +78,6 @@ async fn scalability_large_files() {
         let command = CreateBackupCommand {
             prefix: "prose-backup",
             description: "Test backup",
-            version: backup_version,
             blueprint: &blueprint.clone(),
             additional_archive_data: Option::<()>::None,
             created_at: now - Duration::from_mins(90),
