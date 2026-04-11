@@ -7,11 +7,10 @@ use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
 
-use crate::auth::CallerInfo;
-use crate::models::jid::BareJid;
+use crate::models::{BareJid, CallerInfo};
 use crate::responders::Error;
 use crate::state::prelude::*;
-use crate::util::{NoPublicContext as _, PROSODY_JIDS_ARE_VALID};
+use crate::util::{NoContext as _, PROSODY_JIDS_ARE_VALID};
 
 pub async fn users_stats(
     State(AppState {
@@ -76,7 +75,7 @@ pub async fn list_admin_jids(
     let jids: Vec<String> = prosodyctl
         .user_get_jids_with_role(domain, "prosody:admin")
         .await
-        .no_public_context()?;
+        .no_context()?;
 
     // Release lock ASAP.
     drop(prosodyctl);

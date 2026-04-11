@@ -11,13 +11,13 @@ mod prelude {
     };
 
     pub(crate) use crate::state::prelude::*;
-    pub(crate) use crate::util::{NoPublicContext as _, PublicContext as _};
+    pub(crate) use crate::util::{Context as _, NoContext as _};
     pub(crate) use crate::{errors, responders};
 }
 
 use crate::{extractors::prelude::*, util::PROSODY_JIDS_ARE_VALID};
 
-impl<State: Send + Sync> FromRequestParts<State> for crate::auth::AuthToken {
+impl<State: Send + Sync> FromRequestParts<State> for crate::models::AuthToken {
     type Rejection = responders::Error;
 
     #[tracing::instrument(name = "req::auth::bearer", level = "trace", skip_all)]
@@ -51,7 +51,7 @@ impl<State: Send + Sync> FromRequestParts<State> for crate::auth::AuthToken {
 }
 
 impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
-    for crate::auth::CallerInfo
+    for crate::models::CallerInfo
 {
     type Rejection = responders::Error;
 
@@ -60,13 +60,12 @@ impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
         parts: &mut request::Parts,
         state: &AppState<F, backend::Running>,
     ) -> Result<Self, Self::Rejection> {
-        use crate::auth::AuthToken;
-        use crate::models::BareJid;
+        use crate::models::{AuthToken, BareJid};
         use std::str::FromStr as _;
 
         // NOTE: Ensures we store and read the same type (otherwise caching
         //   would be useless as Axum wouldn’t find the value).
-        type CachedValue = Result<crate::auth::CallerInfo, responders::Error>;
+        type CachedValue = Result<crate::models::CallerInfo, responders::Error>;
 
         // Read cache to avoid unnecessary recomputations.
         // NOTE: On a local run, this extractor seems to take around 5ms to run.
@@ -92,10 +91,9 @@ impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
             None => tracing::debug!("Cache miss."),
         }
 
-        // Get auth token from request.
+        // Get user info from auth token.
         let token = AuthToken::from_request_parts(parts, state).await?;
 
-        // Get user info from auth token.
         let ref state = state.backend.state;
         let res: CachedValue = match state.oauth2_client.userinfo(&token).await {
             Ok(res) => {
@@ -109,7 +107,7 @@ impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
                 let primary_role = prosodyctl
                     .user_role(jid.as_str(), None)
                     .await
-                    .no_public_context()?;
+                    .no_context()?;
 
                 drop(prosodyctl);
 
@@ -117,7 +115,7 @@ impl<F: frontend::State> FromRequestParts<AppState<F, backend::Running>>
 
                 Ok(caller_info)
             }
-            Err(err) => Err(err.public_context("OAUTH2_ERROR", "OAuth 2.0 error")),
+            Err(err) => Err(err.context("OAUTH2_ERROR", "OAuth 2.0 error")),
         };
 
         // Cache value to avoid recomputations next time.
