@@ -125,7 +125,7 @@ pub mod rand {
     #[must_use]
     #[inline]
     pub fn random_string_alphanumeric(length: usize) -> String {
-        use rand::{Rng as _, distr::Alphanumeric};
+        use rand::{RngExt as _, distr::Alphanumeric};
 
         // NOTE: Code taken from <https://rust-lang-nursery.github.io/rust-cookbook/algorithms/randomness.html#create-random-passwords-from-a-set-of-alphanumeric-characters>.
         rand::rng()
@@ -145,7 +145,7 @@ pub mod rand {
     #[must_use]
     #[inline]
     pub fn random_bytes<const N: usize>() -> [u8; N] {
-        use rand::RngCore as _;
+        use rand::Rng as _;
 
         let mut buf = [0u8; N];
         rand::rng().fill_bytes(&mut buf);
@@ -176,7 +176,7 @@ pub mod secrets {
     }
 
     pub fn random_oauth2_registration_key() -> SecretString {
-        use rand::RngCore as _;
+        use rand::Rng as _;
 
         let mut key = [0u8; 256];
         rand::rng().fill_bytes(&mut key);
