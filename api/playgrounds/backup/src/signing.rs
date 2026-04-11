@@ -20,7 +20,7 @@ pub struct SigningContext {
 
 pub use self::pgp::PgpSigningContext;
 pub mod pgp {
-    use std::{io::Write, time::SystemTime};
+    use std::{collections::HashMap, io::Write, time::SystemTime};
 
     use anyhow::Context as _;
     use composable_stream::ComposableStreamBuilder;
@@ -93,6 +93,7 @@ pub mod pgp {
     pub struct PgpSigningContext {
         pub tsk: openpgp::Cert,
         pub policy: Box<dyn openpgp::policy::Policy>,
+        pub passphrases: HashMap<openpgp::Fingerprint, openpgp::crypto::Password>,
     }
 
     impl PgpSigningContext {
@@ -106,7 +107,7 @@ pub mod pgp {
         {
             use openpgp::serialize::stream::{Message, Signer};
 
-            let keypair = (self.tsk)
+            let signing_keys = (self.tsk)
                 .keys()
                 // Validate keys and subkeys (check expiration, crypto algorithm…).
                 .with_policy(self.policy.as_ref(), Some(time))
@@ -116,20 +117,54 @@ pub mod pgp {
                 .revoked(false)
                 // Get only signing keys.
                 .for_signing()
-                .secret()
-                .next()
-                .context("No signing-capable secret key material")?
-                .key()
-                .to_owned()
-                .into_keypair()?;
+                .secret();
 
-            let message = Message::new(writer);
-            let signer = Signer::new(message, keypair)?
-                .detached()
-                .creation_time(time);
-            let message = signer.build()?;
+            'for_ka: for ka in signing_keys {
+                let key = ka.key();
+                let cert = ka.cert();
 
-            Ok(message)
+                let keypair = 'keypair: {
+                    if ka.key().secret().is_encrypted() {
+                        for fingerprint in [
+                            key.fingerprint(),
+                            cert.fingerprint(),
+                        ] {
+                            let Some(passphrase) = self.passphrases.get(&fingerprint) else {
+                                tracing::trace!("No passphrase found for key `{fingerprint}`.");
+                                continue;
+                            };
+
+                            tracing::trace!("Found passphrase for key `{fingerprint}`.");
+
+                            let decrypted_key = match key.clone().decrypt_secret(passphrase) {
+                                Ok(k) => k,
+                                Err(err) => {
+                                    tracing::trace!(
+                                        "Failed to decrypt key `{fingerprint}` with passphrase: {err}"
+                                    );
+                                    continue;
+                                }
+                            };
+
+                            break 'keypair decrypted_key.into_keypair()?;
+                        }
+
+                        continue 'for_ka;
+                    } else {
+                        key.clone().into_keypair()?
+                    }
+                };
+
+                let message = Message::new(writer);
+                let signer = Signer::new(message, keypair)?
+                    .detached()
+                    .creation_time(time);
+                let message = signer.build()?;
+
+                return Ok(message);
+            }
+
+            Err(anyhow::Error::msg("No signing-capable secret key material"))
         }
     }
 }

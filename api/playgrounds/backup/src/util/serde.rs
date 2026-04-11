@@ -3,7 +3,7 @@
 // Copyright: 2026, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use serde::{Deserialize as _, Deserializer};
+use serde::{Deserialize as _, Deserializer, de};
 
 /// `std::time::Duration` in [ISO 8601 Duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations).
 pub mod iso8601_duration {
@@ -80,6 +80,49 @@ pub mod s3 {
             {
                 super::deserialize(deserializer).map(Some)
             }
+        }
+    }
+}
+
+pub mod pgp {
+    use super::*;
+
+    pub mod passphrases {
+        use std::collections::HashMap;
+
+        use super::*;
+
+        pub fn deserialize<'de, D>(
+            deserializer: D,
+        ) -> Result<HashMap<openpgp::Fingerprint, openpgp::crypto::Password>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            struct V;
+
+            impl<'de> de::Visitor<'de> for V {
+                type Value = HashMap<openpgp::Fingerprint, openpgp::crypto::Password>;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a map of fingerprint strings to passphrase strings")
+                }
+
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<Self::Value, A::Error> {
+                    let mut out = HashMap::new();
+                    while let Some((k, v)) = map.next_entry::<String, String>()? {
+                        let fingerprint = k
+                            .parse::<openpgp::Fingerprint>()
+                            .map_err(de::Error::custom)?;
+                        out.insert(fingerprint, openpgp::crypto::Password::from(v));
+                    }
+                    Ok(out)
+                }
+            }
+
+            deserializer.deserialize_map(V)
         }
     }
 }

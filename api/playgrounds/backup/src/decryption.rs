@@ -91,6 +91,8 @@ where
 
 pub use self::pgp::*;
 pub mod pgp {
+    use std::collections::HashMap;
+
     use anyhow::Context as _;
     use openpgp::{
         crypto::SessionKey, packet::prelude::*, parse::Parse as _, parse::stream::*,
@@ -105,11 +107,13 @@ pub mod pgp {
     pub struct PgpDecryptionContext {
         pub tsks: Vec<openpgp::Cert>,
         pub policy: Box<dyn openpgp::policy::Policy>,
+        pub passphrases: HashMap<openpgp::Fingerprint, openpgp::crypto::Password>,
     }
 
     struct PgpDecryptionHelper<'a, EventHandler> {
         tsks: &'a [openpgp::Cert],
         policy: &'a dyn openpgp::policy::Policy,
+        passphrases: &'a HashMap<openpgp::Fingerprint, openpgp::crypto::Password>,
         time: std::time::SystemTime,
         event_handler: &'a mut EventHandler,
     }
@@ -126,6 +130,7 @@ pub mod pgp {
         let helper = PgpDecryptionHelper {
             tsks: context.tsks.as_slice(),
             policy: context.policy.as_ref(),
+            passphrases: &context.passphrases,
             time: (*created_at).into(),
             event_handler,
         };
@@ -143,7 +148,6 @@ pub mod pgp {
     {
         // NOTE: Inspired by [`DecryptionHelper`] docs.
         // TODO: Improve by looking at <https://gitlab.com/sequoia-pgp/sequoia-sq/-/blob/main/lib/src/decrypt.rs#L770> too.
-        // TODO: Add support for encrypted secrets (passphrase-protected).
         fn decrypt(
             &mut self,
             pkesks: &[PKESK],
@@ -151,30 +155,87 @@ pub mod pgp {
             sym_algo: Option<SymmetricAlgorithm>,
             decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
         ) -> Result<Option<openpgp::Cert>, anyhow::Error> {
-            // Try unencrypted secret keys (not passphrase-protected).
-            for pkesk in pkesks {
-                let Some(recipient) = pkesk.recipient() else {
-                    if cfg!(debug_assertions) {
-                        panic!("Prose backups should not contain PKESKs with no recipient.");
-                    }
-                    continue;
-                };
-
-                if let Some((cert, key)) =
-                    lookup_secret_key(&recipient, self.tsks, self.policy, self.time)
-                {
-                    if !key.secret().is_encrypted() {
-                        let mut keypair = key.clone().into_keypair()?;
-                        tracing::trace!("Trying encryption key: `{key}`.");
-                        if pkesk
-                            .decrypt(&mut keypair, sym_algo)
-                            .map(|(algo, sk)| decrypt(algo, &sk))
-                            .unwrap_or(false)
-                        {
-                            tracing::trace!("Found encryption key: `{key}`.");
-                            self.event_handler.used_cert_and_subkey(&cert, &key);
-                            return Ok(Some(cert));
+            // Collect recipients upfront to avoid repeated lookups.
+            let recipients = pkesks
+                .iter()
+                .filter_map(|pkesk| {
+                    let Some(recipient) = pkesk.recipient() else {
+                        if cfg!(debug_assertions) {
+                            panic!("Prose backups should not contain PKESKs with no recipient.");
                         }
+                        return None;
+                    };
+                    let (cert, key) =
+                        lookup_secret_key(&recipient, self.tsks, self.policy, self.time)?;
+                    Some((pkesk, cert, key))
+                })
+                .collect::<Vec<_>>();
+
+            // First pass: try unencrypted (no passphrase) secret keys.
+            for (pkesk, cert, key) in recipients.iter() {
+                if key.secret().is_encrypted() {
+                    continue;
+                }
+
+                let mut keypair = key.clone().into_keypair()?;
+                tracing::trace!("Trying unencrypted key: `{key}`.");
+
+                if pkesk
+                    .decrypt(&mut keypair, sym_algo)
+                    .map(|(algo, sk)| decrypt(algo, &sk))
+                    .unwrap_or(false)
+                {
+                    tracing::trace!("Decrypting with unencrypted key: `{key}`.");
+                    self.event_handler.used_cert_and_subkey(cert, key);
+                    return Ok(Some(cert.clone()));
+                }
+            }
+
+            // Second pass: try passphrase-protected secret keys.
+            for (pkesk, cert, key) in recipients.iter() {
+                if !key.secret().is_encrypted() {
+                    continue; // Already tried above.
+                }
+
+                for fingerprint in [
+                    key.fingerprint(),
+                    cert.fingerprint(),
+                ] {
+                    let Some(passphrase) = self.passphrases.get(&fingerprint) else {
+                        tracing::trace!("No passphrase found for fingerprint `{fingerprint}`.");
+                        continue;
+                    };
+
+                    tracing::trace!("Found passphrase for fingerprint `{fingerprint}`.");
+
+                    let decrypted_key = match key.clone().decrypt_secret(passphrase) {
+                        Ok(k) => k,
+                        Err(err) => {
+                            tracing::trace!(
+                                "Failed to decrypt key `{fingerprint}` with passphrase: {err}"
+                            );
+                            continue;
+                        }
+                    };
+
+                    let mut keypair = match decrypted_key.into_keypair() {
+                        Ok(kp) => kp,
+                        Err(err) => {
+                            tracing::trace!("Failed to build keypair from `{key}`: {err}");
+                            continue;
+                        }
+                    };
+
+                    tracing::trace!("Trying passphrase-protected key: `{key}`.");
+
+                    if pkesk
+                        .decrypt(&mut keypair, sym_algo)
+                        .map(|(algo, sk)| decrypt(algo, &sk))
+                        .unwrap_or(false)
+                    {
+                        tracing::trace!("Decrypting with passphrase-protected key: `{key}`.");
+                        self.event_handler.used_cert_and_subkey(cert, key);
+                        return Ok(Some(cert.clone()));
                     }
                 }
             }

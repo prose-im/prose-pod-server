@@ -16,7 +16,19 @@ use openpgp::{
     types::ReasonForRevocation,
 };
 
+#[inline]
 pub fn make_test_certs<C>(certs: C) -> Result<HashMap<PathBuf, openpgp::Cert>, anyhow::Error>
+where
+    C: IntoIterator<Item = (&'static str, SystemTime)>,
+    C::IntoIter: ExactSizeIterator,
+{
+    make_test_certs_custom(certs, |cert| cert)
+}
+
+pub fn make_test_certs_custom<C>(
+    certs: C,
+    update: impl Fn(CertBuilder) -> CertBuilder + Copy,
+) -> Result<HashMap<PathBuf, openpgp::Cert>, anyhow::Error>
 where
     C: IntoIterator<Item = (&'static str, SystemTime)>,
     C::IntoIter: ExactSizeIterator,
@@ -28,7 +40,7 @@ where
     for (path, created_at) in iter {
         res.insert(
             Path::new(path).to_path_buf(),
-            generate_test_cert(created_at)?,
+            generate_test_cert(created_at, update)?,
         );
     }
 
@@ -49,20 +61,23 @@ pub fn save_certs(test_data_path: impl AsRef<Path>, certs: &HashMap<PathBuf, ope
     }
 }
 
-pub fn generate_test_cert(created_at: SystemTime) -> Result<openpgp::Cert, anyhow::Error> {
+pub fn generate_test_cert(
+    created_at: SystemTime,
+    update: impl Fn(CertBuilder) -> CertBuilder,
+) -> Result<openpgp::Cert, anyhow::Error> {
     use openpgp::cert::CertBuilder;
     use std::time::Duration;
 
     let validity = Duration::from_hours(24);
 
     // Build a TSK with user ID + primary key + subkey
-    let (mut tsk, _signature) = CertBuilder::new()
+    let cert_builder = CertBuilder::new()
         .add_userid("Test User <test@example.org>")
         .set_creation_time(created_at)
         .set_validity_period(validity)
         .add_signing_subkey()
-        .add_storage_encryption_subkey()
-        .generate()?;
+        .add_storage_encryption_subkey();
+    let (mut tsk, _signature) = update(cert_builder).generate()?;
     tracing::debug!(
         "Created TSK `{tsk}` valid from {} to {}.",
         time::UtcDateTime::from(created_at),

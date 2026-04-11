@@ -584,3 +584,164 @@ async fn alternate_path_transitive_migrations() {
         .await;
     assert!(res.is_err());
 }
+
+/// Ensures the library supports passphrase-protected OpenPGP secret keys.
+#[tokio::test(flavor = "multi_thread")]
+async fn alternate_path_openpgp_encrypted_secret_key() {
+    let context = init();
+    let TestContext {
+        now,
+        ref test_data_path,
+        ..
+    } = context;
+
+    println!();
+    let cert_password = "password";
+    let cert = generate_test_cert(now - Duration::from_hours(23), |cert| {
+        cert.set_password(Some(cert_password.into()))
+    })
+    .unwrap();
+    let certs: HashMap<PathBuf, openpgp::Cert> =
+        [("tsk.pgp".into(), cert.clone())].into_iter().collect();
+    save_certs(test_data_path, &certs);
+
+    println!();
+    let backup_config = {
+        let pgp_passphrases = [(cert.fingerprint().to_string(), cert_password)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let mut toml = toml! {
+            [encryption]
+            mode = "pgp"
+            pgp.tsk = "tsk.pgp"
+
+            [signing]
+            mandatory = false
+            pgp.enabled = true
+            pgp.tsk = "tsk.pgp"
+
+            [storage]
+            provider = "fs"
+            fs.directory = "store"
+
+            [pgp]
+            // WARN: In a real app, pass this via environment variables!
+            passphrases = pgp_passphrases
+        };
+
+        map_storage_directories_in_test_dir(&mut toml, test_data_path).unwrap();
+
+        BackupConfig::try_from(toml).unwrap()
+    };
+    tracing::debug!("Parsed config: {backup_config:#?}");
+
+    let blueprint =
+        ArchiveBlueprint::new(1, [("foo-data", "foo")]).src_relative_to(&test_data_path);
+
+    create_files(&test_data_path, ["foo/", "foo/a"]).unwrap();
+
+    let blueprints = BlueprintsBuilder::new().insert(blueprint.clone()).build();
+
+    let pgp_policy = openpgp::policy::StandardPolicy::new();
+
+    let mut service = BackupService::from_config_custom(
+        &backup_config,
+        ArchivingContext { blueprints },
+        RestorationContext { migrations: vec![] },
+        |path| {
+            certs
+                .get(path)
+                .cloned()
+                .ok_or(anyhow!("Unknown cert: `{}`.", path.display()))
+        },
+        || pgp_policy.clone(),
+    )
+    .unwrap();
+
+    // Test backup creation (happy path).
+    println!();
+    let backup_id = service
+        .create_backup(
+            CreateBackupCommand {
+                prefix: "prose-backup",
+                description: "Test backup",
+                blueprint: &blueprint.clone(),
+                additional_archive_data: Option::<()>::None,
+                created_at: now - Duration::from_mins(90),
+            },
+            &mut NoopEventHandler,
+        )
+        .await
+        .unwrap()
+        .output
+        .backup_id;
+
+    // Test error on signing if passhrase missing.
+    {
+        println!();
+        let pw = service
+            .signing_context
+            .pgp
+            .as_mut()
+            .unwrap()
+            .passphrases
+            .remove(&cert.fingerprint())
+            .unwrap();
+
+        let res = service
+            .create_backup(
+                CreateBackupCommand {
+                    prefix: "prose-backup",
+                    description: "Test backup 2",
+                    blueprint: &blueprint.clone(),
+                    additional_archive_data: Option::<()>::None,
+                    created_at: now - Duration::from_mins(90),
+                },
+                &mut NoopEventHandler,
+            )
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            format!("{:#}", res.err().unwrap()),
+            "Cannot sign".to_owned()
+        );
+
+        service
+            .signing_context
+            .pgp
+            .as_mut()
+            .unwrap()
+            .passphrases
+            .insert(cert.fingerprint(), pw);
+    }
+
+    // Test error on restoration if passhrase missing.
+    {
+        println!();
+        let pw = service
+            .decryption_context
+            .pgp
+            .as_mut()
+            .unwrap()
+            .passphrases
+            .remove(&cert.fingerprint())
+            .unwrap();
+
+        let res = service
+            .restore_backup(&backup_id, &blueprint.clone(), &mut NoopEventHandler)
+            .await;
+        assert!(res.is_err());
+        assert_eq!(
+            format!("{:#}", res.err().unwrap()),
+            "Extraction failed".to_owned()
+        );
+
+        service
+            .decryption_context
+            .pgp
+            .as_mut()
+            .unwrap()
+            .passphrases
+            .insert(cert.fingerprint(), pw);
+    }
+}

@@ -447,6 +447,7 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
         service.decryption_context.pgp = Some(PgpDecryptionContext {
             tsks: vec![pgp_cert],
             policy: Box::new(pgp_policy.clone()),
+            passphrases: HashMap::new(),
         });
     }
 

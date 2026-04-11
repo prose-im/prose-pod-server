@@ -7,6 +7,8 @@
 //!
 //! See [`BackupConfig`].
 
+use std::collections::HashMap;
+
 use figment::Figment;
 
 pub use crate::util::BytesAmount;
@@ -50,6 +52,10 @@ pub use crate::util::BytesAmount;
 /// // Path to the Transferable Secret Key to use when signing new backups.
 /// // This TSK MUST contain private key material suitable for signing.
 /// pgp.tsk = "/path/to/prose-backup.asc"
+/// // Configure passphrases via environment variables.
+/// // You can use the certificate’s fingerprint or the subkey’s.
+/// // pgp.passphrases.<fingerprint_1> = "example"
+/// // pgp.passphrases.<fingerprint_2> = "example"
 /// // Optional. Use if you changed the primary key instead of rotating subkeys.
 /// // Those SHOULD NOT contain private key material.
 /// pgp.additional_trusted_issuers = ["/path/to/prose-backup-old.pub.asc"]
@@ -64,6 +70,10 @@ pub use crate::util::BytesAmount;
 /// // This TSK MUST contain private key material suitable for storage
 /// // encryption (as it’s the one used when decrypting).
 /// pgp.tsk = "/path/to/prose-backup.asc"
+/// // Configure passphrases via environment variables.
+/// // You can use the certificate’s fingerprint or the subkey’s.
+/// // pgp.passphrases.<fingerprint_1> = "example"
+/// // pgp.passphrases.<fingerprint_2> = "example"
 /// // Optional. Use if you changed the primary key instead of rotating subkeys.
 /// // Those MUST contain private key material.
 /// pgp.additional_decryption_keys = ["/path/to/prose-backup-old.asc"]
@@ -129,13 +139,18 @@ pub struct BackupConfig {
     pub caching: CachingConfig,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
+    #[doc(hidden)]
+    pub pgp: AlwaysNone,
+
+    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
+    /// (we can’t remove keys in `figment`).
     #[cfg(feature = "provider_s3")]
     #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[cfg(feature = "provider_fs")]
     #[doc(hidden)]
     pub fs: AlwaysNone,
@@ -269,6 +284,14 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
             .remove("storage.provider");
     }
 
+    // Move `pgp` to `(encryption|signing).pgp`.
+    if let Ok(default) = figment.extract_inner::<figment::value::Value>("pgp") {
+        figment = figment
+            .merge(Serialized::default("encryption.pgp", default.clone()))
+            .merge(Serialized::default("signing.pgp", default))
+            .remove("pgp");
+    }
+
     Ok(figment)
 }
 
@@ -336,10 +359,14 @@ pub struct SigningPgpConfig {
     pub tsk: std::path::PathBuf,
 
     #[serde(default)]
+    #[serde(with = "crate::util::serde::pgp::passphrases")]
+    pub passphrases: HashMap<openpgp::Fingerprint, openpgp::crypto::Password>,
+
+    #[serde(default)]
     pub additional_trusted_issuers: Vec<std::path::PathBuf>,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[doc(hidden)]
     pub enabled: AlwaysNone,
 }
@@ -361,10 +388,15 @@ pub enum EncryptionConfig {
 }
 
 #[derive(Debug, Clone)]
+#[serde_with::serde_as]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EncryptionPgpConfig {
     pub tsk: std::path::PathBuf,
+
+    #[serde(default)]
+    #[serde(with = "crate::util::serde::pgp::passphrases")]
+    pub passphrases: HashMap<openpgp::Fingerprint, openpgp::crypto::Password>,
 
     #[serde(default)]
     pub additional_decryption_keys: Vec<std::path::PathBuf>,
@@ -373,7 +405,7 @@ pub struct EncryptionPgpConfig {
     pub additional_recipients: Vec<std::path::PathBuf>,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[doc(hidden)]
     pub enabled: AlwaysNone,
 }
@@ -389,18 +421,18 @@ pub struct StorageConfig {
     pub checks: StorageSubconfig,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[doc(hidden)]
     pub provider: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[cfg(feature = "provider_s3")]
     #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in figment).
+    /// (we can’t remove keys in `figment`).
     #[cfg(feature = "provider_fs")]
     #[doc(hidden)]
     pub fs: AlwaysNone,

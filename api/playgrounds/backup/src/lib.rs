@@ -260,6 +260,7 @@ impl BackupService {
                 Some(PgpSigningContext {
                     tsk: pgp_cert,
                     policy: Box::new(pgp_policy()),
+                    passphrases: pgp.passphrases.clone(),
                 })
             }
             None => None,
@@ -289,6 +290,7 @@ impl BackupService {
             decryption_context.pgp = Some(PgpDecryptionContext {
                 tsks: vec![pgp_cert],
                 policy: Box::new(pgp_policy()),
+                passphrases: pgp.passphrases.clone(),
             });
         }
 
