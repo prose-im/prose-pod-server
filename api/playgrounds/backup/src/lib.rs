@@ -546,6 +546,8 @@ mod create {
             )
             .build(upload_backup)?;
 
+        let delete_guard = BackupAutoDeleteGuard::new(service, &backup_id);
+
         let compression_writer = archive_writer
             // NOTE: Flushes the stream if needed.
             .into_inner()
@@ -619,6 +621,8 @@ mod create {
         let elapsed = start.elapsed();
         tracing::info!("Created backup {backup_id:?} ({size_bytes}B) in {elapsed:?}.");
         event_handler.on_backup_uploaded(&backup_id, size_bytes, elapsed);
+
+        delete_guard.defuse();
 
         // Construct the response.
         Ok(CreateBackupSuccess {
@@ -797,6 +801,52 @@ mod create {
 
         #[error(transparent)]
         Other(anyhow::Error),
+    }
+
+    struct BackupAutoDeleteGuard<'a> {
+        service: &'a BackupService,
+        // NOTE: It’d be nice to take ownership to force defusing the guard to
+        //   get back ownership and create the `CreateBackupOutput` but:
+        //   1. Without using a separate module, one could still access this
+        //      field without using the defuser;
+        //   2. It would be a bit annoying to handle lifetimes in the current
+        //      implementation of `create_backup`
+        //   3. The compiler warns if the guard is unused, ensuring we don’t
+        //      forget about defusing it.
+        //   Since this code is internal, let’s just not care about it.
+        backup_id: Option<&'a BackupId>,
+    }
+
+    impl<'a> BackupAutoDeleteGuard<'a> {
+        fn new(service: &'a BackupService, backup_id: &'a BackupId) -> Self {
+            Self {
+                service,
+                backup_id: Some(backup_id),
+            }
+        }
+
+        fn defuse(mut self) {
+            std::mem::take(&mut self.backup_id);
+        }
+    }
+
+    impl<'a> Drop for BackupAutoDeleteGuard<'a> {
+        fn drop(&mut self) {
+            let Some(backup_id) = std::mem::take(&mut self.backup_id) else {
+                return;
+            };
+
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(async move {
+                    match self.service.delete_backup(backup_id).await {
+                        Ok(_) => tracing::info!("Cleaned up backup `{backup_id}`."),
+                        Err(err) => {
+                            tracing::error!("Failed cleaning up backup `{backup_id}`: {err:#}")
+                        }
+                    }
+                })
+            })
+        }
     }
 }
 

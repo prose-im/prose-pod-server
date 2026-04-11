@@ -8,7 +8,7 @@ None.
 
 Medium priority (unordered):
 
-- Backups remain partially uploaded if an integrity check upload fails.
+None.
 
 Low priority (unordered):
 

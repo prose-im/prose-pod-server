@@ -9,6 +9,7 @@ pub mod blueprints;
 pub mod event_handlers;
 pub mod fs;
 pub mod lifecycle;
+pub mod limited_store;
 pub mod pgp;
 pub mod print;
 #[cfg(feature = "provider_s3")]
