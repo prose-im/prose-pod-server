@@ -97,7 +97,7 @@ impl ObjectStore for FsStore {
             "File name should not start with a `/`"
         );
         // Safety check: Do not allow unsafe permission bits.
-        assert!(self.mode & 0o117 == 0);
+        assert!(self.mode & 0o117 == 0, "{:#o} & 0o117 != 0", self.mode);
 
         let path = self.directory.join(file_name);
 

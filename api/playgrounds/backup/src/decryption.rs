@@ -99,7 +99,7 @@ pub mod pgp {
         types::SymmetricAlgorithm,
     };
 
-    use crate::pgp::lookup_secret_key;
+    use crate::{pgp::lookup_secret_key, util::debug_panic_or_log_error};
 
     use super::DecryptionEventHandler;
 
@@ -160,9 +160,9 @@ pub mod pgp {
                 .iter()
                 .filter_map(|pkesk| {
                     let Some(recipient) = pkesk.recipient() else {
-                        if cfg!(debug_assertions) {
-                            panic!("Prose backups should not contain PKESKs with no recipient.");
-                        }
+                        debug_panic_or_log_error!(
+                            "Prose backups should not contain PKESKs with no recipient."
+                        );
                         return None;
                     };
                     let (cert, key) =
