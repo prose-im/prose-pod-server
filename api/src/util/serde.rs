@@ -40,3 +40,21 @@ pub mod null_as_some_none {
         Deserialize::deserialize(deserializer).map(Some)
     }
 }
+
+pub mod backup_config_opt {
+    use super::*;
+
+    /// Returns `None` instead of an error is backup storage not defined.
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<prose_backup::BackupConfig>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match prose_backup::BackupConfig::deserialize(deserializer) {
+            Ok(config) => Ok(Some(config)),
+            Err(err) if err.to_string().contains("missing field `storage`") => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+}

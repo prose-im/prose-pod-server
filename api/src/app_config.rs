@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::anyhow;
 use figment::Figment;
+use prose_backup::BackupConfig;
 use serde::Deserialize;
 
 pub const API_CONFIG_DIR: &'static str = "/etc/prose";
@@ -55,11 +56,15 @@ fn default_config_static() -> Figment {
 
     let true_in_debug = cfg!(debug_assertions);
 
+    let backups_default = prose_backup::config::default_config_static();
+
     let random_oauth2_registration_key: SecretString =
         crate::util::random_oauth2_registration_key();
     let random_oauth2_registration_key: &str = random_oauth2_registration_key.expose_secret();
 
     let static_defaults = toml! {
+        backups = backups_default
+
         [teams]
         main_team_name = DEFAULT_MAIN_TEAM_NAME
 
@@ -165,6 +170,16 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfigu
             format!("https://admin.{pod_domain}"),
         ));
     }
+
+    // Apply backups defaults.
+    let backups = prose_backup::config::with_dynamic_defaults(figment.focus("backups"))
+        .map_err(|err| InvalidConfiguration(anyhow::Error::from(err)))?;
+    let backups_value = backups.extract::<figment::value::Value>()?;
+    figment = figment
+        // NOTE: `Figment::merge` merges objects which does not remove
+        //   existing keys. Merging `()` first does the trick.
+        .merge(Serialized::default("backups", figment::value::Empty::Unit))
+        .merge(Serialized::default("backups", backups_value));
 
     // Apply analytics presets.
     if let Ok(preset_name) = figment.extract_inner::<String>("vendor_analytics.preset") {
@@ -325,6 +340,8 @@ pub(crate) struct AppConfig {
     pub policies: PoliciesConfig,
     pub proxy: ProxyConfig,
     pub server: ServerConfig,
+    #[serde(with = "crate::util::serde::backup_config_opt")]
+    pub backups: Option<BackupConfig>,
     pub server_api: ServerApiConfig,
     pub service_accounts: ServiceAccountsConfig,
     pub teams: TeamsConfig,
