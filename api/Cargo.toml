@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "playgrounds/*"]
-exclude = ["crates/backup"]
+members = ["crates/*"]
 
 [package]
 name = "prose-pod-server"
@@ -32,6 +31,7 @@ init-tracing-opentelemetry = { git = "https://github.com/RemiBardon/rust-tracing
 iso8601-duration = { version = "=0.2.0", default-features = false, features = ["serde"] }
 jid = { version = "=0.11.1", default-features = false, features = ["serde"] }
 media-type-detect = { path = "crates/media-type-detect" }
+prose-backup = { package = "backup", path = "crates/backup", features = ["crypto-nettle"] }
 prosody-child-process = { path = "crates/prosody-child-process" }
 prosody-http = { path = "crates/prosody-http", features = ["secrecy", "mod_http_oauth2"] }
 prosody-rest = { path = "crates/prosody-rest" }

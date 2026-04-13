@@ -1,5 +1,5 @@
-[workspace]
-members = ["crates/*"]
+# [workspace]
+# members = ["crates/*"]
 
 [package]
 name = "backup"
@@ -16,8 +16,8 @@ async-trait = { version = "0.1", default-features = false }
 bytes = { version = "1", default-features = false, features = ["std"] }
 figment = { version = "0.10", default-features = false }
 iso8601-duration = { version = "0.2", default-features = false, features = ["serde"] }
-json = { version = "1", default-features = false, package = "serde_json", features = ["std"] }
-openpgp = { version = "2", default-features = false, package = "sequoia-openpgp", features = ["crypto-nettle"] }
+json = { package = "serde_json", version = "1", default-features = false, features = ["std"] }
+openpgp = { package = "sequoia-openpgp", version = "2", default-features = false }
 ouroboros = { version = "0.18", default-features = false }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
@@ -41,7 +41,7 @@ composable-stream = { path = "./crates/composable-stream" }
 
 # Optional dependencies.
 blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
-s3 = { optional = true, version = "1", default-features = false, package = "aws-sdk-s3", features = [
+s3 = { optional = true, package = "aws-sdk-s3", version = "1", default-features = false, features = [
     "default-https-client",
     "rt-tokio",
     "rustls",
@@ -58,7 +58,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 name = "prose_backup"
 
 [features]
-default = ["zstd", "blake3", "provider_s3"]
+default = ["zstd", "blake3", "provider_s3", "crypto-nettle"]
 test = ["figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
 all_providers = ["provider_fs", "provider_s3"]
@@ -67,6 +67,12 @@ provider_s3 = ["dep:s3"]
 blake3 = ["dep:blake3"]
 sha2 = ["dep:sha2"]
 zstd = ["dep:zstd"]
+crypto-nettle = ["openpgp/crypto-nettle"]
+crypto-openssl = ["openpgp/crypto-openssl"]
+crypto-botan = ["openpgp/crypto-botan"]
+crypto-botan2 = ["openpgp/crypto-botan2"]
+crypto-rust = ["openpgp/crypto-rust"]
+crypto-cng = ["openpgp/crypto-cng"]
 
 [[test]]
 name = "alternate_paths"
