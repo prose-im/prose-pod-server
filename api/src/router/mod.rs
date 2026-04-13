@@ -27,6 +27,7 @@ use crate::state::prelude::*;
 pub(crate) use self::health::HealthTrait;
 
 /// Base router that’s always active. Routes defined here will always be available.
+#[rustfmt::skip]
 pub fn with_base_routes(
     frontend: impl frontend::State,
     backend: impl backend::State,
@@ -61,25 +62,17 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
         "Operational"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::new()
             .route("/init/first-account", put(init::init_first_account))
             .route("/users-util/stats", get(users_util::users_stats))
             .route("/users-util/admin-jids", get(users_util::list_admin_jids))
             .route("/users-util/self", get(users_util::self_user_info))
-            .route(
-                "/invitations-util/stats",
-                get(invitations_util::invitations_stats),
-            )
-            .route(
-                "/lifecycle/frontend-reload",
-                post(lifecycle::frontend_reload),
-            )
+            .route("/invitations-util/stats", get(invitations_util::invitations_stats))
+            .route("/lifecycle/frontend-reload", post(lifecycle::frontend_reload))
             .route("/lifecycle/backend-reload", post(lifecycle::backend_reload))
-            .route(
-                "/lifecycle/backend-restart",
-                post(lifecycle::backend_restart),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_restart))
             .route("/lifecycle/reload", post(lifecycle::reload))
             .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
             .route(
@@ -88,14 +81,8 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
                     .post(analytics::proxy_analytics_event)
                     .fallback(cloud_api_proxy::proxy_cloud_api),
             )
-            .route(
-                "/cloud-api-proxy/{*path}",
-                any(cloud_api_proxy::proxy_cloud_api),
-            )
-            .route(
-                "/prose-files-proxy/{*path}",
-                any(prose_files_proxy::proxy_prose_files),
-            )
+            .route("/cloud-api-proxy/{*path}", any(cloud_api_proxy::proxy_cloud_api))
+            .route("/prose-files-proxy/{*path}", any(prose_files_proxy::proxy_prose_files))
             .merge(workspace::router())
             .with_state(self)
     }
@@ -115,14 +102,12 @@ impl AppStateTrait for AppState<f::Running, b::Starting> {
         "Starting"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
             // NOTE: Keep `/lifecycle/backend-restart` available just in case
             //   an internal error happened and we ended up stuck in this state.
-            .route(
-                "/lifecycle/backend-restart",
-                post(lifecycle::backend_start_again),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_start_again))
             .fallback(backend_health)
             .with_state(self)
     }
@@ -142,14 +127,12 @@ impl AppStateTrait for AppState<f::Running, b::Restarting> {
         "Restarting"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
             // NOTE: Keep `/lifecycle/backend-restart` available just in case
             //   an internal error happened and we ended up stuck in this state.
-            .route(
-                "/lifecycle/backend-restart",
-                post(lifecycle::backend_restart_again),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_restart_again))
             .fallback(backend_health)
             .with_state(self)
     }
@@ -169,12 +152,10 @@ impl AppStateTrait for AppState<f::Running, b::RestartFailed> {
         "Restart failed"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
-            .route(
-                "/lifecycle/backend-restart",
-                post(lifecycle::backend_restart_retry),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_restart_retry))
             .fallback(backend_health)
             .with_state(self)
     }
@@ -201,6 +182,7 @@ impl AppStateTrait for AppState<f::RunningWithMisconfiguration, b::Running> {
         "Running with misconfiguration"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::new()
             .route("/lifecycle/reload", post(lifecycle::reload))
@@ -223,6 +205,7 @@ impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryR
         "Undergoing factory reset"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::new().fallback(frontend_health).with_state(self)
     }
@@ -242,6 +225,7 @@ impl AppStateTrait for AppState<f::Misconfigured, b::Stopped> {
         "Configuration needed"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::new()
             .route("/lifecycle/reload", post(lifecycle::init_config))
@@ -264,12 +248,10 @@ impl AppStateTrait for AppState<f::Running, b::StartFailed> {
         "Start failed"
     }
 
+    #[rustfmt::skip]
     fn into_router(self) -> axum::Router {
         Router::<Self>::new()
-            .route(
-                "/lifecycle/backend-restart",
-                post(lifecycle::backend_start_retry),
-            )
+            .route("/lifecycle/backend-restart", post(lifecycle::backend_start_retry))
             .fallback(backend_health)
             .with_state(self)
     }
