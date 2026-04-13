@@ -14,10 +14,10 @@ use std::io::Write;
 use crate::config::{self, HashingConfig};
 
 pub(crate) enum DigestWriter {
-    #[cfg(feature = "blake3")]
+    #[cfg(feature = "hashing-blake3")]
     Blake3(blake3::Hasher),
 
-    #[cfg(feature = "sha2")]
+    #[cfg(feature = "hashing-sha2")]
     Sha256(sha2::Sha256),
 }
 
@@ -26,9 +26,9 @@ pub(crate) fn digest(hashing_config: &HashingConfig) -> DigestWriter {
     //   1. It does not make much sense to create multiple digests
     //   2. We ensure there is always at least one
     match hashing_config.algorithm {
-        #[cfg(feature = "blake3")]
+        #[cfg(feature = "hashing-blake3")]
         config::HashingAlgorithm::Blake3 => DigestWriter::Blake3(blake3::Hasher::new()),
-        #[cfg(feature = "sha2")]
+        #[cfg(feature = "hashing-sha2")]
         config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(sha2::Sha256::default()),
     }
 }
@@ -36,18 +36,18 @@ pub(crate) fn digest(hashing_config: &HashingConfig) -> DigestWriter {
 impl Write for DigestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            #[cfg(feature = "blake3")]
+            #[cfg(feature = "hashing-blake3")]
             Self::Blake3(writer) => writer.write(buf),
-            #[cfg(feature = "sha2")]
+            #[cfg(feature = "hashing-sha2")]
             Self::Sha256(writer) => writer.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            #[cfg(feature = "blake3")]
+            #[cfg(feature = "hashing-blake3")]
             Self::Blake3(writer) => writer.flush(),
-            #[cfg(feature = "sha2")]
+            #[cfg(feature = "hashing-sha2")]
             Self::Sha256(writer) => writer.flush(),
         }
     }
@@ -56,9 +56,9 @@ impl Write for DigestWriter {
 impl DigestWriter {
     pub fn finalize(self) -> Vec<u8> {
         match self {
-            #[cfg(feature = "blake3")]
+            #[cfg(feature = "hashing-blake3")]
             Self::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
-            #[cfg(feature = "sha2")]
+            #[cfg(feature = "hashing-sha2")]
             Self::Sha256(hasher) => sha2::Digest::finalize(hasher).to_vec(),
         }
     }

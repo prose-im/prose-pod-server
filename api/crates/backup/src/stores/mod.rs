@@ -6,9 +6,9 @@
 //! Data stores.
 
 mod cache;
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 pub mod fs;
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 pub mod s3;
 
 pub mod prelude {
@@ -19,10 +19,10 @@ pub mod prelude {
 }
 
 pub use self::cache::{CachedStore, StoreCache};
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 pub use self::fs::FsStore;
 use self::prelude::*;
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 pub use self::s3::S3Store;
 
 #[async_trait::async_trait]

@@ -6,7 +6,7 @@ tasks:
   doc:open:
     desc: Build and open Cargo docs.
     aliases: [doc]
-    cmd: cargo doc --no-deps -F all_providers --lib --open
+    cmd: cargo doc --no-deps -F storage-all --lib --open
 
   example:list:
     desc: List available examples.
@@ -39,8 +39,8 @@ tasks:
     desc: Run syntax checks.
     cmds:
       - cargo check --lib --locked
-      - cargo check --lib --locked --no-default-features -F provider_fs -F blake3
-      - cargo check --lib --locked --no-default-features -F provider_fs -F sha2
+      - cargo check --lib --locked --no-default-features -F compression-zstd,openpgp-crypto-nettle,hashing-blake3,storage-fs
+      - cargo check --lib --locked --no-default-features -F compression-zstd,openpgp-crypto-nettle,hashing-sha2,storage-fs
 
   check:examples:
     desc: Run syntax checks for examples.
@@ -88,7 +88,7 @@ tasks:
     desc: Check test coverage using `cargo-llvm-cov`.
     aliases: [cov]
     cmds:
-      - cargo llvm-cov --html -F test,provider_fs,zstd,blake3,sha2{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - cargo llvm-cov --html -F test,storage-fs,compression-all,hashing-all,openpgp-crypto-nettle{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - task: cov:llvm-cov:open
     dotenv: [test.env]
 
@@ -102,7 +102,7 @@ tasks:
   cov:tarpaulin:
     desc: Check test coverage using `cargo-tarpaulin`.
     cmds:
-      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,provider_fs,zstd,blake3,sha2{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,storage-fs,compression-all,hashing-all,openpgp-crypto-nettle{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
       - task: cov:tarpaulin:open
     dotenv: [test.env]
 
@@ -114,7 +114,7 @@ tasks:
     desc: Run CI tests (doesn’t test S3).
     cmds:
       - task: lint
-      - cargo test --locked --lib --tests --all-features -- --skip s3
+      - cargo test --locked --lib --tests -F test,compression-all,hashing-all,storage-all,openpgp-crypto-nettle -- --skip s3
       - cargo test --locked --doc -p backup
       - cargo test --locked --doc -p composable-stream -F doc
       - task: check:release
@@ -142,7 +142,7 @@ tasks:
         msg: "Install `cargo-watch` using `cargo install cargo-watch`."
     cmds:
       - task: doc:open
-      - cmd: cargo watch -x 'doc --no-deps -F all_providers --lib'
+      - cmd: cargo watch -x 'doc --no-deps -F compression-all,hashing-all,storage-all --lib'
 
   util:cleanup-test-artifacts:
     internal: true

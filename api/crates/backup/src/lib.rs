@@ -21,8 +21,8 @@
 //! }
 //! ```
 
-#[cfg(all(not(feature = "blake3"), not(feature = "sha2")))]
-compile_error!("One of feature “blake3” or “sha2” must be enabled.");
+#[cfg(all(not(feature = "hashing-blake3"), not(feature = "hashing-sha2")))]
+compile_error!("One of feature “hashing-blake3” or “hashing-sha2” must be enabled.");
 
 pub mod archiving;
 mod compression;
@@ -295,17 +295,17 @@ impl BackupService {
         }
 
         let backup_store: Box<dyn ObjectStore> = match config.storage.backups {
-            #[cfg(feature = "provider_s3")]
+            #[cfg(feature = "storage-s3")]
             config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
-            #[cfg(feature = "provider_fs")]
+            #[cfg(feature = "storage-fs")]
             config::StorageSubconfig::Fs { ref config } => {
                 Box::new(FsStore::try_from_config(config, 0o600)?)
             }
         };
         let check_store: Box<dyn ObjectStore> = match config.storage.checks {
-            #[cfg(feature = "provider_s3")]
+            #[cfg(feature = "storage-s3")]
             config::StorageSubconfig::S3 { ref config } => Box::new(S3Store::from_config(config)),
-            #[cfg(feature = "provider_fs")]
+            #[cfg(feature = "storage-fs")]
             config::StorageSubconfig::Fs { ref config } => {
                 Box::new(FsStore::try_from_config(config, 0o600)?)
             }
@@ -499,7 +499,7 @@ mod create {
 
         let mut extensions: Vec<Box<str>> = vec![Box::from("tar")];
         match &service.compression_config {
-            #[cfg(feature = "zstd")]
+            #[cfg(feature = "compression-zstd")]
             CompressionConfig::Zstd { .. } => extensions.push(Box::from("zst")),
             CompressionConfig::Off => {}
         }
@@ -576,9 +576,9 @@ mod create {
 
         // Upload digest.
         let digest_id = match service.hashing_config.algorithm {
-            #[cfg(feature = "blake3")]
+            #[cfg(feature = "hashing-blake3")]
             crate::config::HashingAlgorithm::Blake3 => raw_backup_id.with_extension("blake3"),
-            #[cfg(feature = "sha2")]
+            #[cfg(feature = "hashing-sha2")]
             crate::config::HashingAlgorithm::Sha256 => raw_backup_id.with_extension("sha256"),
         };
         upload_integrity_check(

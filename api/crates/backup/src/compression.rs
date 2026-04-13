@@ -14,7 +14,7 @@ use crate::CreateBackupError;
 use crate::config::CompressionConfig;
 
 pub(crate) enum CompressionWriter<'a, W: Write> {
-    #[cfg(feature = "zstd")]
+    #[cfg(feature = "compression-zstd")]
     Zstd(zstd::Encoder<'a, W>),
 
     Off {
@@ -29,7 +29,7 @@ pub(crate) fn compress<'a, W: Write>(
 {
     ComposableStreamBuilder {
         make: move |writer: W| match config {
-            #[cfg(feature = "zstd")]
+            #[cfg(feature = "compression-zstd")]
             CompressionConfig::Zstd { config } => {
                 match zstd::Encoder::new(writer, config.compression_level) {
                     Ok(encoder) => Ok(CompressionWriter::Zstd(encoder)),
@@ -50,7 +50,7 @@ pub(crate) fn compress<'a, W: Write>(
 impl<'a, W: Write> Write for CompressionWriter<'a, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            #[cfg(feature = "zstd")]
+            #[cfg(feature = "compression-zstd")]
             Self::Zstd(encoder) => encoder.write(buf),
 
             Self::Off { writer, .. } => writer.write(buf),
@@ -59,7 +59,7 @@ impl<'a, W: Write> Write for CompressionWriter<'a, W> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            #[cfg(feature = "zstd")]
+            #[cfg(feature = "compression-zstd")]
             Self::Zstd(encoder) => encoder.flush(),
 
             Self::Off { writer, .. } => writer.flush(),
@@ -70,7 +70,7 @@ impl<'a, W: Write> Write for CompressionWriter<'a, W> {
 impl<'a, W: Write> CompressionWriter<'a, W> {
     pub fn finalize(self) -> Result<W, anyhow::Error> {
         match self {
-            #[cfg(feature = "zstd")]
+            #[cfg(feature = "compression-zstd")]
             Self::Zstd(encoder) => encoder.finish().map_err(anyhow::Error::new),
 
             Self::Off { writer, .. } => Ok(writer),

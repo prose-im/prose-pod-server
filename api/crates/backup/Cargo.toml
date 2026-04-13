@@ -58,50 +58,52 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 name = "prose_backup"
 
 [features]
-default = ["zstd", "blake3", "provider_s3", "crypto-nettle"]
+default = ["compression-zstd", "openpgp-crypto-nettle", "hashing-blake3", "storage-s3"]
 test = ["figment/toml", "toml/display"]
 example = ["figment/env", "figment/toml", "toml/display"]
-all_providers = ["provider_fs", "provider_s3"]
-provider_fs = []
-provider_s3 = ["dep:s3"]
-blake3 = ["dep:blake3"]
-sha2 = ["dep:sha2"]
-zstd = ["dep:zstd"]
-crypto-nettle = ["openpgp/crypto-nettle"]
-crypto-openssl = ["openpgp/crypto-openssl"]
-crypto-botan = ["openpgp/crypto-botan"]
-crypto-botan2 = ["openpgp/crypto-botan2"]
-crypto-rust = ["openpgp/crypto-rust"]
-crypto-cng = ["openpgp/crypto-cng"]
+compression-all = ["compression-zstd"]
+compression-zstd = ["dep:zstd"]
+hashing-all = ["hashing-blake3", "hashing-sha2"]
+hashing-blake3 = ["dep:blake3"]
+hashing-sha2 = ["dep:sha2"]
+openpgp-crypto-botan = ["openpgp/crypto-botan"]
+openpgp-crypto-botan2 = ["openpgp/crypto-botan2"]
+openpgp-crypto-cng = ["openpgp/crypto-cng"]
+openpgp-crypto-nettle = ["openpgp/crypto-nettle"]
+openpgp-crypto-openssl = ["openpgp/crypto-openssl"]
+openpgp-crypto-rust = ["openpgp/crypto-rust"]
+storage-all = ["storage-fs", "storage-s3"]
+storage-fs = []
+storage-s3 = ["dep:s3"]
 
 [[test]]
 name = "alternate_paths"
-required-features = ["test", "provider_fs", "blake3", "sha2"]
+required-features = ["test", "storage-fs", "hashing-blake3", "hashing-sha2", "openpgp-crypto-nettle"]
 
 [[test]]
 name = "correctness"
-required-features = ["test", "provider_fs", "blake3"]
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
 
 [[test]]
 name = "error_paths"
-required-features = ["test", "provider_fs", "blake3"]
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
 
 [[test]]
 name = "happy_paths"
-required-features = ["test", "zstd", "provider_fs", "blake3"]
+required-features = ["test", "compression-zstd", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
 
 [[test]]
 name = "s3"
-required-features = ["test", "provider_s3", "blake3"]
+required-features = ["test", "storage-s3", "hashing-blake3", "openpgp-crypto-nettle"]
 
 [[test]]
 name = "scalability"
-required-features = ["test", "provider_fs", "blake3"]
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
 
 [[bench]]
 name = "backup"
 harness = false
-required-features = ["zstd", "provider_fs", "blake3", "sha2"]
+required-features = ["compression-zstd", "storage-fs", "hashing-blake3", "hashing-sha2", "openpgp-crypto-nettle"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

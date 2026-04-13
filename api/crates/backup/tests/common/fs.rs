@@ -86,7 +86,7 @@ pub fn create_files<P: AsRef<Path>>(
 }
 
 // Map directories into test temporary directory, and create it.
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 pub fn map_storage_directories_in_test_dir(
     config_toml: &mut toml::Table,
     test_data_path: impl AsRef<std::path::Path>,

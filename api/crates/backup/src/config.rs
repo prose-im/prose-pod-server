@@ -145,13 +145,13 @@ pub struct BackupConfig {
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in `figment`).
-    #[cfg(feature = "provider_s3")]
+    #[cfg(feature = "storage-s3")]
     #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in `figment`).
-    #[cfg(feature = "provider_fs")]
+    #[cfg(feature = "storage-fs")]
     #[doc(hidden)]
     pub fs: AlwaysNone,
 }
@@ -161,9 +161,9 @@ pub struct BackupConfig {
 pub fn default_config_static() -> toml::Table {
     use toml::toml;
 
-    #[cfg(feature = "blake3")]
+    #[cfg(feature = "hashing-blake3")]
     let default_hashing_algorithm = "BLAKE3";
-    #[cfg(all(not(feature = "blake3"), feature = "sha2"))]
+    #[cfg(all(not(feature = "hashing-blake3"), feature = "hashing-sha2"))]
     let default_hashing_algorithm = "SHA-256";
 
     let cache_dir = tempfile::env::temp_dir().display().to_string();
@@ -193,14 +193,14 @@ pub fn default_config_static() -> toml::Table {
         cache_dir = cache_dir
     };
 
-    #[cfg(feature = "zstd")]
+    #[cfg(feature = "compression-zstd")]
     static_defaults.extend(toml! {
         [compression]
         algorithm = "zstd"
         zstd.compression_level = 3
     });
 
-    #[cfg(feature = "provider_fs")]
+    #[cfg(feature = "storage-fs")]
     static_defaults.extend(toml! {
         [storage.backups]
         fs.overwrite = false
@@ -301,7 +301,7 @@ pub fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, Box<figmen
 #[derive(serde::Deserialize)]
 #[serde(tag = "algorithm")]
 pub enum CompressionConfig {
-    #[cfg(feature = "zstd")]
+    #[cfg(feature = "compression-zstd")]
     #[serde(rename = "zstd", alias = "Zstandard")]
     Zstd {
         #[serde(rename = "zstd")]
@@ -331,11 +331,11 @@ pub struct HashingConfig {
 #[derive(Debug, Clone, Copy)]
 #[derive(serde::Deserialize)]
 pub enum HashingAlgorithm {
-    #[cfg(feature = "blake3")]
+    #[cfg(feature = "hashing-blake3")]
     #[serde(rename = "BLAKE3")]
     Blake3,
 
-    #[cfg(feature = "sha2")]
+    #[cfg(feature = "hashing-sha2")]
     #[serde(rename = "SHA-256")]
     Sha256,
 }
@@ -427,13 +427,13 @@ pub struct StorageConfig {
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in `figment`).
-    #[cfg(feature = "provider_s3")]
+    #[cfg(feature = "storage-s3")]
     #[doc(hidden)]
     pub s3: AlwaysNone,
 
     /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
     /// (we can’t remove keys in `figment`).
-    #[cfg(feature = "provider_fs")]
+    #[cfg(feature = "storage-fs")]
     #[doc(hidden)]
     pub fs: AlwaysNone,
 }
@@ -442,14 +442,14 @@ pub struct StorageConfig {
 #[derive(serde::Deserialize)]
 #[serde(tag = "provider")]
 pub enum StorageSubconfig {
-    #[cfg(feature = "provider_s3")]
+    #[cfg(feature = "storage-s3")]
     #[serde(rename = "s3", alias = "S3")]
     S3 {
         #[serde(rename = "s3")]
         config: StorageS3Config,
     },
 
-    #[cfg(feature = "provider_fs")]
+    #[cfg(feature = "storage-fs")]
     #[serde(rename = "fs")]
     Fs {
         #[serde(rename = "fs")]
@@ -457,7 +457,7 @@ pub enum StorageSubconfig {
     },
 }
 
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -489,7 +489,7 @@ pub struct StorageS3Config {
     pub object_lock_legal_hold_status: Option<s3::types::ObjectLockLegalHoldStatus>,
 }
 
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -503,7 +503,7 @@ pub struct S3ObjectLockConfig {
     pub duration: std::time::Duration,
 }
 
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 #[derive(Debug, Clone)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -671,9 +671,9 @@ mod tests {
             "missing field `provider` for key \"default.storage.backups\" in TOML source string"
         );
 
-        #[cfg(feature = "provider_s3")]
+        #[cfg(feature = "storage-s3")]
         let (provider, missing_field, supported) = ("s3", "s3", "one of `S3`, `s3`, `fs`");
-        #[cfg(not(feature = "provider_s3"))]
+        #[cfg(not(feature = "storage-s3"))]
         let (provider, missing_field, supported) = ("fs", "directory", "`fs`");
 
         assert_error!(

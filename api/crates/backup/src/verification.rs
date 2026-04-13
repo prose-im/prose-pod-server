@@ -216,7 +216,7 @@ impl BackupService {
             return Err(VerificationError::BackupNotSigned);
         }
 
-        #[cfg(feature = "blake3")]
+        #[cfg(feature = "hashing-blake3")]
         'blake3_check: {
             let check_name = backup_id.with_extension("blake3");
 
@@ -298,7 +298,7 @@ impl BackupService {
             return Ok(VerificationOutput { backup_path });
         }
 
-        #[cfg(feature = "sha2")]
+        #[cfg(feature = "hashing-sha2")]
         'sha256_check: {
             use sha2::{Digest as _, Sha256};
 

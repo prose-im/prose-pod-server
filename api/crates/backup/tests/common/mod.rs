@@ -12,7 +12,7 @@ pub mod lifecycle;
 pub mod limited_store;
 pub mod pgp;
 pub mod print;
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 pub mod s3;
 
 #[allow(unused_imports)]

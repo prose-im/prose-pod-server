@@ -295,7 +295,7 @@ where
         &mut decryption_report,
     )?;
 
-    #[cfg(feature = "zstd")]
+    #[cfg(feature = "compression-zstd")]
     let archive_reader: Box<dyn std::io::Read> = if backup_id.extensions.contains(&Box::from("zst"))
     {
         let decoder = zstd::Decoder::new(archive_reader).context("Cannot decompress")?;

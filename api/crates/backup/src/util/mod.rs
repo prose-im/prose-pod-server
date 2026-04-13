@@ -6,19 +6,19 @@
 pub mod fmt;
 mod fs;
 mod measurements;
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 mod octal;
 pub mod serde;
 pub mod tar;
 
 pub use self::fs::*;
 pub use self::measurements::BytesAmount;
-#[cfg(feature = "provider_fs")]
+#[cfg(feature = "storage-fs")]
 pub use self::octal::Octal;
 
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.
-#[cfg(any(feature = "provider_s3", test))]
+#[cfg(any(feature = "storage-s3", test))]
 pub fn saturating_i64_to_u64(value: i64) -> u64 {
     value.max(0) as u64
 }
@@ -78,7 +78,7 @@ pub(crate) use assert_impl;
 
 /// While waiting for <https://github.com/rust-lang/rust/commit/e1424588bd6c0865d1b3425e8f67c93554733d4e>
 /// to make it to a stable release.
-#[cfg(feature = "provider_s3")]
+#[cfg(feature = "storage-s3")]
 pub fn get_or_try_insert<T, E>(
     opt: &mut Option<T>,
     f: impl FnOnce() -> Result<T, E>,
