@@ -12,7 +12,7 @@ use crate::{BackupId, RestoreBackupEventHandler};
 
 pub(crate) use self::RestorationContext as Context;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct RestorationContext {
     /// WARN: This `Vec` MUST always be sorted.
     pub migrations: Vec<ArchiveMigration>,

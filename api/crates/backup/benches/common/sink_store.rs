@@ -6,6 +6,7 @@
 use prose_backup::stores::prelude::*;
 
 /// Store which doesn’t store data. Just dismisses it.
+#[derive(Debug)]
 pub struct SinkStore;
 
 #[async_trait::async_trait]

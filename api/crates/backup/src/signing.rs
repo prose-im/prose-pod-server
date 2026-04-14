@@ -12,7 +12,7 @@
 pub(crate) use self::SigningContext as Context;
 
 #[non_exhaustive]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SigningContext {
     pub is_signing_mandatory: bool,
     pub pgp: Option<PgpSigningContext>,
@@ -165,6 +165,23 @@ pub mod pgp {
             }
 
             Err(anyhow::Error::msg("No signing-capable secret key material"))
+        }
+    }
+
+    impl std::fmt::Debug for PgpSigningContext {
+        #[inline]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self {
+                tsk,
+                policy,
+                passphrases,
+            } = self;
+
+            f.debug_struct("PgpSigningContext")
+                .field("tsk", &tsk.fingerprint())
+                .field("policy", &policy)
+                .field("passphrases", &passphrases.keys())
+                .finish()
         }
     }
 }

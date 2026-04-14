@@ -338,6 +338,7 @@ pub mod dtos {
     use crate::{BackupId, verification::PgpSignatureReport};
 
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct BackupDto<Metadata> {
         /// Unique identifier (file name / object key) of the backup.
         ///
@@ -354,9 +355,11 @@ pub mod dtos {
     }
 
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct BackupMetadataPartialDto {
         /// UTC timestamp at which the backup was created.
-        pub created_at: time::UtcDateTime,
+        #[serde(with = "time::serde::rfc3339")]
+        pub created_at: time::OffsetDateTime,
 
         /// Size of the backup, in bytes.
         pub size_bytes: u64,
@@ -387,9 +390,11 @@ pub mod dtos {
     /// [`BackupMetadataPartialDto`] with additional data that requires
     /// expensive computation.
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct BackupMetadataFullDto {
         /// UTC timestamp at which the backup was created.
-        pub created_at: time::UtcDateTime,
+        #[serde(with = "time::serde::rfc3339")]
+        pub created_at: time::OffsetDateTime,
 
         /// Size of the backup, in bytes.
         pub size_bytes: u64,
@@ -442,6 +447,7 @@ pub mod dtos {
 
     /// Information about a key used to sign a backup.
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct SigningKeyReportDto {
         /// Unique fingerprint of the signing key.
         ///
@@ -737,6 +743,7 @@ mod create {
     impl<'a, H: CreateBackupEventHandler> WriterStats for BackupStatsReader<'a, H> {}
 
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct CreateBackupOutput {
         /// Unique identifier (file name / object key) of the backup.
         ///
@@ -756,8 +763,11 @@ mod create {
     }
 
     #[derive(Debug)]
+    #[derive(serde::Serialize)]
     pub struct CreateBackupSuccess {
         pub backup: BackupDto<BackupMetadataPartialDto>,
+
+        #[serde(flatten)]
         pub output: CreateBackupOutput,
     }
 
@@ -950,7 +960,7 @@ mod read {
 
             dtos.push(BackupDto {
                 metadata: BackupMetadataPartialDto {
-                    created_at: backup_id.created_at,
+                    created_at: backup_id.created_at.into(),
                     size_bytes: backup.size_bytes,
                     is_signed,
                     is_encrypted,
@@ -1021,7 +1031,7 @@ mod read {
 
         let dto = BackupDto {
             metadata: BackupMetadataFullDto {
-                created_at: backup_id.created_at,
+                created_at: backup_id.created_at.into(),
                 size_bytes: metadata.size_bytes,
                 is_signed,
                 is_encrypted,
@@ -1401,6 +1411,21 @@ mod backup_id {
         }
     }
 
+    impl serde::Serialize for BackupId {
+        #[inline]
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.to_string().serialize(serializer)
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for BackupId {
+        #[inline]
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let string = String::deserialize(deserializer)?;
+            Self::parse(&string).map_err(serde::de::Error::custom)
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         #[test]
@@ -1426,5 +1451,40 @@ mod backup_id {
 
             Ok(())
         }
+    }
+}
+
+// MARK: - Boilerplate
+
+impl std::fmt::Debug for BackupService {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            archiving_context,
+            compression_config,
+            hashing_config,
+            encryption_context,
+            signing_context,
+            verification_context,
+            decryption_context,
+            restoration_context,
+            download_config,
+            backup_store,
+            check_store,
+        } = self;
+
+        f.debug_struct("BackupService")
+            .field("archiving_context", archiving_context)
+            .field("compression_config", compression_config)
+            .field("hashing_config", hashing_config)
+            .field("encryption_context", encryption_context)
+            .field("signing_context", signing_context)
+            .field("verification_context", verification_context)
+            .field("decryption_context", decryption_context)
+            .field("restoration_context", restoration_context)
+            .field("download_config", download_config)
+            .field("backup_store", backup_store)
+            .field("check_store", check_store)
+            .finish()
     }
 }

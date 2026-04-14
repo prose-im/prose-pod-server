@@ -624,3 +624,27 @@ impl Read for S3Reader {
         }
     }
 }
+
+// MARK: - Boilerplate
+
+impl std::fmt::Debug for S3Store {
+    #[rustfmt::skip]
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            client,
+            bucket,
+            prefix,
+            object_lock,
+            object_lock_legal_hold_status,
+        } = self;
+
+        f.debug_struct("S3Store")
+            .field("client", client)
+            .field("bucket", bucket)
+            .field("prefix", prefix)
+            .field("object_lock", object_lock)
+            .field("object_lock_legal_hold_status", object_lock_legal_hold_status)
+            .finish()
+    }
+}

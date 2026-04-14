@@ -37,6 +37,7 @@ pub mod errors {
     }
 }
 
+#[derive(Debug)]
 pub struct ArchivingContext {
     pub blueprints: HashMap<u8, ArchiveBlueprint>,
 }

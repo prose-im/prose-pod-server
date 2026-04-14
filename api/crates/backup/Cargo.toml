@@ -25,7 +25,7 @@ serde_with = { version = "3", default-features = false, features = ["macros"] }
 tar = { version = "0.4", default-features = false }
 tempfile = { version = "3", default-features = false }
 thiserror = { version = "2", default-features = false }
-time = { version = "0.3", default-features = false, features = ["formatting", "std"] }
+time = { version = "0.3", default-features = false, features = ["formatting", "std", "serde"] }
 tracing = { version = "0.1", default-features = false }
 tokio = { version = "1", default-features = false, features = [
     "io-util",

@@ -26,7 +26,7 @@ use self::prelude::*;
 pub use self::s3::S3Store;
 
 #[async_trait::async_trait]
-pub trait ObjectStore: Send + Sync {
+pub trait ObjectStore: std::fmt::Debug + Send + Sync {
     async fn writer(&self, key: &str) -> Result<Box<DynObjectWriter>, anyhow::Error>;
 
     /// Returns `None` if key does not exist.
@@ -213,5 +213,12 @@ impl std::str::FromStr for ObjectId {
     #[inline]
     fn from_str(str: &str) -> Result<Self, Self::Err> {
         Ok(Self(str.to_owned()))
+    }
+}
+
+impl serde::Serialize for ObjectId {
+    #[inline]
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
     }
 }

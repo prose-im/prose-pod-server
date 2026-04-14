@@ -335,7 +335,7 @@ impl From<BackupDto<BackupMetadataPartialDto>> for BackupEntryModel {
             description: dto.description,
             is_signed: dto.metadata.is_signed,
             is_encrypted: dto.metadata.is_encrypted,
-            created_at: dto.metadata.created_at,
+            created_at: dto.metadata.created_at.into(),
             size_bytes: dto.metadata.size_bytes,
         }
     }
@@ -349,7 +349,7 @@ impl From<BackupDto<BackupMetadataFullDto>> for BackupDetailsModel {
             description: dto.description,
             is_signed: dto.metadata.is_signed,
             is_encrypted: dto.metadata.is_encrypted,
-            created_at: dto.metadata.created_at,
+            created_at: dto.metadata.created_at.into(),
             size_bytes: dto.metadata.size_bytes,
         }
     }

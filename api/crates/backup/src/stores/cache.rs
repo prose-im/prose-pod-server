@@ -266,7 +266,7 @@ where
 #[async_trait::async_trait]
 impl<S> ObjectStore for CachedStore<S>
 where
-    S: std::ops::Deref + Send + Sync,
+    S: std::ops::Deref + std::fmt::Debug + Send + Sync,
     S::Target: ObjectStore,
 {
     #[inline]
@@ -404,5 +404,28 @@ impl std::ops::Deref for SizeRef {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+// MARK: - Boilerplate
+
+impl<S> std::fmt::Debug for CachedStore<S>
+where
+    S: std::fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            store,
+            cache: _,
+            max_cache_size_bytes,
+            cache_dir,
+        } = self;
+
+        f.debug_struct("CachedStore")
+            .field("store", store)
+            .field("max_cache_size_bytes", max_cache_size_bytes)
+            .field("cache_dir", cache_dir)
+            .finish_non_exhaustive()
     }
 }

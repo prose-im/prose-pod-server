@@ -7,6 +7,7 @@ use prose_backup::stores::{Finalizable, ObjectWriter, prelude::*};
 
 /// A store that only allows writing a certain amount of bytes. This is useful
 /// to test failure cases.
+#[derive(Debug)]
 pub struct LimitedStore {
     inner: Box<dyn ObjectStore>,
     limit: u64,

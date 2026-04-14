@@ -23,7 +23,7 @@ pub(crate) use self::VerificationContext as Context;
 const MAX_PGP_SIGNATURE_LENGTH: u64 = 2 * 1024;
 
 #[non_exhaustive]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct VerificationContext {
     pub pgp: Option<PgpVerificationContext>,
 }
@@ -429,7 +429,6 @@ pub mod pgp {
         }
     }
 
-    #[derive(Debug)]
     pub struct PgpVerificationContext {
         pub certs: Arc<Vec<openpgp::Cert>>,
         pub policy: Box<dyn openpgp::policy::Policy>,
@@ -586,6 +585,19 @@ pub mod pgp {
             }
 
             Ok(())
+        }
+    }
+
+    impl std::fmt::Debug for PgpVerificationContext {
+        #[rustfmt::skip]
+        #[inline]
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self { certs, policy } = self;
+
+            f.debug_struct("PgpVerificationContext")
+                .field("certs", &certs.iter().map(openpgp::Cert::fingerprint).collect::<Vec<_>>())
+                .field("policy", policy)
+                .finish()
         }
     }
 }
