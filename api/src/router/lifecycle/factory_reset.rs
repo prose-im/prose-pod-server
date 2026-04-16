@@ -78,15 +78,17 @@ impl<F: frontend::State, B: backend::State> AppState<F, B> {
     >
     where
         F: Into<f::Restarting>,
-        B: Into<b::UndergoingFactoryReset> + AsRef<b::Operational> + Clone,
+        B: AsRef<b::Operational> + Clone,
     {
         tracing::info!("Performing factory reset…");
         let start = Instant::now();
 
         let backend = self.backend.clone();
 
-        let app_state: AppState<f::Restarting, b::UndergoingFactoryReset> =
-            self.with_auto_transition();
+        let app_state: AppState<f::Restarting, b::UndergoingFactoryReset> = self
+            // NOTE: Prosody will be stopped in `Self::factory_reset`.
+            .with_backend(b::UndergoingFactoryReset {})
+            .with_auto_transition();
 
         if let Err(error) = Self::factory_reset(backend).await {
             tracing::error!("Factory reset failed: {error:?}");

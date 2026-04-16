@@ -417,12 +417,10 @@ pub mod backend {
 
     // MARK: Restarting
 
-    #[derive(Debug, Clone)]
-    pub struct BackendRestarting {
-        pub state: Arc<Operational>,
-    }
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendRestarting {}
 
-    state_boilerplate!(BackendRestarting, Deref(state: Operational), AsRef(state: Arc<Operational>));
+    state_boilerplate!(BackendRestarting);
 
     impl BackendStateTrait for BackendRestarting {}
 
@@ -430,7 +428,6 @@ pub mod backend {
 
     #[derive(Debug, Clone)]
     pub struct BackendRestartFailed {
-        pub state: Arc<Operational>,
         pub error: crate::responders::Error,
     }
 
@@ -460,16 +457,14 @@ pub mod backend {
 
     impl_fail_state_from_pair!((BackendStarting => BackendStartFailed, &'a crate::responders::Error) use error);
 
-    impl_trivial_transition!(BackendRunning => BackendRestarting);
-    impl_trivial_transition!(BackendRunning => default BackendUndergoingFactoryReset);
     impl_fail_state_from_pair!((BackendRunning, &'a crate::responders::Error) use left);
 
-    impl_trivial_transition!(BackendRestarting => BackendRunning);
-    impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a crate::responders::Error) use both);
+    impl_fail_state_from_pair!((BackendRestarting => BackendRestartFailed, &'a crate::responders::Error) use error);
 
-    impl_trivial_transition!(BackendRestartFailed => BackendRestarting);
+    impl_trivial_transition!(BackendRestartFailed => default BackendRestarting);
 
     impl_trivial_transition!(BackendStopped => default BackendStarting);
+    impl_trivial_transition!(BackendStopped => default BackendRestarting);
     impl_fail_state_from_pair!((BackendStopped, &'a crate::responders::Error) use left);
 
     impl_trivial_transition!(BackendStartFailed => default BackendStarting);

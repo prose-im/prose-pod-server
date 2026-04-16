@@ -3,8 +3,6 @@
 // Copyright: 2025, Rémi Bardon <remi@remibardon.name>
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
-use std::sync::Arc;
-
 use axum::extract::State;
 
 use crate::errors;
@@ -36,7 +34,17 @@ pub(in crate::router) async fn backend_start_retry(
 pub(in crate::router) async fn backend_restart(
     State(app_state): State<AppState<f::Running, b::Running>>,
 ) -> Result<(), Error> {
-    match app_state.do_restart_backend().await {
+    // Stop Prosody.
+    {
+        let mut prosody = app_state.backend.prosody.write().await;
+        prosody.stop().await.unwrap();
+    }
+
+    match app_state
+        .with_backend(b::Restarting {})
+        .do_restart_backend()
+        .await
+    {
         Ok(_) => Ok(()),
 
         Err(Either::E1(FailState { error, .. }) | Either::E2(FailState { error, .. })) => {
@@ -92,54 +100,20 @@ impl<B: backend::State> AppState<f::Running, B> {
         Either<FailState<f::Running, b::Running>, FailState<f::Running, b::RestartFailed>>,
     >
     where
-        B: AsRef<Arc<b::Operational>> + Into<b::Restarting> + Into<b::Running>,
+        B: Into<b::Restarting>,
     {
-        let backend_state = Arc::clone(self.backend.as_ref());
-        let mut prosody = backend_state.prosody.write().await;
-
-        if prosody.is_running().await {
-            if let Err(err) = prosody.stop().await {
-                let error = err
-                    .context("Could not stop Prosody")
-                    .context("Backend restart failed");
-
-                // Log debug info.
-                tracing::warn!("{error:?}");
-
-                // Do not transition to a failure state if the backend failed
-                // to stop. It means it’s still running. There could be some
-                // edge cases where it’s in fact an internal error that is
-                // thrown after the backend has stopped but in that case we’d
-                // have to fix that code so it doesn’t happen.
-                let new_state = self.set_backend_running();
-
-                return Err(Either::E1(new_state.with_error(
-                    errors::internal_server_error(
-                        &error,
-                        "RESTART_FAILED",
-                        "Something went wrong while restarting your Prose Server. \
-                        Contact an administrator to fix this.",
-                    ),
-                )));
-            }
-        } else {
-            tracing::debug!("Not stopping Prosody: Not running.");
-        }
-
         let app_state = self.set_backend_restarting();
 
-        match prosody.start().await {
-            Ok(()) => Ok(app_state.set_backend_running()),
+        match app_state.try_bootstrapping().await {
+            Ok(new_state) => Ok(new_state),
 
-            Err(err) => {
-                let error = err
-                    .context("Could not start Prosody")
-                    .context("Backend restart failed");
+            Err((new_state, err)) => {
+                let error = err.context("Backend restart failed");
 
                 // Log debug info.
                 tracing::error!("{error:?}");
 
-                Err(Either::E2(app_state.transition_failed(
+                Err(Either::E2(new_state.transition_failed(
                     errors::internal_server_error(
                         &error,
                         "RESTART_FAILED",
@@ -172,18 +146,6 @@ impl<B: backend::State> AppState<f::Running, B> {
     pub(crate) fn set_backend_starting<'a>(self) -> AppState<f::Running, b::Starting>
     where
         B: Into<b::Starting>,
-    {
-        self.with_auto_transition()
-    }
-
-    /// ```txt
-    /// AppState<Running, B>  B ∈ { Restarting }
-    /// ---------------------------------------- (Set backend running)
-    /// AppState<Running, Running>
-    /// ```
-    pub(crate) fn set_backend_running<'a>(self) -> AppState<f::Running, b::Running>
-    where
-        B: Into<b::Running>,
     {
         self.with_auto_transition()
     }
