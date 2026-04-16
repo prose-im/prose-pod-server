@@ -116,12 +116,15 @@ impl ProsodyChildProcess {
 
     /// Check if Prosody is already running.
     pub async fn is_running(&self) -> bool {
-        // Try to connect to the telnet console as a health check.
-        use std::net::{Ipv4Addr, TcpStream};
-        use std::time::Duration;
-
-        TcpStream::connect_timeout(&(Ipv4Addr::LOCALHOST, 5582).into(), Duration::from_secs(1))
-            .is_ok()
+        // Run `prosodyctl status` as a health check.
+        Command::new("prosodyctl")
+            .arg("status")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .inspect_err(|err| tracing::debug!("{err:#}"))
+            .is_ok_and(|status| status.success())
     }
 
     /// Stop Prosody gracefully.

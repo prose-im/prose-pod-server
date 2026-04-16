@@ -122,6 +122,8 @@ impl<B: backend::State> AppState<f::Running, B> {
                     ),
                 )));
             }
+        } else {
+            tracing::debug!("Not stopping Prosody: Not running.");
         }
 
         let app_state = self.set_backend_restarting();
