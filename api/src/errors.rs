@@ -196,7 +196,7 @@ fn auto_log(error: &anyhow::Error, public_description: impl AsRef<str>) -> Strin
     // Log error debug information with a unique ID,
     // and reference this ID in the user-facing description.
     let error_id = crate::util::random_id(8);
-    tracing::error!(%error_id, "{error:?}");
+    tracing::error!(%error_id, "{error:#}");
 
     format!("{public_description} (logged as error_id={error_id})")
 }
