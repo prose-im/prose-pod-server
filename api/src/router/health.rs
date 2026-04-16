@@ -119,7 +119,7 @@ impl HealthTrait for frontend::Misconfigured {
 
 // MARK: Factory reset
 
-impl HealthTrait for frontend::UndergoingFactoryReset {
+impl HealthTrait for frontend::Restarting {
     fn health(&self) -> axum::response::Response {
         errors::service_unavailable(
             "FACTORY_RESET_IN_PROGRESS",

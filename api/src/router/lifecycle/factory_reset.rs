@@ -72,12 +72,12 @@ impl<F: frontend::State, B: backend::State> AppState<F, B> {
     ) -> Result<
         Either<AppState<f::Misconfigured, b::Stopped>, AppState<f::Running, b::Running>>,
         Either<
-            FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
+            FailState<f::Restarting, b::UndergoingFactoryReset>,
             FailState<f::Running, b::StartFailed>,
         >,
     >
     where
-        F: Into<f::UndergoingFactoryReset>,
+        F: Into<f::Restarting>,
         B: Into<b::UndergoingFactoryReset> + AsRef<b::Operational> + Clone,
     {
         tracing::info!("Performing factory reset…");
@@ -85,7 +85,7 @@ impl<F: frontend::State, B: backend::State> AppState<F, B> {
 
         let backend = self.backend.clone();
 
-        let app_state: AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset> =
+        let app_state: AppState<f::Restarting, b::UndergoingFactoryReset> =
             self.with_auto_transition();
 
         if let Err(error) = Self::factory_reset(backend).await {

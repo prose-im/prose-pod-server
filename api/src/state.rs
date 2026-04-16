@@ -185,9 +185,9 @@ pub mod frontend {
     pub mod prelude {
         pub use super::FrontendStateTrait as State;
         pub use super::{
-            FrontendMisconfigured as Misconfigured, FrontendRunning as Running,
+            FrontendMisconfigured as Misconfigured, FrontendRestarting as Restarting,
+            FrontendRunning as Running,
             FrontendRunningWithMisconfiguration as RunningWithMisconfiguration,
-            FrontendUndergoingFactoryReset as UndergoingFactoryReset,
         };
     }
 
@@ -199,7 +199,7 @@ pub mod frontend {
 
     pub(super) use self::prelude::State;
 
-    pub trait FrontendStateTrait: StateTrait + Into<FrontendUndergoingFactoryReset> {
+    pub trait FrontendStateTrait: StateTrait + Into<FrontendRestarting> {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles>;
     }
 
@@ -263,13 +263,13 @@ pub mod frontend {
     // MARK: Factory reset
 
     #[derive(Debug, Clone)]
-    pub struct FrontendUndergoingFactoryReset {
+    pub struct FrontendRestarting {
         pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
     }
 
-    state_boilerplate!(FrontendUndergoingFactoryReset);
+    state_boilerplate!(FrontendRestarting);
 
-    impl FrontendStateTrait for FrontendUndergoingFactoryReset {
+    impl FrontendStateTrait for FrontendRestarting {
         fn tracing_reload_handles(&self) -> &Arc<TracingReloadHandles> {
             &self.tracing_reload_handles
         }
@@ -310,7 +310,7 @@ pub mod frontend {
         }
     }
 
-    impl From<FrontendRunning> for FrontendUndergoingFactoryReset {
+    impl From<FrontendRunning> for FrontendRestarting {
         fn from(state: FrontendRunning) -> Self {
             Self {
                 tracing_reload_handles: state.tracing_reload_handles,
@@ -318,7 +318,7 @@ pub mod frontend {
         }
     }
 
-    impl From<FrontendRunningWithMisconfiguration> for FrontendUndergoingFactoryReset {
+    impl From<FrontendRunningWithMisconfiguration> for FrontendRestarting {
         fn from(state: FrontendRunningWithMisconfiguration) -> Self {
             Self {
                 tracing_reload_handles: state.tracing_reload_handles,
@@ -326,7 +326,7 @@ pub mod frontend {
         }
     }
 
-    impl From<FrontendMisconfigured> for FrontendUndergoingFactoryReset {
+    impl From<FrontendMisconfigured> for FrontendRestarting {
         fn from(state: FrontendMisconfigured) -> Self {
             Self {
                 tracing_reload_handles: state.tracing_reload_handles,

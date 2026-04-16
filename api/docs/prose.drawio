@@ -311,7 +311,7 @@
         <mxCell id="PJxdS7uLjyZmxyq5ucky-9" value="" style="ellipse;html=1;shape=endState;fillColor=strokeColor;strokeColor=default;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;resizable=0;" parent="1" vertex="1">
           <mxGeometry x="170" y="40" width="30" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="PJxdS7uLjyZmxyq5ucky-12" value="“Undergoing factory reset”&#xa;(f::UndergoingFactoryReset,&#xa;b::UndergoingFactoryReset)" style="align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;strokeColor=#6c8ebf;fontFamily=Helvetica;fontSize=11;labelBackgroundColor=none;resizable=1;fillColor=#dae8fc;movable=1;rotatable=1;deletable=1;editable=1;locked=0;connectable=1;" parent="1" vertex="1">
+        <mxCell id="PJxdS7uLjyZmxyq5ucky-12" value="“Undergoing factory reset”&#xa;(f::Restarting,&#xa;b::UndergoingFactoryReset)" style="align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;strokeColor=#6c8ebf;fontFamily=Helvetica;fontSize=11;labelBackgroundColor=none;resizable=1;fillColor=#dae8fc;movable=1;rotatable=1;deletable=1;editable=1;locked=0;connectable=1;" parent="1" vertex="1">
           <mxGeometry x="349.94" y="200" width="160" height="50" as="geometry" />
         </mxCell>
         <mxCell id="PJxdS7uLjyZmxyq5ucky-15" value="" style="rhombus;strokeColor=default;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;resizable=0;fillColor=default;gradientColor=none;" parent="1" vertex="1">

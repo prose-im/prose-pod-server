@@ -200,7 +200,7 @@ impl AppStateTrait for AppState<f::RunningWithMisconfiguration, b::Running> {
 }
 
 /// **Undergoing factory reset** (during a factory reset).
-impl AppStateTrait for AppState<f::UndergoingFactoryReset, b::UndergoingFactoryReset> {
+impl AppStateTrait for AppState<f::Restarting, b::UndergoingFactoryReset> {
     fn state_name() -> &'static str {
         "Undergoing factory reset"
     }
