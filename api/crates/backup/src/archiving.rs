@@ -345,7 +345,7 @@ where
             _ => '?',
         };
 
-        tracing::debug!("{} {:>6} {}", type_char, size, path.display());
+        tracing::trace!("{} {:>6} {}", type_char, size, path.display());
 
         Ok(())
     }
@@ -397,7 +397,13 @@ where
         let mut entry = entry?;
 
         // Unpack the archive entry.
-        entry.unpack_in(tmp_dir.path())?;
+        entry.unpack_in(tmp_dir.path()).with_context(|| {
+            format!(
+                "Failed extracting `{entry_path:?}` in `{dest}`",
+                entry_path = entry.path(),
+                dest = tmp_dir.path().display()
+            )
+        })?;
 
         if let Ok(entry_size) = entry.header().entry_size() {
             report.extracted_bytes_count += entry_size;
@@ -416,7 +422,8 @@ where
             .map(|(src, _)| OsString::from(&src))
             .collect();
 
-        let extracted_files = fs::read_dir(tmp_dir.path())?;
+        let extracted_files = fs::read_dir(tmp_dir.path())
+            .with_context(|| format!("Failed reading `{}`", tmp_dir.path().display()))?;
         for entry in extracted_files.into_iter() {
             match entry {
                 Ok(entry) => {
@@ -435,6 +442,11 @@ where
             )));
         }
     }
+
+    tracing::debug!(
+        path = tmp_dir.path().display().to_string(),
+        "Extraction finished."
+    );
 
     Ok(ExtractionOutput {
         tmp_dir,

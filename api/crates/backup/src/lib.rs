@@ -529,6 +529,7 @@ mod create {
             .backup_store
             .writer(&raw_backup_id)
             .await
+            .inspect_err(|err| tracing::debug!("{err:#}"))
             .map_err(CreateBackupError::CannotCreateSink)?;
 
         let start = std::time::Instant::now();
@@ -1073,6 +1074,8 @@ mod read {
 }
 
 mod restore {
+    use anyhow::Context as _;
+
     use crate::BackupService;
     use crate::archiving::*;
     use crate::backup_id::*;
@@ -1115,7 +1118,8 @@ mod restore {
 
         let restoration_output = service
             .restore_extracted_backup(backup_id, extraction_output, blueprint, event_handler)
-            .await?;
+            .await
+            .context("Failed restoring backup")?;
 
         Ok(ExtractAndRestoreSuccess {
             verification_report,
@@ -1162,7 +1166,8 @@ mod restore {
                 backup_id.created_at,
                 &mut verification_report,
             )
-            .await?;
+            .await
+            .context("Failed downloading backup or checking integrity")?;
 
         let extraction_output = extract(
             &verification_output,
@@ -1170,7 +1175,8 @@ mod restore {
             &service.archiving_context.blueprints,
             &service.decryption_context,
             event_handler,
-        )?;
+        )
+        .context("Failed extracting backup")?;
 
         Ok(ExtractionSuccess {
             verification_report,
@@ -1422,7 +1428,9 @@ mod backup_id {
         #[inline]
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             let string = String::deserialize(deserializer)?;
-            Self::parse(&string).map_err(serde::de::Error::custom)
+            Self::parse(&string)
+                .inspect_err(|err| tracing::debug!("Invalid BackupId: {err:#}"))
+                .map_err(serde::de::Error::custom)
         }
     }
 

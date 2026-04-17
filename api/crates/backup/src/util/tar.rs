@@ -83,7 +83,10 @@ impl TarSizeCalculator {
     pub fn archive_contents_size(archive_len: u64) -> u64 {
         let overhead = ARCHIVE_HEADER_SIZE + END_OF_ARCHIVE_MARKER_SIZE;
 
-        debug_assert!(archive_len > overhead);
+        debug_assert!(
+            archive_len > overhead,
+            "Archive too small: {archive_len} <= {overhead}"
+        );
 
         archive_len.saturating_sub(overhead)
     }
