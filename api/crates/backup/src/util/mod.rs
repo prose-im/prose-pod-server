@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 pub mod fmt;
-mod fs;
+pub(crate) mod fs;
 mod measurements;
 #[cfg(feature = "storage-fs")]
 mod octal;
@@ -15,6 +15,22 @@ pub use self::fs::*;
 pub use self::measurements::BytesAmount;
 #[cfg(feature = "storage-fs")]
 pub use self::octal::Octal;
+
+/// Efficiently concatenates two byte slices.
+pub fn concat_byte_slices(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let mut res = Vec::with_capacity(a.len() + b.len());
+    res.extend_from_slice(a);
+    res.extend_from_slice(b);
+    res
+}
+
+/// Efficiently concatenates two [`OsStr`][std::ffi::OsStr]s.
+pub fn concat_osstr(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> std::ffi::OsString {
+    let mut res = std::ffi::OsString::with_capacity(a.len() + b.len());
+    res.push(a);
+    res.push(b);
+    res
+}
 
 /// Casting with `as` can yield incorrect values and similar issues
 /// happen with `clamp`. This function ensures no overflow happens.

@@ -14,7 +14,7 @@ use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::restoration::ArchiveMigration;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
-    ExtractBackupEventHandler, ExtractionSuccess, RestoreBackupEventHandler,
+    RestoreBackupEventHandler, RestoreBackupSuccess,
 };
 use tokio::sync::RwLock;
 
@@ -210,19 +210,16 @@ impl ProsePodApi for ProsePodApiV3 {
                 progress_sender: Arc<mpsc::Sender<RestoreBackupEvent>>,
             }
 
-            impl ExtractBackupEventHandler for EventHandler {
-                fn on_restoration_start(&mut self, _backup_id: &BackupId, backup_size: u64) {
+            impl RestoreBackupEventHandler for EventHandler {
+                fn on_restoration_start(&mut self, _backup_id: &BackupId, total: u64) {
                     assert_eq!(self.progress, 0);
 
-                    self.backup_size = backup_size;
+                    self.backup_size = total;
 
                     tokio::task::block_in_place(move || {
                         tokio::runtime::Handle::current().block_on(async move {
                             self.progress_sender
-                                .send(RestoreBackupEvent::Progress {
-                                    progress: 0,
-                                    total: backup_size,
-                                })
+                                .send(RestoreBackupEvent::Progress { progress: 0, total })
                                 .await
                                 .unwrap_or_else(|err| {
                                     debug_panic_or_log_error!("Progress init error: {err:#}")
@@ -231,7 +228,7 @@ impl ProsePodApi for ProsePodApiV3 {
                     })
                 }
 
-                fn on_raw_read(&mut self, _backup_id: &BackupId, len: usize) {
+                fn on_restoration_progress(&mut self, _backup_id: &BackupId, len: usize) {
                     assert_ne!(self.backup_size, 0);
 
                     if len == 0 {
@@ -255,8 +252,6 @@ impl ProsePodApi for ProsePodApiV3 {
                     })
                 }
             }
-
-            impl RestoreBackupEventHandler for EventHandler {}
 
             let sender = Arc::new(sender);
 
@@ -363,18 +358,12 @@ impl ProsePodApiV3 {
         event_handler: &mut EventHandler,
     ) -> Result<(), anyhow::Error>
     where
-        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
+        EventHandler: RestoreBackupEventHandler,
     {
         let backup_id = BackupId::from_str(&backup_id)?;
 
-        let ExtractionSuccess {
-            extraction_output, ..
-        } = backup_service
-            .extract_backup(&backup_id, event_handler)
-            .await?;
-
         let _response = backup_service
-            .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
+            .restore_backup(&backup_id, blueprint, event_handler)
             .await?;
 
         Ok(())

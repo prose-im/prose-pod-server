@@ -5,20 +5,22 @@
 
 //! Archiving and extraction of archives.
 
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
 use composable_stream::ComposableStreamBuilder;
 
-use crate::decryption::{self, DecryptionContext, DecryptionReport};
-use crate::stats::{MeteredStream, ReadStats, StreamStats};
+use crate::decryption::{self, DecryptionContext, DecryptionEventHandler};
+use crate::event_handlers::NoopEventHandler;
+use crate::restoration::ExtractionError;
+use crate::stats::{MeteredStream, NoopStats};
 use crate::util::debug_panic;
 pub use crate::util::tar::TarSizeCalculator;
 use crate::verification::VerificationOutput;
-use crate::{BackupId, CreateBackupError, ExtractBackupEventHandler};
+use crate::{BackupId, CreateBackupError};
 
 pub(crate) use self::ArchivingContext as Context;
 use self::errors::*;
@@ -45,20 +47,20 @@ pub struct ArchivingContext {
 #[derive(Clone)]
 pub struct ArchiveBlueprint {
     pub version: u8,
-    pub paths: Vec<(String, PathBuf)>,
+    pub paths: Vec<(OsString, PathBuf)>,
 }
 
 impl ArchiveBlueprint {
     pub fn new<Dst, Src>(version: u8, paths: impl IntoIterator<Item = (Dst, Src)>) -> Self
     where
-        Dst: ToString,
-        Src: AsRef<std::path::Path>,
+        Dst: Into<OsString>,
+        Src: Into<PathBuf>,
     {
         Self {
             version,
             paths: paths
                 .into_iter()
-                .map(|(dst, src)| (dst.to_string(), src.as_ref().to_path_buf()))
+                .map(|(dst, src)| (dst.into(), src.into()))
                 .collect(),
         }
     }
@@ -85,7 +87,7 @@ pub(crate) fn check_archiving_will_succeed<D: AdditionalData>(
 
     for (_, local_path) in blueprint.paths.iter() {
         if !local_path.exists() {
-            return Err(CannotArchive::MissingFile(local_path.to_owned()));
+            return Err(CannotArchive::MissingFile(PathBuf::clone(local_path)));
         }
     }
 
@@ -199,44 +201,22 @@ fn add_metadata_file<W: std::io::Write>(
     Ok(())
 }
 
-// MARK: - Extraction (unarchiving)
+// MARK: - Unarchiving
 
 #[derive(Debug)]
-pub struct ExtractionOutput<'a> {
-    /// Backup archives are unpacked in a temporary directory, that gets
-    /// deleted when this is dropped. Drop when done processing data.
-    pub tmp_dir: tempfile::TempDir,
-
-    /// Blueprint of the extracted backup.
-    ///
-    /// Its paths are guaranteed to exist in [`tmp_dir`].
-    ///
-    /// [`tmp_dir`]: ExtractionOutput::tmp_dir
+pub struct GetMetadataOutput<'a> {
+    /// Blueprint of the backup.
     pub blueprint: &'a ArchiveBlueprint,
 
     /// Metadata stored inside of the backup.
+    #[allow(dead_code)]
     pub(crate) metadata: BackupInternalMetadata,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ExtractionError {
-    #[error(transparent)]
-    VerificationError(#[from] crate::verification::VerificationError),
-
-    #[error("Invalid backup")]
-    InvalidBackup(#[source] anyhow::Error),
-
-    #[error("Unknown backup version: {0}.")]
-    UnknownBackupVersion(u8),
-
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
-impl From<std::io::Error> for ExtractionError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Other(anyhow::Error::from(error))
-    }
+#[allow(unused_variables)]
+pub trait ExtractBackupEventHandler: Send + Sync {
+    #[inline]
+    fn on_extraction_progress(&mut self, backup_id: &BackupId, len: u64) {}
 }
 
 #[derive(Debug, Default)]
@@ -244,56 +224,28 @@ pub struct ExtractionReport {
     pub extracted_bytes_count: u64,
 }
 
-struct RawReadStats<'a, H: ExtractBackupEventHandler> {
-    backup_id: &'a BackupId,
-    event_handler: &'a mut H,
-}
-
-impl<'a, H: ExtractBackupEventHandler> StreamStats for RawReadStats<'a, H> {
-    fn record_chunk(&mut self, len: usize) {
-        self.event_handler.on_raw_read(self.backup_id, len);
+impl ExtractBackupEventHandler for ExtractionReport {
+    fn on_extraction_progress(&mut self, _backup_id: &BackupId, entry_size: u64) {
+        self.extracted_bytes_count += entry_size;
     }
 }
 
-pub(crate) fn extract<'a, EventHandler>(
-    VerificationOutput { backup_path, .. }: &VerificationOutput,
-    backup_id: &BackupId,
-    blueprints: &'a HashMap<u8, ArchiveBlueprint>,
-    decryption_context: &DecryptionContext,
-    event_handler: &mut EventHandler,
-) -> Result<ExtractionOutput<'a>, ExtractionError>
-where
-    EventHandler: ExtractBackupEventHandler,
-{
-    let backup_size = backup_path
-        .metadata()
-        .context("Could not read backup file metadata")
-        .inspect_err(debug_panic)?
-        .len();
-    event_handler.on_restoration_start(backup_id, backup_size);
-
-    let backup_file = std::fs::File::open(backup_path.as_path())
-        .context("Could not open backup file")
-        .inspect_err(debug_panic)?;
-
-    let backup_reader = MeteredStream::new(
-        backup_file,
-        RawReadStats {
-            backup_id,
-            event_handler,
-        },
-    );
-
+pub(crate) fn archive_reader<'r>(
+    backup_reader: impl std::io::Read + Send + Sync + 'r,
+    backup_id: &'r BackupId,
+    decryption_context: &'r DecryptionContext,
+    stats: impl crate::stats::StreamStats + 'r,
+    decryption_event_handler: &'r mut impl DecryptionEventHandler,
+    decompression_stats: impl crate::stats::StreamStats + 'r,
+) -> Result<tar::Archive<impl std::io::Read + 'r>, ExtractionError> {
     // FIXME: https://docs.rs/sequoia-openpgp/2.1.0/sequoia_openpgp/parse/stream/struct.Decryptor.html
     //   > Signature verification and detection of ciphertext tampering requires processing the whole message first. Therefore, OpenPGP implementations supporting streaming operations necessarily must output unverified data. This has been a source of problems in the past. To alleviate this, we buffer the message first (up to 25 megabytes of net message data by default, see DEFAULT_BUFFER_SIZE), and verify the signatures if the message fits into our buffer. Nevertheless it is important to treat the data as unverified and untrustworthy until you have seen a positive verification. See Decryptor::message_processed for more information.
-    let mut decryption_report = DecryptionReport::default();
-    let mut decryption_stats = ReadStats::default();
     let archive_reader = decryption::reader(
         backup_reader,
         &decryption_context,
         &backup_id,
-        &mut decryption_stats,
-        &mut decryption_report,
+        stats,
+        decryption_event_handler,
     )?;
 
     #[cfg(feature = "compression-zstd")]
@@ -305,51 +257,16 @@ where
         Box::new(archive_reader)
     };
 
-    let mut decompression_stats = ReadStats::new();
-    let archive_reader = MeteredStream::new(archive_reader, &mut decompression_stats);
+    let archive_reader = MeteredStream::new(archive_reader, decompression_stats);
 
-    let mut extraction_report = ExtractionReport::default();
-    let res = extract_archive_(archive_reader, blueprints, &mut extraction_report);
-
-    event_handler.on_decryption_finished(backup_id, decryption_stats, decryption_report);
-    event_handler.on_decompression_finished(backup_id, decompression_stats);
-    event_handler.on_extraction_finished(backup_id, extraction_report);
-
-    res
+    Ok(tar::Archive::new(archive_reader))
 }
 
-pub(crate) fn extract_archive_<'a, R>(
-    archive_reader: R,
-    blueprints: &'a HashMap<u8, ArchiveBlueprint>,
-    report: &mut ExtractionReport,
-) -> Result<ExtractionOutput<'a>, ExtractionError>
-where
-    R: std::io::Read,
-{
-    use std::ffi::OsString;
-
-    let mut archive = tar::Archive::new(archive_reader);
-
-    let mut entries = archive.entries().map_err(anyhow::Error::from)?;
-
-    #[inline]
-    fn log_extracted_entry<R: std::io::Read>(entry: &tar::Entry<R>) -> Result<(), anyhow::Error> {
-        let path = entry.path()?;
-        let size = entry.header().size()?;
-        let entry_type = entry.header().entry_type();
-
-        let type_char = match entry_type {
-            tar::EntryType::Directory => 'd',
-            tar::EntryType::Regular => 'f',
-            tar::EntryType::Symlink => 'l',
-            _ => '?',
-        };
-
-        tracing::trace!("{} {:>6} {}", type_char, size, path.display());
-
-        Ok(())
-    }
-
+pub(crate) fn read_metadata<R: std::io::Read>(
+    entries: &mut tar::Entries<R>,
+    backup_id: &BackupId,
+    event_handler: &mut impl ExtractBackupEventHandler,
+) -> Result<BackupInternalMetadata, ExtractionError> {
     // Read first archive entry, which should be the metadata file.
     let metadata: BackupInternalMetadata = {
         let entry = match entries.next() {
@@ -359,12 +276,11 @@ where
         };
 
         if let Ok(entry_size) = entry.header().entry_size() {
-            report.extracted_bytes_count += entry_size;
+            event_handler.on_extraction_progress(backup_id, entry_size);
         }
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            log_extracted_entry(&entry)?;
-        }
+        #[cfg(debug_assertions)]
+        log_extracted_entry(&entry)?;
 
         let path = entry.path()?;
 
@@ -376,80 +292,69 @@ where
 
         json::from_reader(entry).context("Invalid metadata file")?
     };
-    tracing::debug!("Backup is version {}.", metadata.version);
+
+    Ok(metadata)
+}
+
+// TODO: Move to an event handler?
+#[cfg(debug_assertions)]
+#[inline]
+pub(crate) fn log_extracted_entry<R: std::io::Read>(
+    entry: &tar::Entry<R>,
+) -> Result<(), anyhow::Error> {
+    let path = entry.path()?;
+    let size = entry.header().size()?;
+    let entry_type = entry.header().entry_type();
+
+    let type_char = match entry_type {
+        tar::EntryType::Directory => 'd',
+        tar::EntryType::Regular => 'f',
+        tar::EntryType::Symlink => 'l',
+        _ => '?',
+    };
+
+    tracing::trace!("{} {:>6} {}", type_char, size, path.display());
+
+    Ok(())
+}
+
+pub(crate) fn get_metadata<'a>(
+    VerificationOutput { backup_path, .. }: &VerificationOutput,
+    backup_id: &BackupId,
+    decryption_context: &DecryptionContext,
+    decryption_event_handler: &mut impl DecryptionEventHandler,
+    blueprints: &'a HashMap<u8, ArchiveBlueprint>,
+) -> Result<GetMetadataOutput<'a>, ExtractionError> {
+    let backup_file = std::fs::File::open(backup_path.as_path())
+        .context("Could not open backup file")
+        .inspect_err(debug_panic)?;
+
+    let mut archive = archive_reader(
+        backup_file,
+        backup_id,
+        decryption_context,
+        NoopStats,
+        decryption_event_handler,
+        NoopStats,
+    )?;
+
+    let metadata = {
+        let mut entries = archive.entries().map_err(anyhow::Error::from)?;
+        read_metadata(&mut entries, backup_id, &mut NoopEventHandler)?
+    };
 
     // Find where to extract entries based on the backup version.
     // NOTE: This is done before computing-heavy tasks, to fail faster.
     let Some(blueprint) = blueprints.get(&metadata.version) else {
         return Err(ExtractionError::UnknownBackupVersion(metadata.version));
     };
-    tracing::debug!("Selected blueprint: {blueprint:#?}");
 
-    // Extract into temporary directory.
-    let tmp_dir = tempfile::TempDir::new()
-        .context("Could not create temporary directory to extract the backup in")
-        .map_err(ExtractionError::Other)?;
-    tracing::debug!(
-        "Extracting backup in `{path}`…",
-        path = tmp_dir.path().display()
-    );
-    for entry in entries {
-        let mut entry = entry?;
+    // NOTE: We do not walk the entire archive to check for bad contents, as
+    //   it doesn’t seem necessary and would be far too expensive for a simple
+    //   “get details” operation. Restoration will fail anyway, it’s okay if
+    //   this is not 100% accurate.
 
-        // Unpack the archive entry.
-        entry.unpack_in(tmp_dir.path()).with_context(|| {
-            format!(
-                "Failed extracting `{entry_path:?}` in `{dest}`",
-                entry_path = entry.path(),
-                dest = tmp_dir.path().display()
-            )
-        })?;
-
-        if let Ok(entry_size) = entry.header().entry_size() {
-            report.extracted_bytes_count += entry_size;
-        }
-
-        #[cfg(debug_assertions)]
-        log_extracted_entry(&entry)?;
-    }
-
-    // Make sure all expected paths were present,
-    // before attempting the real restoration.
-    {
-        let mut expected_paths: HashSet<OsString> = blueprint
-            .paths
-            .iter()
-            .map(|(src, _)| OsString::from(&src))
-            .collect();
-
-        let extracted_files = fs::read_dir(tmp_dir.path())
-            .with_context(|| format!("Failed reading `{}`", tmp_dir.path().display()))?;
-        for entry in extracted_files.into_iter() {
-            match entry {
-                Ok(entry) => {
-                    // Mark path as visited.
-                    // NOTE: Not warning if some path isn’t expected by the
-                    //   blueprint as there are legitimate use cases for it.
-                    expected_paths.remove(&entry.file_name());
-                }
-                Err(err) => tracing::error!("{err:?}"),
-            }
-        }
-
-        if !expected_paths.is_empty() {
-            return Err(ExtractionError::InvalidBackup(anyhow!(
-                "Missing data ({expected_paths:?})."
-            )));
-        }
-    }
-
-    tracing::debug!(
-        path = tmp_dir.path().display().to_string(),
-        "Extraction finished."
-    );
-
-    Ok(ExtractionOutput {
-        tmp_dir,
+    Ok(GetMetadataOutput {
         blueprint,
         metadata,
     })

@@ -119,9 +119,9 @@ async fn alternate_path_single_store() {
     () = service.delete_backup(&backup_id).await.unwrap();
 }
 
-/// Ensures that restoring a backup works if a backup archive contains an
-/// unknown entry. There might be use cases for it, so the library shouldn’t
-/// prevent that. Instead, it logs a warning (not tested because annoying).
+/// Ensures that partially restoring a backup works if a backup archive
+/// contains an unknown entry. There are use cases for it, the library
+/// shouldn’t prevent that.
 #[tokio::test(flavor = "multi_thread")]
 async fn alternate_path_unknown_archive_entry_no_error() {
     let context = init();
@@ -180,10 +180,11 @@ async fn alternate_path_unknown_archive_entry_no_error() {
     };
     let CreateBackupOutput { backup_id, .. } = creation_output;
 
+    // Ensure no error is raised when partially restoring a backup.
     println!();
     blueprint.paths.swap_remove(0);
     service
-        .restore_backup(&backup_id, &blueprint, &mut NoopEventHandler)
+        .restore_backup_partial(&backup_id, &blueprint, &mut NoopEventHandler)
         .await
         .unwrap();
 }
@@ -273,7 +274,7 @@ async fn alternate_path_lost_signing_key() {
 
     {
         println!();
-        let ExtractAndRestoreSuccess {
+        let RestoreBackupSuccess {
             verification_report,
             ..
         } = service
@@ -293,7 +294,7 @@ async fn alternate_path_lost_signing_key() {
 
     {
         println!();
-        let ExtractAndRestoreSuccess {
+        let RestoreBackupSuccess {
             verification_report,
             ..
         } = service
@@ -732,8 +733,12 @@ async fn alternate_path_openpgp_encrypted_secret_key() {
             .await;
         assert!(res.is_err());
         assert_eq!(
-            format!("{:#}", res.err().unwrap()),
-            "Extraction failed".to_owned()
+            format!("{:#}", res.err().unwrap()).as_str(),
+            "Failed restoring backup: Extraction failed: Failed creating decryptor: \
+            Missing session key: No matching key found when decrypting. \
+            Matching keys might exist, but they would be expired, compromised, \
+            encrypted (passphrase-protected), or any other similar reason \
+            leading to it being dismissed."
         );
 
         service

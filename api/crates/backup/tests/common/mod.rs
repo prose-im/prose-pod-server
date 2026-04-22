@@ -30,7 +30,7 @@ pub mod prelude {
     pub use prose_backup::restoration::{ArchiveMigration, RestorationContext};
     pub use prose_backup::{
         BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupOutput,
-        CreateBackupSuccess, ExtractAndRestoreSuccess, ExtractionSuccess,
+        CreateBackupSuccess, RestoreBackupSuccess,
     };
     pub use toml::toml;
 

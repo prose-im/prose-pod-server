@@ -6,5 +6,6 @@
 pub struct NoopEventHandler;
 
 impl crate::CreateBackupEventHandler for NoopEventHandler {}
-impl crate::ExtractBackupEventHandler for NoopEventHandler {}
 impl crate::RestoreBackupEventHandler for NoopEventHandler {}
+
+impl crate::archiving::ExtractBackupEventHandler for NoopEventHandler {}

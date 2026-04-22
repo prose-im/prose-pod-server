@@ -156,38 +156,24 @@ impl BackupService {
         backup_id: &BackupId,
         blueprint: &archiving::ArchiveBlueprint,
         event_handler: &mut EventHandler,
-    ) -> Result<ExtractAndRestoreSuccess, restoration::RestorationError>
+    ) -> Result<RestoreBackupSuccess, restoration::RestorationError>
     where
-        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
+        EventHandler: RestoreBackupEventHandler,
     {
         crate::restore::restore_backup(self, backup_id, blueprint, event_handler).await
     }
 
     #[inline]
-    pub async fn extract_backup<'a>(
-        &'a self,
-        backup_id: &BackupId,
-        event_handler: &mut impl ExtractBackupEventHandler,
-    ) -> Result<ExtractionSuccess<'a>, archiving::ExtractionError> {
-        crate::restore::extract_backup(self, backup_id, event_handler).await
-    }
-
-    #[inline]
-    pub async fn restore_extracted_backup<'a>(
+    pub async fn restore_backup_partial<EventHandler>(
         &self,
         backup_id: &BackupId,
-        extraction_output: archiving::ExtractionOutput<'a>,
         blueprint: &archiving::ArchiveBlueprint,
-        event_handler: &mut impl RestoreBackupEventHandler,
-    ) -> Result<restoration::RestorationOutput, restoration::RestorationError> {
-        crate::restore::restore_extracted_backup(
-            backup_id,
-            extraction_output,
-            blueprint,
-            &self.restoration_context,
-            event_handler,
-        )
-        .await
+        event_handler: &mut EventHandler,
+    ) -> Result<RestoreBackupPartialSuccess, restoration::RestorationError>
+    where
+        EventHandler: RestoreBackupEventHandler,
+    {
+        crate::restore::restore_backup_partial(self, backup_id, blueprint, event_handler).await
     }
 
     #[inline]
@@ -979,7 +965,7 @@ mod read {
         service: &BackupService,
         backup_id: &BackupId,
     ) -> Result<BackupDto<BackupMetadataFullDto>, anyhow::Error> {
-        use crate::archiving::extract;
+        use crate::archiving::get_metadata;
         use crate::verification::VerificationReport;
 
         let mut verification_report = VerificationReport::default();
@@ -996,12 +982,12 @@ mod read {
         let can_be_restored: bool;
         match verification_result {
             Ok(verification_output) => {
-                let extraction_result = extract(
+                let extraction_result = get_metadata(
                     &verification_output,
                     &backup_id,
-                    &service.archiving_context.blueprints,
                     &service.decryption_context,
                     &mut decryption_report,
+                    &service.archiving_context.blueprints,
                 );
                 match extraction_result {
                     Ok(_) => {
@@ -1080,26 +1066,14 @@ mod restore {
     use crate::archiving::*;
     use crate::backup_id::*;
     use crate::decryption::*;
-    use crate::restoration;
     use crate::restoration::*;
     use crate::stats::*;
     use crate::verification::*;
 
     #[derive(Debug)]
-    pub struct ExtractionSuccess<'a> {
-        pub verification_report: VerificationReport,
-        pub extraction_output: ExtractionOutput<'a>,
-    }
-
-    pub struct ExtractAndRestoreSuccess {
+    pub struct RestoreBackupSuccess {
         pub verification_report: VerificationReport,
         pub restoration_output: RestorationOutput,
-    }
-
-    #[allow(unused_variables)]
-    pub trait RestoreBackupEventHandler: Send + Sync {
-        #[inline]
-        fn on_path_restored(&mut self, backup_id: &BackupId, path: &std::path::Path) {}
     }
 
     pub(crate) async fn restore_backup<EventHandler>(
@@ -1107,36 +1081,104 @@ mod restore {
         backup_id: &BackupId,
         blueprint: &ArchiveBlueprint,
         event_handler: &mut EventHandler,
-    ) -> Result<ExtractAndRestoreSuccess, RestorationError>
+    ) -> Result<RestoreBackupSuccess, RestorationError>
     where
-        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
+        EventHandler: RestoreBackupEventHandler,
     {
-        let ExtractionSuccess {
+        let RestoreBackupPartialSuccess {
             verification_report,
-            extraction_output,
-        } = service.extract_backup(backup_id, event_handler).await?;
+            restoration_output,
+        } = restore_backup_partial(service, backup_id, blueprint, event_handler).await?;
 
-        let restoration_output = service
-            .restore_extracted_backup(backup_id, extraction_output, blueprint, event_handler)
+        if let Some((ref tmp_dir, revert_guard)) = restoration_output.additional_data {
+            let entries = match std::fs::read_dir(tmp_dir.path()) {
+                Ok(read_dir) => {
+                    let entries = read_dir
+                        .flat_map(|entry| match entry {
+                            Ok(entry) => Some(entry.path()),
+                            Err(err) => {
+                                tracing::error!(
+                                    "Error reading temporary restoration directory: {err:#}"
+                                );
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    tracing::warn!("Found unexpected data in backup {backup_id:?}: {entries:?}");
+                    entries
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "Found unexpected data in backup {backup_id:?}. Could not read temporary directory: {err:#}"
+                    );
+                    Vec::with_capacity(0)
+                }
+            };
+
+            // Revert all changes.
+            drop(revert_guard);
+
+            return Err(RestorationError::FoundUnexpectedData(entries));
+        }
+
+        Ok(RestoreBackupSuccess {
+            verification_report,
+            restoration_output,
+        })
+    }
+
+    #[derive(Debug)]
+    pub struct RestoreBackupPartialSuccess {
+        pub verification_report: VerificationReport,
+        pub restoration_output: RestorationOutput,
+    }
+
+    pub(crate) async fn restore_backup_partial<EventHandler>(
+        service: &BackupService,
+        backup_id: &BackupId,
+        blueprint: &ArchiveBlueprint,
+        event_handler: &mut EventHandler,
+    ) -> Result<RestoreBackupPartialSuccess, RestorationError>
+    where
+        EventHandler: RestoreBackupEventHandler,
+    {
+        let mut verification_report = VerificationReport::default();
+        let verification_output = service
+            .download_backup_and_check_integrity(
+                &backup_id,
+                backup_id.created_at,
+                &mut verification_report,
+            )
             .await
-            .context("Failed restoring backup")?;
+            .context("Failed downloading backup or checking integrity")?;
 
-        Ok(ExtractAndRestoreSuccess {
+        let restoration_output = restore(
+            backup_id,
+            &verification_output,
+            blueprint,
+            &service.restoration_context,
+            &service.decryption_context,
+            &service.archiving_context.blueprints,
+            event_handler,
+        )
+        .context("Failed restoring backup")?;
+
+        Ok(RestoreBackupPartialSuccess {
             verification_report,
             restoration_output,
         })
     }
 
     #[allow(unused_variables)]
-    pub trait ExtractBackupEventHandler: Send + Sync {
+    pub trait RestoreBackupEventHandler: Send + Sync {
         #[inline]
-        fn on_restoration_start(&mut self, backup_id: &BackupId, backup_size: u64) {}
+        fn on_restoration_start(&mut self, backup_id: &BackupId, total: u64) {}
 
         /// WARN: Note that `on_raw_read` will be called one last time with
         ///   `len = 0`. This is on purpose, to keep the library completely
         ///   transparent, so make sure to skip this case if needed.
         #[inline]
-        fn on_raw_read(&mut self, backup_id: &BackupId, len: usize) {}
+        fn on_restoration_progress(&mut self, backup_id: &BackupId, len: usize) {}
 
         #[inline]
         fn on_decryption_finished(
@@ -1152,53 +1194,6 @@ mod restore {
 
         #[inline]
         fn on_extraction_finished(&mut self, backup_id: &BackupId, report: ExtractionReport) {}
-    }
-
-    pub(crate) async fn extract_backup<'a>(
-        service: &'a BackupService,
-        backup_id: &BackupId,
-        event_handler: &mut impl ExtractBackupEventHandler,
-    ) -> Result<ExtractionSuccess<'a>, ExtractionError> {
-        let mut verification_report = VerificationReport::default();
-        let verification_output = service
-            .download_backup_and_check_integrity(
-                &backup_id,
-                backup_id.created_at,
-                &mut verification_report,
-            )
-            .await
-            .context("Failed downloading backup or checking integrity")?;
-
-        let extraction_output = extract(
-            &verification_output,
-            &backup_id,
-            &service.archiving_context.blueprints,
-            &service.decryption_context,
-            event_handler,
-        )
-        .context("Failed extracting backup")?;
-
-        Ok(ExtractionSuccess {
-            verification_report,
-            extraction_output,
-        })
-    }
-
-    #[inline]
-    pub(crate) async fn restore_extracted_backup<'a>(
-        backup_id: &BackupId,
-        extraction_output: ExtractionOutput<'a>,
-        blueprint: &ArchiveBlueprint,
-        context: &restoration::Context,
-        event_handler: &mut impl RestoreBackupEventHandler,
-    ) -> Result<RestorationOutput, RestorationError> {
-        restore(
-            backup_id,
-            extraction_output,
-            blueprint,
-            context,
-            event_handler,
-        )
     }
 }
 

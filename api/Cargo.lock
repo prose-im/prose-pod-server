@@ -611,7 +611,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sha2",
- "tar",
+ "tar 0.4.45 (git+https://github.com/RemiBardon/tar-rs.git?rev=06ea113b018af846b39a397f349b8b3e6677f7ff)",
  "tempfile",
  "thiserror 2.0.18",
  "time",
@@ -1043,7 +1043,7 @@ name = "composable-stream"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "tar",
+ "tar 0.4.45 (registry+https://github.com/rust-lang/crates.io-index)",
  "zstd",
 ]
 
@@ -3513,10 +3513,11 @@ dependencies = [
  "serde_with",
  "sha2",
  "strum 0.28.0",
- "tar",
+ "tar 0.4.45 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "toml 1.1.2+spec-1.1.0",
  "tower",
@@ -3954,6 +3955,8 @@ dependencies = [
  "rustls 0.23.37",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -4770,6 +4773,15 @@ name = "tar"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.45"
+source = "git+https://github.com/RemiBardon/tar-rs.git?rev=06ea113b018af846b39a397f349b8b3e6677f7ff#06ea113b018af846b39a397f349b8b3e6677f7ff"
 dependencies = [
  "filetime",
  "libc",

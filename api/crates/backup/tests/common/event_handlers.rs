@@ -9,9 +9,7 @@ use prose_backup::archiving::ExtractionReport;
 use prose_backup::decryption::DecryptionReport;
 use prose_backup::stats::{ReadStats, StreamStats};
 use prose_backup::stores::ObjectId;
-use prose_backup::{
-    BackupId, CreateBackupEventHandler, ExtractBackupEventHandler, RestoreBackupEventHandler,
-};
+use prose_backup::{BackupId, CreateBackupEventHandler, RestoreBackupEventHandler};
 
 /// A [`CreateBackupEventHandler`] which records all the information we might
 /// need to debug.
@@ -67,8 +65,8 @@ pub struct DebugExtractBackupEventHandler {
     pub extracted_bytes_count: u64,
 }
 
-impl ExtractBackupEventHandler for DebugExtractBackupEventHandler {
-    fn on_raw_read(&mut self, _backup_id: &BackupId, len: usize) {
+impl RestoreBackupEventHandler for DebugExtractBackupEventHandler {
+    fn on_restoration_progress(&mut self, _backup_id: &BackupId, len: usize) {
         self.raw_read_stats.record_chunk(len);
     }
 
@@ -90,5 +88,3 @@ impl ExtractBackupEventHandler for DebugExtractBackupEventHandler {
         self.extracted_bytes_count = report.extracted_bytes_count;
     }
 }
-
-impl RestoreBackupEventHandler for DebugExtractBackupEventHandler {}

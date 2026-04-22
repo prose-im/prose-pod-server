@@ -96,7 +96,7 @@ async fn scalability_large_files() {
     println!();
     tracing::info!("Restoring backup…");
     let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
-    let ExtractAndRestoreSuccess {
+    let RestoreBackupSuccess {
         verification_report,
         ..
     } = service

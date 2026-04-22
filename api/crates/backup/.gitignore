@@ -7,11 +7,18 @@
 !/examples
 !/examples/**
 
+!/playgrounds
+!/playgrounds/**
+/playgrounds/*/target
+/playgrounds/*/Cargo.lock
+
 !/src/
 !/src/**
 
 !/crates/
 !/crates/**
+/crates/*/target
+/crates/*/Cargo.lock
 
 !/tests/
 !/tests/**

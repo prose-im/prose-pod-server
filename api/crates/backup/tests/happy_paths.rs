@@ -10,8 +10,6 @@
 
 mod common;
 
-use prose_backup::event_handlers::NoopEventHandler;
-
 use crate::common::prelude::*;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -203,7 +201,7 @@ async fn happy_path_atomic_restore() {
         // restored. We could use the `notify` crate to watch for file changes
         // and make this test more robust. Note that test coverage confirms
         // that we do indeed revert the directory (as expected).
-        blueprint.paths[1].1 = Path::new("/dev/null").to_path_buf();
+        blueprint.paths[1].1 = PathBuf::from("/dev/null");
 
         // Try to restore the backup (should fail).
         println!();
@@ -213,7 +211,11 @@ async fn happy_path_atomic_restore() {
         assert!(res.is_err());
         let err = format!("{err:#}", err = anyhow::Error::from(res.err().unwrap()));
         tracing::info!("Error: {err}");
-        assert!(err.contains("Move failed"));
+        assert_eq!(
+            err.as_str(),
+            "Failed restoring backup: Could not backup `/dev/null` before restoration \
+            (to prevent data loss): Operation not permitted (os error 1)"
+        );
 
         // Test that `foo/a` wasn’t changed.
         assert_eq!(std::fs::read_to_string(&foo_a).unwrap(), "overriden");
@@ -477,14 +479,13 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
 
     println!();
     let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
-    let ExtractionSuccess {
-        extraction_output,
+    let RestoreBackupSuccess {
         verification_report,
         ..
     } = service
-        .extract_backup(&backup_id, &mut extraction_event_handler)
+        .restore_backup(&backup_id, &blueprint, &mut extraction_event_handler)
         .await
-        .context("extract_backup")
+        .context("restore_backup")
         .unwrap();
     print_stats(&extraction_event_handler);
     if let Some(SigningPgpConfig { tsk, .. }) = &signing_config.pgp {
@@ -496,18 +497,6 @@ async fn test_happy_path_(mut config_toml: toml::Table) {
             .iter()
             .all(|report| report.cert_fingerprint == pgp_cert.fingerprint());
     }
-
-    println!();
-    service
-        .restore_extracted_backup(
-            &backup_id,
-            extraction_output,
-            &blueprint,
-            &mut NoopEventHandler,
-        )
-        .await
-        .context("restore_extracted_backup")
-        .unwrap();
 
     println!();
     () = service

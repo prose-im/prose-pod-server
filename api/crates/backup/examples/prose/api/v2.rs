@@ -8,14 +8,14 @@
 
 use std::{path::Path, str::FromStr as _, sync::Arc};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use bytes::Buf;
 use prose_backup::archiving::{AdditionalData, ArchiveBlueprint, TarSizeCalculator};
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::restoration::ArchiveMigration;
 use prose_backup::{
     BackupConfig, BackupId, BackupService, CreateBackupCommand, CreateBackupEventHandler,
-    ExtractBackupEventHandler, ExtractionSuccess, RestoreBackupEventHandler,
+    RestoreBackupEventHandler, RestoreBackupPartialSuccess,
 };
 use tokio::sync::RwLock;
 
@@ -342,36 +342,114 @@ impl ProsePodServerApiV2 {
         prose_pod_api: &ProsePodApiV2,
     ) -> Result<(), anyhow::Error>
     where
-        EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
+        EventHandler: RestoreBackupEventHandler,
     {
         let backup_id = BackupId::from_str(&backup_id)?;
 
-        let ExtractionSuccess {
-            extraction_output, ..
-        } = backup_service
-            .extract_backup(&backup_id, event_handler)
-            .await?;
+        struct EventHandler<'a, Inner> {
+            inner: &'a mut Inner,
+            additional_data_size: usize,
+        }
 
-        let prose_pod_api_data_path = extraction_output
-            .tmp_dir
-            .path()
-            .join(PROSE_POD_API_ARCHIVE_KEY);
+        impl<'a, Inner> RestoreBackupEventHandler for EventHandler<'a, Inner>
+        where
+            Inner: RestoreBackupEventHandler,
+        {
+            fn on_restoration_start(&mut self, backup_id: &BackupId, mut total: u64) {
+                // This is just an estimate. It doesn’t have to be exact, just
+                // to be there so the progress bar doesn’t reach 100% before
+                // the Prose Pod API data is restored.
+                let additional_data_size = total / 10;
 
-        let prose_pod_api_data = {
-            let mut tar = tar::Builder::new(Vec::<u8>::new());
-            tar.append_dir_all(PROSE_POD_API_ARCHIVE_KEY, &prose_pod_api_data_path)?;
-            tar.into_inner()?
+                // SAFETY: We don’t care, it’s just an example.
+                self.additional_data_size = additional_data_size as usize;
+
+                // SAFETY: We don’t care, it’s just an example.
+                total += additional_data_size;
+
+                self.inner.on_restoration_start(backup_id, total);
+            }
+
+            fn on_restoration_progress(&mut self, backup_id: &BackupId, len: usize) {
+                self.inner.on_restoration_progress(backup_id, len);
+            }
+
+            fn on_decryption_finished(
+                &mut self,
+                backup_id: &BackupId,
+                stats: prose_backup::stats::ReadStats,
+                report: prose_backup::decryption::DecryptionReport,
+            ) {
+                self.inner.on_decryption_finished(backup_id, stats, report);
+            }
+
+            fn on_decompression_finished(
+                &mut self,
+                backup_id: &BackupId,
+                stats: prose_backup::stats::ReadStats,
+            ) {
+                self.inner.on_decompression_finished(backup_id, stats);
+            }
+
+            fn on_extraction_finished(
+                &mut self,
+                backup_id: &BackupId,
+                report: prose_backup::archiving::ExtractionReport,
+            ) {
+                self.inner.on_extraction_finished(backup_id, report);
+            }
+        }
+
+        let mut event_handler = EventHandler {
+            inner: event_handler,
+            additional_data_size: 0,
         };
 
-        () = prose_pod_api
-            .put_restore(std::io::Cursor::new(prose_pod_api_data))
+        let RestoreBackupPartialSuccess {
+            mut restoration_output,
+            ..
+        } = backup_service
+            .restore_backup_partial(&backup_id, blueprint, &mut event_handler)
             .await?;
 
-        std::fs::remove_dir_all(prose_pod_api_data_path)?;
+        let Some((tmp_dir, revert_guard)) = restoration_output.additional_data.as_mut() else {
+            return Err(anyhow!("Missing Prose Pod API data."));
+        };
 
-        let _response = backup_service
-            .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
-            .await?;
+        {
+            let prose_pod_api_data_path = tmp_dir.path().join(PROSE_POD_API_ARCHIVE_KEY);
+
+            let prose_pod_api_data = {
+                let mut tar = tar::Builder::new(Vec::<u8>::new());
+                tar.append_dir_all(PROSE_POD_API_ARCHIVE_KEY, &prose_pod_api_data_path)?;
+                tar.into_inner()?
+            };
+
+            () = prose_pod_api
+                .put_restore(std::io::Cursor::new(prose_pod_api_data))
+                .await?;
+
+            std::fs::remove_dir_all(prose_pod_api_data_path)?;
+
+            event_handler.on_restoration_progress(&backup_id, event_handler.additional_data_size);
+        }
+
+        revert_guard.defuse();
+
+        match std::fs::read_dir(tmp_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => {
+                            let file_name = entry.file_name();
+                            tracing::warn!("Extracted unknown entry {file_name:?}.")
+                        }
+                        Err(err) => debug_panic_or_log_error!("{err:?}"),
+                    }
+                }
+            }
+            Err(err) => debug_panic_or_log_error!("Error reading temporary directory: {err:?}"),
+        }
 
         Ok(())
     }
@@ -411,24 +489,21 @@ impl ProsePodServerApiV2 {
             let (sender, receiver) = mpsc::channel(8);
 
             struct EventHandler {
-                backup_size: u64,
+                total: u64,
                 progress: u64,
                 progress_sender: Arc<mpsc::Sender<RestoreBackupEvent>>,
             }
 
-            impl ExtractBackupEventHandler for EventHandler {
-                fn on_restoration_start(&mut self, _backup_id: &BackupId, backup_size: u64) {
+            impl RestoreBackupEventHandler for EventHandler {
+                fn on_restoration_start(&mut self, _backup_id: &BackupId, total: u64) {
                     assert_eq!(self.progress, 0);
 
-                    self.backup_size = backup_size;
+                    self.total = total;
 
                     tokio::task::block_in_place(move || {
                         tokio::runtime::Handle::current().block_on(async move {
                             self.progress_sender
-                                .send(RestoreBackupEvent::Progress {
-                                    progress: 0,
-                                    total: backup_size,
-                                })
+                                .send(RestoreBackupEvent::Progress { progress: 0, total })
                                 .await
                                 .unwrap_or_else(|err| {
                                     debug_panic_or_log_error!("Progress init error: {err:#}")
@@ -437,8 +512,8 @@ impl ProsePodServerApiV2 {
                     })
                 }
 
-                fn on_raw_read(&mut self, _backup_id: &BackupId, len: usize) {
-                    assert_ne!(self.backup_size, 0);
+                fn on_restoration_progress(&mut self, _backup_id: &BackupId, len: usize) {
+                    assert_ne!(self.total, 0);
 
                     if len == 0 {
                         return;
@@ -451,7 +526,7 @@ impl ProsePodServerApiV2 {
                             self.progress_sender
                                 .send(RestoreBackupEvent::Progress {
                                     progress: self.progress,
-                                    total: self.backup_size,
+                                    total: self.total,
                                 })
                                 .await
                                 .unwrap_or_else(|err| {
@@ -462,13 +537,11 @@ impl ProsePodServerApiV2 {
                 }
             }
 
-            impl RestoreBackupEventHandler for EventHandler {}
-
             let sender = Arc::new(sender);
 
             (
                 EventHandler {
-                    backup_size: 0,
+                    total: 0,
                     progress: 0,
                     progress_sender: Arc::clone(&sender),
                 },

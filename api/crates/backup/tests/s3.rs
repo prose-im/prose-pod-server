@@ -162,7 +162,7 @@ async fn s3_happy_path() {
     println!();
     tracing::info!("Restore backup");
     let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
-    let ExtractAndRestoreSuccess { .. } = service
+    let RestoreBackupSuccess { .. } = service
         .restore_backup(
             &created_backup_id,
             &restore_blueprint,
@@ -280,11 +280,11 @@ async fn s3_single_bucket_same_prefix() {
     let backups = service.list_backups().await.unwrap();
     tracing::debug!("Backups: {backups:#?}");
     assert!(backups.iter().any(|backup| backup.id == created_backup_id));
-    assert!(
-        backups
-            .iter()
-            .all(|backup| backup.id.extensions.ends_with(&[Box::from("zst")]))
-    );
+    assert!(backups.iter().all(|backup| {
+        (backup.id.extensions)
+            .last()
+            .is_some_and(|ext| ext.as_ref() == "zst" || ext.as_ref() == "tar")
+    }));
 
     println!();
     tracing::info!("Get backup details");
@@ -302,7 +302,7 @@ async fn s3_single_bucket_same_prefix() {
     println!();
     tracing::info!("Restore backup");
     let mut extraction_event_handler = DebugExtractBackupEventHandler::default();
-    let ExtractAndRestoreSuccess { .. } = service
+    let RestoreBackupSuccess { .. } = service
         .restore_backup(
             &created_backup_id,
             &blueprint,

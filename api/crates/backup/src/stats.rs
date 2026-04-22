@@ -219,6 +219,13 @@ pub(crate) fn meter_writes<W, Err, Stats: WriterStats>(
     }
 }
 
+// MARK: - No-op helpers
+
+pub struct NoopStats;
+
+impl StreamStats for NoopStats {}
+impl WriterStats for NoopStats {}
+
 // MARK: - Boilerplate
 
 impl<T: StreamStats> StreamStats for &mut T {

@@ -49,7 +49,7 @@ impl DecryptionEventHandler for DecryptionReport {
     }
 }
 
-impl crate::ExtractBackupEventHandler for DecryptionReport {
+impl crate::RestoreBackupEventHandler for DecryptionReport {
     fn on_decryption_finished(
         &mut self,
         _backup_id: &crate::BackupId,
@@ -60,15 +60,15 @@ impl crate::ExtractBackupEventHandler for DecryptionReport {
     }
 }
 
-pub(crate) fn reader<'ctx: 'ev, 'ev, R, EventHandler: DecryptionEventHandler>(
+pub(crate) fn reader<'r, R, EventHandler: DecryptionEventHandler>(
     backup_reader: R,
-    context: &'ctx DecryptionContext,
-    backup_id: &crate::BackupId,
-    stats: &mut crate::stats::ReadStats,
-    event_handler: &'ev mut EventHandler,
-) -> Result<impl std::io::Read, anyhow::Error>
+    context: &'r DecryptionContext,
+    backup_id: &'r crate::BackupId,
+    stats: impl crate::stats::StreamStats + 'r,
+    event_handler: &'r mut EventHandler,
+) -> Result<impl std::io::Read + 'r, anyhow::Error>
 where
-    R: std::io::Read + Send + Sync + 'ctx + 'ev,
+    R: std::io::Read + Send + Sync + 'r,
 {
     if backup_id.extensions.contains(&Box::from("pgp")) {
         if let Some(context) = context.pgp.as_ref() {

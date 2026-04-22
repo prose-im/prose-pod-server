@@ -1,5 +1,5 @@
 # [workspace]
-# members = ["crates/*"]
+# members = ["crates/*", "playgrounds/*"]
 
 [package]
 name = "backup"
@@ -22,7 +22,7 @@ ouroboros = { version = "0.18", default-features = false }
 secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_with = { version = "3", default-features = false, features = ["macros"] }
-tar = { version = "0.4", default-features = false }
+# tar = { version = "0.4", default-features = false }
 tempfile = { version = "3", default-features = false }
 thiserror = { version = "2", default-features = false }
 time = { version = "0.3", default-features = false, features = ["formatting", "std", "serde"] }
@@ -38,6 +38,11 @@ tokio = { version = "1", default-features = false, features = [
 toml = { version = "1", default-features = false, features = ["serde"] }
 urlencoding = { version = "2", default-features = false }
 composable-stream = { path = "./crates/composable-stream" }
+
+# Temporary overrides.
+# TODO: Use official crate once https://github.com/alexcrichton/tar-rs/pull/448
+#   is released.
+tar = { git = "https://github.com/RemiBardon/tar-rs.git", rev = "06ea113b018af846b39a397f349b8b3e6677f7ff", default-features = false }
 
 # Optional dependencies.
 blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
