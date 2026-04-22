@@ -129,8 +129,8 @@ fn filter_migrations<'a>(
 ) -> impl Iterator<Item = &'a ArchiveMigration> {
     migrations
         .into_iter()
-        .skip_while(move |m| m.version < from)
-        .take_while(move |m| m.version <= to)
+        .skip_while(move |&m| m.version <= from)
+        .take_while(move |&m| m.version <= to)
 }
 
 fn migrate(
