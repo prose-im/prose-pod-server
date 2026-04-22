@@ -128,10 +128,12 @@ async fn s3_happy_path() {
         let created_backup_id = ObjectId::from(&created_backup_id);
 
         Box::pin(async move {
+            tracing::debug!("[CLEANUP] Deleting {created_backup_id}…");
             (backup_store.delete(&created_backup_id))
                 .await
                 .map_or_else(log_error!(), |_| ());
 
+            tracing::debug!("[CLEANUP] Deleting checks {created_backup_id}*…");
             (check_store.delete_all(&created_backup_id))
                 .await
                 .map_or_else(log_error!(), |_| ());

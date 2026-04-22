@@ -56,6 +56,7 @@ pub fn create_files<P: AsRef<Path>>(
                 "Failed creating dir at '{path}'",
                 path = path.display()
             ))?;
+            tracing::trace!("Created '{path}' (dir)", path = path.display());
         }
         Ok(())
     }
@@ -66,6 +67,7 @@ pub fn create_files<P: AsRef<Path>>(
                 "Failed creating file at '{path}'",
                 path = path.display()
             ))?;
+            tracing::trace!("Created '{path}'", path = path.display());
         }
         Ok(())
     }
