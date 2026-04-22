@@ -111,10 +111,12 @@ tasks:
     cmd: open target/tarpaulin/tarpaulin-report.html
 
   ci:
-    desc: Run CI tests (doesn’t test S3).
+    desc: Run CI tests (only tests S3 if possible).
     cmds:
       - task: lint
       - cargo test --locked --lib --tests -F test,compression-all,hashing-all,storage-all,openpgp-crypto-nettle -- --skip s3
+      - task: test:s3
+        if: "[ -f test.env ]"
       - cargo test --locked --doc -p backup
       - cargo test --locked --doc -p composable-stream -F doc
       - task: check:release
