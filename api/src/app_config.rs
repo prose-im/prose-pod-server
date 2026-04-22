@@ -136,6 +136,9 @@ fn default_config_static() -> Figment {
         [proxy]
         cloud_api_url = "https://prose.org/_api/cloud"
         prose_files_url = "https://files.prose.org"
+
+        [api]
+        local_hostname = "prose-pod-api"
     }
     .to_string();
 
@@ -343,6 +346,8 @@ pub(crate) struct AppConfig {
     #[serde(with = "crate::util::serde::backup_config_opt")]
     pub backups: Option<BackupConfig>,
     pub server_api: ServerApiConfig,
+    #[serde(rename = "api")]
+    pub prose_pod_api: ProsePodApiConfig,
     pub service_accounts: ServiceAccountsConfig,
     pub teams: TeamsConfig,
     pub vendor_analytics: VendorAnalyticsConfig,
@@ -469,6 +474,21 @@ pub mod server_api {
         pub fn address(&self) -> SocketAddr {
             SocketAddr::new(self.address, self.port)
         }
+    }
+}
+
+pub use prose_pod_api::*;
+pub mod prose_pod_api {
+    #[derive(Debug)]
+    #[derive(serde::Deserialize)]
+    pub struct ProsePodApiConfig {
+        /// Hostname of the Prose Pod API in the local network.
+        ///
+        /// You shouldn’t have to change that, it’s just there to avoid using
+        /// constants.
+        ///
+        /// NOTE: It’ll disappear when we implement [“Prose Pod API as part of Prose Pod Server”](https://github.com/prose-im/prose-pod-api/discussions/368).
+        pub local_hostname: String,
     }
 }
 

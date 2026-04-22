@@ -100,6 +100,21 @@ impl Drop for PathGuard {
     }
 }
 
+/// Tells whether or not both paths are on the same device.
+///
+/// This is useful to detect if a file could be renamed.
+pub fn is_same_device(
+    p1: impl AsRef<std::path::Path>,
+    p2: impl AsRef<std::path::Path>,
+) -> Result<bool, std::io::Error> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let m1 = std::fs::metadata(p1)?;
+    let m2 = std::fs::metadata(p2)?;
+
+    Ok(m1.dev() == m2.dev())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashSet, ffi::OsString, fs};

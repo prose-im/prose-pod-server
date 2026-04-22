@@ -83,24 +83,31 @@ pub(in crate::router) async fn backend_restart_retry(
 
 // MARK: - State transitions
 
-impl<B: backend::State> AppState<f::Running, B> {
+impl<F: frontend::State, B: backend::State> AppState<F, B> {
     /// ```txt
-    /// AppState<Running, B>  B ∈ { Running, Restarting }
-    /// ------------------------------------------------- (Restart backend)
-    /// AppState<Running, Running>        if success
-    /// AppState<Running, Running>        if stop failed
-    /// AppState<Running, RestartFailed>  if start failed
+    /// AppState<F, B>
+    ///   F ∈ { Running, RunningWithMisconfiguration }
+    ///   B ∈ { Running, Restarting }
+    /// ---------------------------------------------- (Restart backend)
+    /// AppState<F, Running>        if success
+    /// AppState<F, Running>        if stop failed
+    /// AppState<F, RestartFailed>  if start failed
     /// ```
     ///
     /// NOTE: This method **does** log errors.
-    pub(crate) async fn do_restart_backend<'a>(
+    pub(crate) async fn do_restart_backend(
         self,
     ) -> Result<
-        AppState<f::Running, b::Running>,
-        Either<FailState<f::Running, b::Running>, FailState<f::Running, b::RestartFailed>>,
+        AppState<F, b::Running>,
+        Either<FailState<F, b::Running>, FailState<F, b::RestartFailed>>,
     >
     where
+        F: AsRef<f::Running>,
+        for<'a> F: From<(F, &'a crate::responders::Error)>,
         B: Into<b::Restarting>,
+        AppState<F, b::Running>: AppStateTrait,
+        AppState<F, b::Restarting>: AppStateTrait,
+        AppState<F, b::RestartFailed>: AppStateTrait,
     {
         let app_state = self.set_backend_restarting();
 
@@ -126,27 +133,32 @@ impl<B: backend::State> AppState<f::Running, B> {
     }
 
     /// ```txt
-    /// AppState<Running, B>  B ∈ { Running, RestartFailed }
-    /// ---------------------------------------------------- (Set backend restarting)
-    /// AppState<Running, Restarting>
+    /// AppState<F, B>
+    ///   F ∈ { Running, RunningWithMisconfiguration }
+    ///   B ∈ { Running, RestartFailed, UndergoingBackup }
+    /// -------------------------------------------------- (Set backend restarting)
+    /// AppState<F, Restarting>
     /// ```
-    pub(crate) fn set_backend_restarting<'a>(self) -> AppState<f::Running, b::Restarting>
+    pub(crate) fn set_backend_restarting<'a>(self) -> AppState<F, b::Restarting>
     where
         B: Into<b::Restarting>,
+        AppState<F, b::Restarting>: AppStateTrait,
     {
-        self.with_auto_transition()
+        self.with_auto_transition::<F, b::Restarting>()
     }
 
     /// ```txt
-    /// AppState<Running, B>
+    /// AppState<F, B>
+    ///   F ∈ { Running, RunningWithMisconfiguration }
     ///   B ∈ { Stopped, StartFailed, UndergoingFactoryReset }
     /// ------------------------------------------------------ (Set backend starting)
-    /// AppState<Running, Starting>
+    /// AppState<F, Starting>
     /// ```
-    pub(crate) fn set_backend_starting<'a>(self) -> AppState<f::Running, b::Starting>
+    pub(crate) fn set_backend_starting<'a>(self) -> AppState<F, b::Starting>
     where
         B: Into<b::Starting>,
+        AppState<F, b::Starting>: AppStateTrait,
     {
-        self.with_auto_transition()
+        self.with_auto_transition::<F, b::Starting>()
     }
 }

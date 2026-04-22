@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+use std::usize;
 
-use anyhow::Context as _;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -19,7 +19,7 @@ use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartial
 use prose_backup::event_handlers::NoopEventHandler;
 use prose_backup::{
     BackupId, BackupService, CreateBackupCommand, CreateBackupError, CreateBackupEventHandler,
-    CreateBackupSuccess, ExtractBackupEventHandler, ExtractionSuccess, RestoreBackupEventHandler,
+    CreateBackupSuccess, RestoreBackupEventHandler, RestoreBackupPartialSuccess, tar,
 };
 use reqwest::header::ACCEPT;
 use tokio::sync::mpsc;
@@ -53,6 +53,24 @@ pub static BACKUP_BLUEPRINTS: LazyLock<HashMap<u8, ArchiveBlueprint>> = LazyLock
     hash_map
 });
 
+pub(super) async fn post_backups_all(
+    headers: HeaderMap,
+    state: State<AppState<f::Running, b::Running>>,
+    caller_info: CallerInfo,
+    query: Query<CreateBackupRequest>,
+    prose_pod_api_data: Bytes,
+) -> Either<
+    Result<Json<CreateBackupSuccess>, crate::responders::Error>,
+    Result<Sse<ReceiverStream<Result<sse::Event, anyhow::Error>>>, crate::responders::Error>,
+> {
+    match headers.get(ACCEPT) {
+        Some(val) if val.as_bytes() == b"text/event-stream" => {
+            Either::E2(post_backups_stream(state, caller_info, query, prose_pod_api_data).await)
+        }
+        _ => Either::E1(post_backups(state, caller_info, query, prose_pod_api_data).await),
+    }
+}
+
 async fn post_backups_<F: frontend::State>(
     app_state: AppState<F, b::Running>,
     description: String,
@@ -85,7 +103,7 @@ where
     let app_state = app_state.with_backend(b::UndergoingBackup {});
 
     let command = CreateBackupCommand {
-        prefix: "prose-backup",
+        prefix: "prose_backup",
         description: &description,
         blueprint,
         additional_archive_data: Some(ProsePodApiData(prose_pod_api_data)),
@@ -128,24 +146,6 @@ pub struct CreateBackupRequest {
     pub description: String,
 }
 
-pub(super) async fn post_backups_all(
-    headers: HeaderMap,
-    state: State<AppState<f::Running, b::Running>>,
-    caller_info: CallerInfo,
-    query: Query<CreateBackupRequest>,
-    prose_pod_api_data: Bytes,
-) -> Either<
-    Result<Json<CreateBackupSuccess>, crate::responders::Error>,
-    Result<Sse<ReceiverStream<Result<sse::Event, anyhow::Error>>>, crate::responders::Error>,
-> {
-    match headers.get(ACCEPT) {
-        Some(val) if val.as_bytes() == b"text/event-stream" => {
-            Either::E2(post_backups_stream(state, caller_info, query, prose_pod_api_data).await)
-        }
-        _ => Either::E1(post_backups(state, caller_info, query, prose_pod_api_data).await),
-    }
-}
-
 /// `POST /backups`.
 async fn post_backups(
     State(app_state): State<AppState<f::Running, b::Running>>,
@@ -161,6 +161,15 @@ async fn post_backups(
     match caller_info.primary_role.as_str() {
         "prosody:admin" | "prosody:operator" => {}
         _ => return Err(errors::forbidden("Only admins can do that.")),
+    }
+
+    let fixme = "Test content type";
+    if prose_pod_api_data.is_empty() {
+        return Err(errors::validation_error(
+            "BAD_REQUEST",
+            "Bad request",
+            "Missing Prose Pod API data.",
+        ));
     }
 
     let blueprint = BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION).unwrap();
@@ -231,7 +240,17 @@ async fn post_backups_stream(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
+    let fixme = "Test content type";
+    if prose_pod_api_data.is_empty() {
+        return Err(errors::validation_error(
+            "BAD_REQUEST",
+            "Bad request",
+            "Missing Prose Pod API data.",
+        ));
+    }
+
     // Stream backup progress.
+    let fixme = "Debounce events";
     let (mut event_handler, sender, receiver) = {
         let (sender, receiver) = mpsc::channel(8);
 
@@ -395,70 +414,6 @@ pub(super) async fn delete_backup(
     Ok(())
 }
 
-async fn put_backup_restore_<EventHandler>(
-    backup_service: &BackupService,
-    token: &AuthToken,
-    backup_id: BackupId,
-    blueprint: &ArchiveBlueprint,
-    event_handler: &mut EventHandler,
-    prose_pod_api: &ProsePodApi,
-) -> Result<(), crate::responders::Error>
-where
-    EventHandler: ExtractBackupEventHandler + RestoreBackupEventHandler,
-{
-    let ExtractionSuccess {
-        extraction_output, ..
-    } = backup_service
-        .extract_backup(&backup_id, event_handler)
-        .await
-        .map_err(|error| {
-            crate::errors::internal_server_error(
-                &anyhow::Error::from(error),
-                "BACKUP_RESTORE_FAILED",
-                "Something went wrong while restoring the backup.",
-            )
-        })?;
-
-    let prose_pod_api_data_path = extraction_output
-        .tmp_dir
-        .path()
-        .join(PROSE_POD_API_ARCHIVE_KEY);
-
-    let prose_pod_api_data = {
-        let mut tar = tar::Builder::new(Vec::<u8>::new());
-        tar.append_dir_all(PROSE_POD_API_ARCHIVE_KEY, &prose_pod_api_data_path)
-            .no_context()?;
-        tar.into_inner().no_context()?
-    };
-
-    () = prose_pod_api
-        .put_restore(token, std::io::Cursor::new(prose_pod_api_data))
-        .await
-        .context("Prose Pod API restoration failed.")
-        .map_err(|error| {
-            crate::errors::internal_server_error(
-                &error,
-                "BACKUP_RESTORE_FAILED",
-                "Something went wrong while restoring the backup.",
-            )
-        })?;
-
-    std::fs::remove_dir_all(prose_pod_api_data_path).no_context()?;
-
-    let _response = backup_service
-        .restore_extracted_backup(&backup_id, extraction_output, blueprint, event_handler)
-        .await
-        .map_err(|error| {
-            crate::errors::internal_server_error(
-                &anyhow::Error::from(error),
-                "BACKUP_RESTORE_FAILED",
-                "Something went wrong while restoring the backup.",
-            )
-        })?;
-
-    Ok(())
-}
-
 pub(super) async fn put_backup_restore_all(
     headers: HeaderMap,
     state: State<AppState>,
@@ -475,6 +430,159 @@ pub(super) async fn put_backup_restore_all(
         }
         _ => Either::E1(put_backup_restore(state, caller_info, auth_token, path).await),
     }
+}
+
+async fn put_backup_restore_<EventHandler>(
+    backup_service: &BackupService,
+    token: &AuthToken,
+    backup_id: BackupId,
+    blueprint: &ArchiveBlueprint,
+    event_handler: &mut EventHandler,
+    prose_pod_api: &ProsePodApi,
+) -> Result<(), crate::responders::Error>
+where
+    EventHandler: RestoreBackupEventHandler + RestoreBackupEventHandler,
+{
+    // A wrapper which takes into account the fact that we also
+    // have to restore the Prose Pod API’s data.
+    struct EventHandler<'a, Inner> {
+        inner: &'a mut Inner,
+        additional_data_size: usize,
+    }
+
+    impl<'a, Inner> RestoreBackupEventHandler for EventHandler<'a, Inner>
+    where
+        Inner: RestoreBackupEventHandler,
+    {
+        fn on_restoration_start(&mut self, backup_id: &BackupId, mut total: u64) {
+            // This is just an estimate. It doesn’t have to be exact, just
+            // to be there so the progress bar doesn’t reach 100% before
+            // the Prose Pod API data is restored.
+            let additional_data_size = total / 10;
+
+            self.additional_data_size = usize::try_from(additional_data_size).unwrap_or(usize::MAX);
+
+            total = total.saturating_add(additional_data_size);
+
+            self.inner.on_restoration_start(backup_id, total);
+        }
+
+        fn on_restoration_progress(&mut self, backup_id: &BackupId, len: usize) {
+            self.inner.on_restoration_progress(backup_id, len);
+        }
+
+        fn on_decryption_finished(
+            &mut self,
+            backup_id: &BackupId,
+            stats: prose_backup::stats::ReadStats,
+            report: prose_backup::decryption::DecryptionReport,
+        ) {
+            self.inner.on_decryption_finished(backup_id, stats, report);
+        }
+
+        fn on_decompression_finished(
+            &mut self,
+            backup_id: &BackupId,
+            stats: prose_backup::stats::ReadStats,
+        ) {
+            self.inner.on_decompression_finished(backup_id, stats);
+        }
+
+        fn on_extraction_finished(
+            &mut self,
+            backup_id: &BackupId,
+            report: prose_backup::archiving::ExtractionReport,
+        ) {
+            self.inner.on_extraction_finished(backup_id, report);
+        }
+    }
+
+    let mut event_handler = EventHandler {
+        inner: event_handler,
+        additional_data_size: 0,
+    };
+
+    let RestoreBackupPartialSuccess {
+        mut restoration_output,
+        ..
+    } = backup_service
+        .restore_backup_partial(&backup_id, blueprint, &mut event_handler)
+        .await
+        .map_err(|error| {
+            crate::errors::internal_server_error(
+                &anyhow::Error::from(error),
+                "BACKUP_RESTORE_FAILED",
+                "Something went wrong while restoring the backup.",
+            )
+        })?;
+
+    let Some((tmp_dir, revert_guard)) = restoration_output.additional_data.as_mut() else {
+        tracing::error!("Invalid backup: Missing Prose Pod API data.");
+        return Err(crate::errors::validation_error(
+            "INVALID_BACKUP",
+            "Invalid backup",
+            "This backup is missing data. It can’t be restored.",
+        ));
+    };
+
+    {
+        let prose_pod_api_data_path = tmp_dir.path().join(PROSE_POD_API_ARCHIVE_KEY);
+
+        if !prose_pod_api_data_path.is_dir() {
+            tracing::error!(
+                "Invalid backup: `{path}` is missing.",
+                path = prose_pod_api_data_path.display()
+            );
+            return Err(crate::errors::validation_error(
+                "INVALID_BACKUP",
+                "Invalid backup",
+                "This backup is missing data. It can’t be restored.",
+            ));
+        }
+
+        let prose_pod_api_data = {
+            let mut tar = tar::Builder::new(Vec::<u8>::new());
+            tar.append_dir_all(PROSE_POD_API_ARCHIVE_KEY, &prose_pod_api_data_path)
+                .no_context()?;
+            tar.into_inner().no_context()?
+        };
+
+        let fixme = "Re-enable";
+        // () = prose_pod_api
+        //     .put_restore(token, std::io::Cursor::new(prose_pod_api_data))
+        //     .await
+        //     .context("Prose Pod API restoration failed.")
+        //     .map_err(|error| {
+        //         crate::errors::internal_server_error(
+        //             &error,
+        //             "BACKUP_RESTORE_FAILED",
+        //             "Something went wrong while restoring the backup.",
+        //         )
+        //     })?;
+
+        std::fs::remove_dir_all(prose_pod_api_data_path).no_context()?;
+
+        event_handler.on_restoration_progress(&backup_id, event_handler.additional_data_size);
+    }
+
+    revert_guard.defuse();
+
+    match std::fs::read_dir(tmp_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(entry) => {
+                        let file_name = entry.file_name();
+                        tracing::warn!("Extracted unknown entry {file_name:?}.")
+                    }
+                    Err(err) => debug_panic_or_log_error!("{err:?}"),
+                }
+            }
+        }
+        Err(err) => debug_panic_or_log_error!("Error reading temporary directory: {err:?}"),
+    }
+
+    Ok(())
 }
 
 /// `PUT /backups/{backup_id}/restore`.
@@ -567,16 +675,16 @@ async fn put_backup_restore_stream(
         let (sender, receiver) = mpsc::channel(8);
 
         struct EventHandler {
-            backup_size: u64,
+            total: u64,
             progress: u64,
             progress_sender: Arc<mpsc::Sender<Result<sse::Event, anyhow::Error>>>,
         }
 
-        impl ExtractBackupEventHandler for EventHandler {
-            fn on_restoration_start(&mut self, backup_id: &BackupId, backup_size: u64) {
+        impl RestoreBackupEventHandler for EventHandler {
+            fn on_restoration_start(&mut self, backup_id: &BackupId, total: u64) {
                 assert_eq!(self.progress, 0);
 
-                self.backup_size = backup_size;
+                self.total = total;
 
                 tokio::task::block_in_place(move || {
                     tokio::runtime::Handle::current().block_on(async move {
@@ -584,7 +692,7 @@ async fn put_backup_restore_stream(
                             .send(RestoreBackupEvent::progress(
                                 &backup_id.to_string(),
                                 0,
-                                backup_size,
+                                total,
                             ))
                             .await
                             .unwrap_or_else(|err| {
@@ -594,8 +702,8 @@ async fn put_backup_restore_stream(
                 })
             }
 
-            fn on_raw_read(&mut self, backup_id: &BackupId, len: usize) {
-                assert_ne!(self.backup_size, 0);
+            fn on_restoration_progress(&mut self, backup_id: &BackupId, len: usize) {
+                assert_ne!(self.total, 0);
 
                 if len == 0 {
                     return;
@@ -609,7 +717,7 @@ async fn put_backup_restore_stream(
                             .send(RestoreBackupEvent::progress(
                                 &backup_id.to_string(),
                                 self.progress,
-                                self.backup_size,
+                                self.total,
                             ))
                             .await
                             .unwrap_or_else(|err| {
@@ -620,13 +728,11 @@ async fn put_backup_restore_stream(
             }
         }
 
-        impl RestoreBackupEventHandler for EventHandler {}
-
         let sender = Arc::new(sender);
 
         (
             EventHandler {
-                backup_size: 0,
+                total: 0,
                 progress: 0,
                 progress_sender: Arc::clone(&sender),
             },

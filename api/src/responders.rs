@@ -116,26 +116,33 @@ impl Error {
     }
 }
 
-impl IntoResponse for Error {
-    fn into_response(self) -> Response {
+impl Error {
+    pub fn into_json(self) -> serde_json::Value {
         use serde_json::json;
 
         // Destructure to ensure we don’t forget fields.
         let Self {
             kind,
             code,
-            status,
+            status: _,
             message,
             description,
         } = self;
 
-        let body = json!({
+        json!({
             "error": true,
             "kind": kind,
             "code": code,
             "message": message,
             "description": description,
-        });
+        })
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let status = self.status;
+        let body = self.into_json();
 
         (status, axum::Json(body)).into_response()
     }

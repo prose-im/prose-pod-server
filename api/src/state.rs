@@ -219,6 +219,12 @@ pub mod frontend {
         }
     }
 
+    impl AsRef<FrontendRunning> for FrontendRunning {
+        fn as_ref(&self) -> &FrontendRunning {
+            &self
+        }
+    }
+
     // MARK: Running with misconfiguration
 
     /// [`FrontendMisconfigured`] is used after a factory reset, when the
@@ -231,9 +237,22 @@ pub mod frontend {
     /// or exit code can indicate something went wrong.
     #[derive(Debug, Clone)]
     pub struct FrontendRunningWithMisconfiguration {
-        pub(crate) config: Arc<AppConfig>,
-        pub(crate) tracing_reload_handles: Arc<TracingReloadHandles>,
+        inner: FrontendRunning,
         pub error: crate::responders::Error,
+    }
+
+    impl std::ops::Deref for FrontendRunningWithMisconfiguration {
+        type Target = FrontendRunning;
+
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+
+    impl AsRef<FrontendRunning> for FrontendRunningWithMisconfiguration {
+        fn as_ref(&self) -> &FrontendRunning {
+            &self.inner
+        }
     }
 
     state_boilerplate!(FrontendRunningWithMisconfiguration);
@@ -294,8 +313,7 @@ pub mod frontend {
     {
         fn from((state, error): (FrontendRunning, &'a crate::responders::Error)) -> Self {
             Self {
-                config: state.config,
-                tracing_reload_handles: state.tracing_reload_handles,
+                inner: state,
                 error: error.to_owned(),
             }
         }
@@ -303,10 +321,7 @@ pub mod frontend {
 
     impl From<FrontendRunningWithMisconfiguration> for FrontendRunning {
         fn from(value: FrontendRunningWithMisconfiguration) -> Self {
-            Self {
-                config: value.config,
-                tracing_reload_handles: value.tracing_reload_handles,
-            }
+            value.inner
         }
     }
 
@@ -321,7 +336,7 @@ pub mod frontend {
     impl From<FrontendRunningWithMisconfiguration> for FrontendRestarting {
         fn from(state: FrontendRunningWithMisconfiguration) -> Self {
             Self {
-                tracing_reload_handles: state.tracing_reload_handles,
+                tracing_reload_handles: state.inner.tracing_reload_handles,
             }
         }
     }
@@ -342,7 +357,9 @@ pub mod backend {
             BackendRestartFailed as RestartFailed, BackendRestarting as Restarting,
             BackendRunning as Running, BackendStartFailed as StartFailed,
             BackendStarting as Starting, BackendStateTrait as State, BackendStopped as Stopped,
+            BackendUndergoingBackup as UndergoingBackup,
             BackendUndergoingFactoryReset as UndergoingFactoryReset,
+            BackendUndergoingRestore as UndergoingRestore,
         };
     }
 
@@ -366,6 +383,7 @@ pub mod backend {
 
     use self::substates::*;
     pub mod substates {
+        use crate::prose_pod_api::ProsePodApi;
         use crate::util::sync::AutoCancelToken;
 
         use super::*;
@@ -378,9 +396,25 @@ pub mod backend {
             pub oauth2_client: Arc<ProsodyOAuth2>,
             pub secrets_service: SecretsService,
             pub server_salt: secrecy::SecretSlice<u8>,
-            pub http_client: reqwest::Client,
+            pub http_client: Arc<reqwest::Client>,
+            pub backup_service: Option<Arc<prose_backup::BackupService>>,
+            pub prose_pod_api: Arc<ProsePodApi>,
             #[allow(dead_code)]
             pub cancellation_token: AutoCancelToken,
+        }
+
+        impl Operational {
+            pub fn backup_service(
+                &self,
+            ) -> Result<&Arc<prose_backup::BackupService>, crate::responders::Error> {
+                self.backup_service.as_ref().ok_or_else(|| {
+                    crate::errors::configuration_error(
+                        "MISSING_CONFIG",
+                        "Missing configuration",
+                        "Backups configuration not initialized.",
+                    )
+                })
+            }
         }
     }
 
@@ -444,6 +478,22 @@ pub mod backend {
 
     impl BackendStateTrait for BackendUndergoingFactoryReset {}
 
+    // MARK: Backup & Restore
+
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendUndergoingBackup {}
+
+    state_boilerplate!(BackendUndergoingBackup);
+
+    impl BackendStateTrait for BackendUndergoingBackup {}
+
+    #[derive(Debug, Clone, Default)]
+    pub struct BackendUndergoingRestore {}
+
+    state_boilerplate!(BackendUndergoingRestore);
+
+    impl BackendStateTrait for BackendUndergoingRestore {}
+
     // MARK: Stopped
 
     #[derive(Debug, Clone, Default)]
@@ -472,6 +522,12 @@ pub mod backend {
     impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStopped);
     impl_trivial_transition!(BackendUndergoingFactoryReset => default BackendStarting);
     impl_fail_state_from_pair!((BackendUndergoingFactoryReset => BackendStopped, &'a crate::responders::Error) use left);
+
+    impl_trivial_transition!(BackendUndergoingBackup => default BackendRestarting);
+
+    impl_trivial_transition!(BackendUndergoingRestore => default BackendStopped);
+    impl_trivial_transition!(BackendUndergoingRestore => default BackendStarting);
+    impl_fail_state_from_pair!((BackendUndergoingRestore => BackendStopped, &'a crate::responders::Error) use left);
 }
 
 // MARK: App state transitions

@@ -43,6 +43,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use openpgp;
+pub use tar;
 pub use tokio;
 pub use toml;
 

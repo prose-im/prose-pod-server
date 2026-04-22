@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use arc_swap::ArcSwap;
+use prose_backup::BackupService;
 use prosody_child_process::ProsodyChildProcess;
 use prosody_http::ProsodyHttpConfig;
 use prosody_http::oauth2::{self, OAuth2ClientConfig, ProsodyOAuth2};
@@ -22,6 +23,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::models::{BareJid, JidDomain, JidNode, Password};
+use crate::prose_pod_api::ProsePodApi;
+use crate::router::backups::BACKUP_BLUEPRINTS;
 use crate::secrets_service::SecretsService;
 use crate::secrets_store::SecretsStore;
 use crate::state::prelude::*;
@@ -34,8 +37,9 @@ const PROSODY_CERTS_DIR: &'static str = "/etc/prosody/certs";
 
 // MARK: - State transitions
 
-impl<B> AppState<f::Running, B>
+impl<F, B> AppState<F, B>
 where
+    F: frontend::State + AsRef<f::Running>,
     B: backend::State,
 {
     /// Try bootstrapping the backend, but do not transition if an error occurs.
@@ -46,8 +50,23 @@ where
     async fn bootstrap(app_state: &Self) -> Result<b::Running, anyhow::Error> {
         use crate::util::sync::AutoCancelToken;
 
-        let app_config = Arc::deref(&app_state.frontend.config);
+        let app_config = Arc::deref(&app_state.frontend.as_ref().config);
         let ref server_domain = app_config.server.domain;
+
+        let http_client = Arc::new(reqwest::Client::new());
+
+        let backup_service = match app_config.backups.as_ref() {
+            Some(config) => {
+                let service =
+                    BackupService::from_config(config, BACKUP_BLUEPRINTS.clone(), vec![])?;
+                Some(Arc::new(service))
+            }
+            None => None,
+        };
+        let prose_pod_api = Arc::new(ProsePodApi {
+            http_client: Arc::clone(&http_client),
+            url: app_config.prose_pod_api.local_hostname.clone(),
+        });
 
         create_required_dirs()?;
 
@@ -69,7 +88,7 @@ where
 
         // Launch Prosody.
         let mut prosody = ProsodyChildProcess::new();
-        start_prosody(&app_state.frontend.config, &mut prosody).await?;
+        start_prosody(&app_state.frontend.as_ref().config, &mut prosody).await?;
 
         let mut prosodyctl = Prosodyctl::new();
 
@@ -134,8 +153,10 @@ where
                 prosody_rest,
                 oauth2_client,
                 secrets_service: secrets,
-                http_client: reqwest::Client::new(),
+                http_client,
                 server_salt,
+                backup_service,
+                prose_pod_api,
                 cancellation_token: AutoCancelToken(cancellation_token),
             }),
         };
@@ -152,13 +173,18 @@ where
     /// NOTE: This method does **not** log errors.
     pub(crate) async fn try_bootstrapping(
         self,
-    ) -> Result<AppState<f::Running, b::Running>, (Self, anyhow::Error)> {
+    ) -> Result<AppState<F, b::Running>, (Self, anyhow::Error)>
+    where
+        AppState<F, b::Running>: AppStateTrait,
+    {
         tracing::info!("Bootstrapping…");
         let start = Instant::now();
 
         match Self::bootstrap(&self).await {
             Ok(backend) => {
-                let new_state = self.with_backend(backend).with_auto_transition();
+                let new_state = self
+                    .with_backend(backend)
+                    .with_auto_transition::<F, b::Running>();
 
                 tracing::info!("Bootstrapping took {:.0?}.", start.elapsed());
                 Ok(new_state)
@@ -179,9 +205,12 @@ where
     /// NOTE: This method **does** log errors.
     pub(crate) async fn do_bootstrapping(
         self,
-    ) -> Result<AppState<f::Running, b::Running>, FailState<f::Running, b::StartFailed>>
+    ) -> Result<AppState<F, b::Running>, FailState<F, b::StartFailed>>
     where
+        for<'a> F: From<(F, &'a crate::responders::Error)>,
         for<'a> b::StartFailed: From<(B, &'a crate::responders::Error)>,
+        AppState<F, b::Running>: AppStateTrait,
+        AppState<F, b::StartFailed>: AppStateTrait,
     {
         match self.try_bootstrapping().await {
             Ok(new_state) => Ok(new_state),

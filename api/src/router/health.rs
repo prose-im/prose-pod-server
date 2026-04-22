@@ -93,6 +93,34 @@ impl HealthTrait for backend::UndergoingFactoryReset {
     }
 }
 
+// MARK: Backup & Restore
+
+impl HealthTrait for backend::UndergoingBackup {
+    fn health(&self) -> axum::response::Response {
+        errors::service_unavailable(
+            "BACKUP_IN_PROGRESS",
+            "Backup in progress",
+            "Your Prose Workspace will restart shortly.",
+        )
+        .into_response()
+        // FIXME: Test if this value makes sense.
+        .retry_after(10)
+    }
+}
+
+impl HealthTrait for backend::UndergoingRestore {
+    fn health(&self) -> axum::response::Response {
+        errors::service_unavailable(
+            "BACKUP_RESTORE_IN_PROGRESS",
+            "Backup restoration in progress",
+            "Your Prose Workspace will restart shortly.",
+        )
+        .into_response()
+        // FIXME: Test if this value makes sense.
+        .retry_after(10)
+    }
+}
+
 // MARK: - Frontend
 
 // MARK: Frontend running

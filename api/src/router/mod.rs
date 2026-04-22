@@ -4,6 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 
 mod analytics;
+pub(crate) mod backups;
 mod cloud_api_proxy;
 mod health;
 mod init;
@@ -75,6 +76,20 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             .route("/lifecycle/backend-restart", post(lifecycle::backend_restart))
             .route("/lifecycle/reload", post(lifecycle::reload))
             .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
+            .route(
+                "/backups",
+                MethodRouter::new()
+                    .post(backups::post_backups_all)
+                    .get(backups::get_backups)
+            )
+            .route(
+                "/backups/{backup_id}",
+                MethodRouter::new()
+                    .get(backups::get_backup)
+                    .delete(backups::delete_backup)
+            )
+            .route("/backups/{backup_id}/restore", put(backups::put_backup_restore_all))
+            .route("/backups/{backup_id}/download-url", get(backups::get_backup_download_url))
             .route(
                 "/cloud-api-proxy/v1/analytics/event",
                 MethodRouter::new()
@@ -203,6 +218,46 @@ impl AppStateTrait for AppState<f::RunningWithMisconfiguration, b::Running> {
 impl AppStateTrait for AppState<f::Restarting, b::UndergoingFactoryReset> {
     fn state_name() -> &'static str {
         "Undergoing factory reset"
+    }
+
+    #[rustfmt::skip]
+    fn into_router(self) -> axum::Router {
+        Router::new().fallback(frontend_health).with_state(self)
+    }
+
+    fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
+    }
+}
+
+/// **Undergoing backup** (during a factory reset).
+impl AppStateTrait for AppState<f::Running, b::UndergoingBackup> {
+    fn state_name() -> &'static str {
+        "Undergoing backup"
+    }
+
+    #[rustfmt::skip]
+    fn into_router(self) -> axum::Router {
+        Router::new().fallback(frontend_health).with_state(self)
+    }
+
+    fn validate_config_changes(&self, _new_config: &AppConfig) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    fn prosody_weak(&self) -> Option<Weak<RwLock<ProsodyChildProcess>>> {
+        None
+    }
+}
+
+/// **Undergoing restore** (during a factory reset).
+impl AppStateTrait for AppState<f::Running, b::UndergoingRestore> {
+    fn state_name() -> &'static str {
+        "Undergoing restore"
     }
 
     #[rustfmt::skip]

@@ -17,7 +17,7 @@ use crate::archiving::{
 };
 use crate::decryption::{DecryptionContext, DecryptionReport};
 use crate::stats::{MeteredStream, ReadStats, StreamStats};
-use crate::util::{self, concat_byte_slices, concat_osstr, debug_panic};
+use crate::util::{self, concat_byte_slices, concat_osstr, debug_panic, is_same_device};
 use crate::verification::VerificationOutput;
 use crate::{BackupId, RestoreBackupEventHandler};
 
@@ -167,26 +167,7 @@ pub(crate) fn restore(
     };
 
     // Backup destination paths to revert in case an error happens.
-    let mut revert_guard = RestoreRevertGuard::default();
-    for (_, dst) in path_mappings.iter() {
-        if dst.exists() {
-            let dst_bak = util::fs::backup_path(&dst)
-                // NOTE: If an error happens here, it aborts the backup
-                //   restoration and reverts all changes made until then.
-                .map_err(|err| RestorationError::PathBackupFailed {
-                    path: PathBuf::clone(dst),
-                    source: anyhow::Error::new(err),
-                })?;
-
-            (revert_guard.paths).push((PathBuf::clone(dst), Some(dst_bak)));
-        } else {
-            revert_guard.paths.push((PathBuf::clone(dst), None));
-        }
-
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent).context("Could not create restore destinations")?;
-        }
-    }
+    let mut revert_guard = backup_destinations(path_mappings.iter())?;
 
     // Store in a boolean if an entry was extracted in the temporary directory.
     // This saves us from having to read the temporary directory to check if
@@ -517,6 +498,73 @@ impl Drop for RestoreRevertGuard {
             revert(self.paths.iter());
         }
     }
+}
+
+/// Backup destination paths to revert in case an error happens.
+fn backup_destinations<'a>(
+    path_mappings: impl Iterator<Item = &'a (OsString, PathBuf)>,
+) -> Result<RestoreRevertGuard, RestorationError> {
+    let mut revert_guard = RestoreRevertGuard::default();
+
+    for (_, dst) in path_mappings {
+        if dst.exists() {
+            let Some(parent) = dst.parent() else {
+                continue;
+            };
+
+            // If the destination directory can be backed up without copy,
+            // do it. If not (e.g. directory is mounted), backup up children
+            // individually.
+            if is_same_device(dst, parent)
+                // NOTE: If an error happens here, it aborts the backup
+                //   restoration and reverts all changes made until then.
+                .map_err(|err| RestorationError::PathBackupFailed {
+                    path: PathBuf::clone(dst),
+                    source: anyhow::Error::new(err).context("Failed testing device"),
+                })?
+            {
+                let dst_bak = util::fs::backup_path(dst)
+                    // NOTE: If an error happens here, it aborts the backup
+                    //   restoration and reverts all changes made until then.
+                    .map_err(|err| RestorationError::PathBackupFailed {
+                        path: PathBuf::clone(dst),
+                        source: anyhow::Error::new(err).context("Failed backing up dir"),
+                    })?;
+
+                (revert_guard.paths).push((PathBuf::clone(dst), Some(dst_bak)));
+            } else {
+                let fixme = "Remove unwraps";
+                // NOTE: Read all children instead of iterating because we’ll
+                //   be creating more children while iterating (potentially
+                //   creating infinite loops).
+                let children = std::fs::read_dir(dst).unwrap().collect::<Vec<_>>();
+
+                for child in children {
+                    let child = child.unwrap();
+
+                    let child_path = &child.path();
+
+                    let child_bak = util::fs::backup_path(child_path)
+                        // NOTE: If an error happens here, it aborts the backup
+                        //   restoration and reverts all changes made until then.
+                        .map_err(|err| RestorationError::PathBackupFailed {
+                            path: PathBuf::clone(child_path),
+                            source: anyhow::Error::new(err).context("Failed backing up child"),
+                        })?;
+
+                    (revert_guard.paths).push((PathBuf::clone(child_path), Some(child_bak)));
+                }
+            }
+        } else {
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent).context("Could not create restore destinations")?;
+            }
+
+            revert_guard.paths.push((PathBuf::clone(dst), None));
+        }
+    }
+
+    Ok(revert_guard)
 }
 
 /// Note that this is best-effort, meaning we’re already doing error recovery

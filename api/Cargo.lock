@@ -3513,7 +3513,6 @@ dependencies = [
  "serde_with",
  "sha2",
  "strum 0.28.0",
- "tar 0.4.45 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "time",
  "tokio",
