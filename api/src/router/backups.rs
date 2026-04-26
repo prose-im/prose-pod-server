@@ -250,14 +250,21 @@ async fn post_backups_stream(
     }
 
     // Stream backup progress.
-    let fixme = "Debounce events";
     let (mut event_handler, sender, receiver) = {
         let (sender, receiver) = mpsc::channel(8);
 
+        /// This [`CreateBackupEventHandler`] sends a [`sse::Event`] on
+        /// progress, throttling them while ensuring one still receives the
+        /// last event (100% progress).
+        ///
+        /// NOTE: The throttle is subject to drift, but we don’t care.
+        ///   It’s simple and effective, just what we want.
         struct EventHandler {
             backup_id: Option<String>,
             expected_archive_size: u64,
             effective_archive_size: u64,
+            interval: tokio::time::Duration,
+            last_event_sent_at: tokio::time::Instant,
             progress_sender: Arc<mpsc::Sender<Result<sse::Event, anyhow::Error>>>,
         }
 
@@ -267,6 +274,8 @@ async fn post_backups_stream(
 
                 self.backup_id = Some(backup_id.to_string());
                 self.expected_archive_size = expected_archive_size;
+
+                self.last_event_sent_at = tokio::time::Instant::now();
 
                 tokio::task::block_in_place(move || {
                     tokio::runtime::Handle::current().block_on(async move {
@@ -287,22 +296,31 @@ async fn post_backups_stream(
             fn on_archive_progress(&mut self, backup_id: &BackupId, archived_bytes: usize) {
                 debug_assert_ne!(self.expected_archive_size, 0);
 
-                self.effective_archive_size += archived_bytes as u64;
+                self.effective_archive_size = self
+                    .effective_archive_size
+                    .saturating_add(archived_bytes as u64);
+                debug_assert!(self.effective_archive_size <= self.expected_archive_size);
 
-                tokio::task::block_in_place(move || {
-                    tokio::runtime::Handle::current().block_on(async move {
-                        self.progress_sender
-                            .send(CreateBackupEvent::progress(
-                                &backup_id.to_string(),
-                                self.effective_archive_size,
-                                self.expected_archive_size,
-                            ))
-                            .await
-                            .unwrap_or_else(|err| {
-                                debug_panic_or_log_error!("Progress send error: {err:#}")
-                            });
+                if self.effective_archive_size >= self.expected_archive_size
+                    || self.last_event_sent_at.elapsed() > self.interval
+                {
+                    self.last_event_sent_at = tokio::time::Instant::now();
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(CreateBackupEvent::progress(
+                                    &backup_id.to_string(),
+                                    self.effective_archive_size,
+                                    self.expected_archive_size,
+                                ))
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress send error: {err:#}")
+                                });
+                        })
                     })
-                })
+                }
             }
         }
 
@@ -313,6 +331,9 @@ async fn post_backups_stream(
                 backup_id: None,
                 expected_archive_size: 0,
                 effective_archive_size: 0,
+                // TODO: Parameterize this?
+                interval: tokio::time::Duration::from_millis(100),
+                last_event_sent_at: tokio::time::Instant::now(),
                 progress_sender: Arc::clone(&sender),
             },
             sender,
@@ -674,9 +695,17 @@ async fn put_backup_restore_stream(
     let (mut event_handler, sender, receiver) = {
         let (sender, receiver) = mpsc::channel(8);
 
+        /// This [`RestoreBackupEventHandler`] sends a [`sse::Event`] on
+        /// progress, throttling them while ensuring one still receives the
+        /// last event (100% progress).
+        ///
+        /// NOTE: The throttle is subject to drift, but we don’t care.
+        ///   It’s simple and effective, just what we want.
         struct EventHandler {
             total: u64,
             progress: u64,
+            interval: tokio::time::Duration,
+            last_event_sent_at: tokio::time::Instant,
             progress_sender: Arc<mpsc::Sender<Result<sse::Event, anyhow::Error>>>,
         }
 
@@ -685,6 +714,8 @@ async fn put_backup_restore_stream(
                 assert_eq!(self.progress, 0);
 
                 self.total = total;
+
+                self.last_event_sent_at = tokio::time::Instant::now();
 
                 tokio::task::block_in_place(move || {
                     tokio::runtime::Handle::current().block_on(async move {
@@ -709,22 +740,28 @@ async fn put_backup_restore_stream(
                     return;
                 }
 
-                self.progress += len as u64;
+                self.progress = self.progress.saturating_add(len as u64);
+                debug_assert!(self.progress <= self.total);
 
-                tokio::task::block_in_place(move || {
-                    tokio::runtime::Handle::current().block_on(async move {
-                        self.progress_sender
-                            .send(RestoreBackupEvent::progress(
-                                &backup_id.to_string(),
-                                self.progress,
-                                self.total,
-                            ))
-                            .await
-                            .unwrap_or_else(|err| {
-                                debug_panic_or_log_error!("Progress send error: {err:#}")
-                            });
+                if self.progress >= self.total || self.last_event_sent_at.elapsed() > self.interval
+                {
+                    self.last_event_sent_at = tokio::time::Instant::now();
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(RestoreBackupEvent::progress(
+                                    &backup_id.to_string(),
+                                    self.progress,
+                                    self.total,
+                                ))
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress send error: {err:#}")
+                                });
+                        })
                     })
-                })
+                }
             }
         }
 
@@ -734,6 +771,9 @@ async fn put_backup_restore_stream(
             EventHandler {
                 total: 0,
                 progress: 0,
+                // TODO: Parameterize this?
+                interval: tokio::time::Duration::from_millis(100),
+                last_event_sent_at: tokio::time::Instant::now(),
                 progress_sender: Arc::clone(&sender),
             },
             sender,
