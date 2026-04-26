@@ -1195,6 +1195,9 @@ mod restore {
 
         #[inline]
         fn on_extraction_finished(&mut self, backup_id: &BackupId, report: ExtractionReport) {}
+
+        #[inline]
+        fn on_restoration_finished(&mut self, backup_id: &BackupId) {}
     }
 }
 

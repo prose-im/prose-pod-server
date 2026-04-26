@@ -254,6 +254,8 @@ pub(crate) fn restore(
 
         revert_guard.defuse();
 
+        event_handler.on_restoration_finished(backup_id);
+
         None
     };
 

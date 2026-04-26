@@ -264,7 +264,7 @@ async fn post_backups_stream(
             expected_archive_size: u64,
             effective_archive_size: u64,
             interval: tokio::time::Duration,
-            last_event_sent_at: tokio::time::Instant,
+            last_event_sent: (u64, tokio::time::Instant),
             progress_sender: Arc<mpsc::Sender<Result<sse::Event, anyhow::Error>>>,
         }
 
@@ -275,7 +275,7 @@ async fn post_backups_stream(
                 self.backup_id = Some(backup_id.to_string());
                 self.expected_archive_size = expected_archive_size;
 
-                self.last_event_sent_at = tokio::time::Instant::now();
+                self.last_event_sent = (0, tokio::time::Instant::now());
 
                 tokio::task::block_in_place(move || {
                     tokio::runtime::Handle::current().block_on(async move {
@@ -301,10 +301,9 @@ async fn post_backups_stream(
                     .saturating_add(archived_bytes as u64);
                 debug_assert!(self.effective_archive_size <= self.expected_archive_size);
 
-                if self.effective_archive_size >= self.expected_archive_size
-                    || self.last_event_sent_at.elapsed() > self.interval
-                {
-                    self.last_event_sent_at = tokio::time::Instant::now();
+                if self.last_event_sent.1.elapsed() > self.interval {
+                    self.last_event_sent =
+                        (self.effective_archive_size, tokio::time::Instant::now());
 
                     tokio::task::block_in_place(move || {
                         tokio::runtime::Handle::current().block_on(async move {
@@ -312,6 +311,33 @@ async fn post_backups_stream(
                                 .send(CreateBackupEvent::progress(
                                     &backup_id.to_string(),
                                     self.effective_archive_size,
+                                    self.expected_archive_size,
+                                ))
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress send error: {err:#}")
+                                });
+                        })
+                    })
+                }
+            }
+
+            fn on_backup_uploaded(
+                &mut self,
+                backup_id: &BackupId,
+                _size_bytes: u64,
+                _duration: std::time::Duration,
+            ) {
+                if self.last_event_sent.0 < self.expected_archive_size {
+                    self.last_event_sent =
+                        (self.expected_archive_size, tokio::time::Instant::now());
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(RestoreBackupEvent::progress(
+                                    &backup_id.to_string(),
+                                    self.expected_archive_size,
                                     self.expected_archive_size,
                                 ))
                                 .await
@@ -333,7 +359,7 @@ async fn post_backups_stream(
                 effective_archive_size: 0,
                 // TODO: Parameterize this?
                 interval: tokio::time::Duration::from_millis(100),
-                last_event_sent_at: tokio::time::Instant::now(),
+                last_event_sent: (0, tokio::time::Instant::now()),
                 progress_sender: Arc::clone(&sender),
             },
             sender,
@@ -516,6 +542,10 @@ where
         ) {
             self.inner.on_extraction_finished(backup_id, report);
         }
+
+        fn on_restoration_finished(&mut self, backup_id: &BackupId) {
+            self.inner.on_restoration_finished(backup_id);
+        }
     }
 
     let mut event_handler = EventHandler {
@@ -587,6 +617,8 @@ where
     }
 
     revert_guard.defuse();
+
+    event_handler.on_restoration_finished(&backup_id);
 
     match std::fs::read_dir(tmp_dir) {
         Ok(entries) => {
@@ -705,7 +737,7 @@ async fn put_backup_restore_stream(
             total: u64,
             progress: u64,
             interval: tokio::time::Duration,
-            last_event_sent_at: tokio::time::Instant,
+            last_event_sent: (u64, tokio::time::Instant),
             progress_sender: Arc<mpsc::Sender<Result<sse::Event, anyhow::Error>>>,
         }
 
@@ -715,7 +747,7 @@ async fn put_backup_restore_stream(
 
                 self.total = total;
 
-                self.last_event_sent_at = tokio::time::Instant::now();
+                self.last_event_sent = (0, tokio::time::Instant::now());
 
                 tokio::task::block_in_place(move || {
                     tokio::runtime::Handle::current().block_on(async move {
@@ -743,9 +775,8 @@ async fn put_backup_restore_stream(
                 self.progress = self.progress.saturating_add(len as u64);
                 debug_assert!(self.progress <= self.total);
 
-                if self.progress >= self.total || self.last_event_sent_at.elapsed() > self.interval
-                {
-                    self.last_event_sent_at = tokio::time::Instant::now();
+                if self.last_event_sent.1.elapsed() > self.interval {
+                    self.last_event_sent = (self.progress, tokio::time::Instant::now());
 
                     tokio::task::block_in_place(move || {
                         tokio::runtime::Handle::current().block_on(async move {
@@ -753,6 +784,27 @@ async fn put_backup_restore_stream(
                                 .send(RestoreBackupEvent::progress(
                                     &backup_id.to_string(),
                                     self.progress,
+                                    self.total,
+                                ))
+                                .await
+                                .unwrap_or_else(|err| {
+                                    debug_panic_or_log_error!("Progress send error: {err:#}")
+                                });
+                        })
+                    })
+                }
+            }
+
+            fn on_restoration_finished(&mut self, backup_id: &BackupId) {
+                if self.last_event_sent.0 < self.total {
+                    self.last_event_sent = (self.total, tokio::time::Instant::now());
+
+                    tokio::task::block_in_place(move || {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            self.progress_sender
+                                .send(RestoreBackupEvent::progress(
+                                    &backup_id.to_string(),
+                                    self.total,
                                     self.total,
                                 ))
                                 .await
@@ -773,7 +825,7 @@ async fn put_backup_restore_stream(
                 progress: 0,
                 // TODO: Parameterize this?
                 interval: tokio::time::Duration::from_millis(100),
-                last_event_sent_at: tokio::time::Instant::now(),
+                last_event_sent: (0, tokio::time::Instant::now()),
                 progress_sender: Arc::clone(&sender),
             },
             sender,

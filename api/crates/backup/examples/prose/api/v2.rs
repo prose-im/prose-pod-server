@@ -398,6 +398,10 @@ impl ProsePodServerApiV2 {
             ) {
                 self.inner.on_extraction_finished(backup_id, report);
             }
+
+            fn on_restoration_finished(&mut self, backup_id: &BackupId) {
+                self.inner.on_restoration_finished(backup_id);
+            }
         }
 
         let mut event_handler = EventHandler {
@@ -435,6 +439,8 @@ impl ProsePodServerApiV2 {
         }
 
         revert_guard.defuse();
+
+        event_handler.on_restoration_finished(&backup_id);
 
         match std::fs::read_dir(tmp_dir) {
             Ok(entries) => {
