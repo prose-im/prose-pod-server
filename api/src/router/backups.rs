@@ -924,20 +924,10 @@ pub(super) async fn get_backup_download_url(
 
 impl From<CreateBackupError> for crate::responders::Error {
     fn from(error: CreateBackupError) -> Self {
-        match error {
-            CreateBackupError::CannotCreateSink(error) => todo!(),
-            CreateBackupError::CannotArchive(cannot_archive) => todo!(),
-            CreateBackupError::ArchivingFailed(error) => todo!(),
-            CreateBackupError::CannotCompress(error) => todo!(),
-            CreateBackupError::CompressionFailed(error) => todo!(),
-            CreateBackupError::CannotEncrypt(error) => todo!(),
-            CreateBackupError::EncryptionFailed(error) => todo!(),
-            CreateBackupError::HashingFailed(error) => todo!(),
-            CreateBackupError::CannotSign(error) => todo!(),
-            CreateBackupError::SigningFailed(error) => todo!(),
-            CreateBackupError::UploadFailed(error) => todo!(),
-            CreateBackupError::IntegrityCheckUploadFailed(error) => todo!(),
-            CreateBackupError::Other(error) => todo!(),
-        }
+        errors::internal_server_error(
+            &anyhow::Error::new(error),
+            "BACKUP_CREATE_FAILED",
+            "Something went wrong while creating the backup. Contact an administrator to fix this.",
+        )
     }
 }
