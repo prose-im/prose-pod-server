@@ -184,6 +184,64 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfigu
         .merge(Serialized::default("backups", figment::value::Empty::Unit))
         .merge(Serialized::default("backups", backups_value));
 
+    // Validate backups configuration.
+    {
+        use crate::router::backups::{BACKUP_BLUEPRINTS, BACKUPS_VERSION};
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let blueprint = (BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION))
+            .expect("A blueprint should always exist for BACKUPS_VERSION");
+
+        // TODO: Canonicalize paths?
+        fn ensure_not_in_backed_up_path(
+            dir: OsString,
+            blueprint: &prose_backup::archiving::ArchiveBlueprint,
+        ) -> Result<(), InvalidConfiguration> {
+            let dir_bytes = dir.as_bytes();
+
+            for (_, backed_up_path) in blueprint.paths.iter() {
+                let mut prefix = backed_up_path.as_os_str().as_bytes();
+
+                // If `prefix` ends with a `/`, ignore it.
+                // It simplifies further logic.
+                // PERF: This avoids allocating a new `Vec` with `/` as suffix.
+                if prefix.ends_with(b"/") {
+                    prefix = &prefix[..prefix.len() - 1];
+                }
+
+                if let Some(suffix) = dir_bytes.strip_prefix(prefix) {
+                    if suffix.is_empty() || suffix == b"/" {
+                        // Exact match.
+                        return Err(InvalidConfiguration(anyhow!(
+                            "Cannot use {dir:?} as backup storage as it is itself backed up. \
+                            You would loose your backups when restoring."
+                        )));
+                    } else if suffix.starts_with(b"/") {
+                        // Proper prefix.
+                        return Err(InvalidConfiguration(anyhow!(
+                            "Cannot use {dir:?} as backup storage as its parent {backed_up_path:?} is backed up. \
+                            You would loose your backups when restoring."
+                        )));
+                    } else {
+                        // Not a real prefix (e.g. `abc` matches `abcd/ef`),
+                        // but it really is a different directory.
+                        continue;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        if let Ok(dir) = figment.extract_inner::<String>("backups.storage.backups.fs.directory") {
+            ensure_not_in_backed_up_path(OsString::from(dir), blueprint)?;
+        }
+        if let Ok(dir) = figment.extract_inner::<String>("backups.storage.checks.fs.directory") {
+            ensure_not_in_backed_up_path(OsString::from(dir), blueprint)?;
+        }
+    }
+
     // Apply analytics presets.
     if let Ok(preset_name) = figment.extract_inner::<String>("vendor_analytics.preset") {
         figment = apply_analytics_preset(preset_name.as_str(), figment)?;

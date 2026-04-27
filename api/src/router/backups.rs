@@ -32,7 +32,7 @@ use crate::prose_pod_api::ProsePodApi;
 use crate::state::prelude::*;
 use crate::util::{NoContext as _, debug_panic_or_log_error};
 
-const BACKUPS_VERSION: u8 = 1;
+pub const BACKUPS_VERSION: u8 = 1;
 
 pub static BACKUP_BLUEPRINTS: LazyLock<HashMap<u8, ArchiveBlueprint>> = LazyLock::new(|| {
     let mut hash_map = HashMap::with_capacity(1);
