@@ -64,10 +64,10 @@ pub(super) async fn post_backups_all(
     Result<Sse<ReceiverStream<Result<sse::Event, anyhow::Error>>>, crate::responders::Error>,
 > {
     match headers.get(ACCEPT) {
-        Some(val) if val.as_bytes() == b"text/event-stream" => {
-            Either::E2(post_backups_stream(state, caller_info, query, prose_pod_api_data).await)
-        }
-        _ => Either::E1(post_backups(state, caller_info, query, prose_pod_api_data).await),
+        Some(val) if val.as_bytes() == b"text/event-stream" => Either::E2(
+            post_backups_stream(state, caller_info, headers, query, prose_pod_api_data).await,
+        ),
+        _ => Either::E1(post_backups(state, caller_info, headers, query, prose_pod_api_data).await),
     }
 }
 
@@ -150,6 +150,7 @@ pub struct CreateBackupRequest {
 async fn post_backups(
     State(app_state): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
+    headers: HeaderMap,
     // NOTE: We pass that in the query because the body is already used to pass
     //   a byte stream. It’s internal and only temporary so let’s ignore it.
     Query(req): Query<CreateBackupRequest>,
@@ -163,7 +164,17 @@ async fn post_backups(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let fixme = "Test content type";
+    match headers.get(axum::http::header::CONTENT_TYPE) {
+        Some(value) if value == "application/x-tar" => {}
+        _ => {
+            return Err(errors::unsupported_media_type(
+                "BAD_REQUEST",
+                "Bad request",
+                "Body should be `application/x-tar`.",
+            ));
+        }
+    }
+
     if prose_pod_api_data.is_empty() {
         return Err(errors::validation_error(
             "BAD_REQUEST",
@@ -227,6 +238,7 @@ impl CreateBackupEvent {
 async fn post_backups_stream(
     State(app_state): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
+    headers: HeaderMap,
     // NOTE: We pass that in the query because the body is already used to pass
     //   a byte stream. It’s internal and only temporary so let’s ignore it.
     Query(req): Query<CreateBackupRequest>,
@@ -240,7 +252,17 @@ async fn post_backups_stream(
         _ => return Err(errors::forbidden("Only admins can do that.")),
     }
 
-    let fixme = "Test content type";
+    match headers.get(axum::http::header::CONTENT_TYPE) {
+        Some(value) if value == "application/x-tar" => {}
+        _ => {
+            return Err(errors::unsupported_media_type(
+                "BAD_REQUEST",
+                "Bad request",
+                "Body should be `application/x-tar`.",
+            ));
+        }
+    }
+
     if prose_pod_api_data.is_empty() {
         return Err(errors::validation_error(
             "BAD_REQUEST",

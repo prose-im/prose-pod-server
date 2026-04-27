@@ -188,6 +188,22 @@ pub fn validation_error(
 
 #[must_use]
 #[inline]
+pub fn unsupported_media_type(
+    code: &'static str,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
+) -> Error {
+    Error::new(
+        "VALIDATION_ERROR",
+        code,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        message,
+        description,
+    )
+}
+
+#[must_use]
+#[inline]
 pub fn configuration_error(
     code: &'static str,
     message: impl AsRef<str>,
