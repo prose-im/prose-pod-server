@@ -33,7 +33,7 @@ pub mod defaults {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Invalid '{CONFIG_FILE_NAME}' configuration file: {0}")]
+#[error("Invalid Prose configuration: {0:#}")]
 #[repr(transparent)]
 pub struct InvalidConfiguration(anyhow::Error);
 
