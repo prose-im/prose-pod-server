@@ -139,6 +139,7 @@ fn default_config_static() -> Figment {
 
         [api]
         local_hostname = "prose-pod-api"
+        port = 8080
     }
     .to_string();
 
@@ -547,6 +548,14 @@ pub mod prose_pod_api {
         ///
         /// NOTE: It’ll disappear when we implement [“Prose Pod API as part of Prose Pod Server”](https://github.com/prose-im/prose-pod-api/discussions/368).
         pub local_hostname: String,
+
+        pub port: u16,
+    }
+
+    impl ProsePodApiConfig {
+        pub fn http_url(&self) -> String {
+            format!("http://{}:{}", self.local_hostname, self.port)
+        }
     }
 }
 

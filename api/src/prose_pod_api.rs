@@ -5,11 +5,10 @@
 
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use reqwest::header::ACCEPT;
 use serde::de::DeserializeOwned;
 use tokio_util::io::ReaderStream;
-
-use crate::models::AuthToken;
 
 /// Rust interface to [`mod_http_admin_api`](https://hg.prosody.im/prosody-modules/file/tip/mod_http_admin_api).
 #[derive(Debug, Clone)]
@@ -23,15 +22,13 @@ pub struct ProsePodApi {
 impl ProsePodApi {
     pub async fn put_restore(
         &self,
-        token: &AuthToken,
+        prose_token: &HeaderValue,
         data: impl tokio::io::AsyncRead + Send + 'static,
     ) -> Result<(), self::Error> {
-        use secrecy::ExposeSecret;
-
         let response = self
-            .put("/restore")
+            .put("/v1/backups-internal/restore")
             .body(reqwest::Body::wrap_stream(ReaderStream::new(data)))
-            .bearer_auth(token.expose_secret())
+            .header("x-prose-token", prose_token)
             .send()
             .await?;
 

@@ -77,19 +77,19 @@ impl AppStateTrait for AppState<f::Running, b::Running> {
             .route("/lifecycle/reload", post(lifecycle::reload))
             .route("/lifecycle/factory-reset", post(lifecycle::factory_reset))
             .route(
-                "/backups",
+                "/v1/backups",
                 MethodRouter::new()
                     .post(backups::post_backups_all)
                     .get(backups::get_backups)
             )
             .route(
-                "/backups/{backup_id}",
+                "/v1/backups/{backup_id}",
                 MethodRouter::new()
                     .get(backups::get_backup)
                     .delete(backups::delete_backup)
             )
-            .route("/backups/{backup_id}/restore", put(backups::put_backup_restore_all))
-            .route("/backups/{backup_id}/download-url", get(backups::get_backup_download_url))
+            .route("/v1/backups/{backup_id}/restore", put(backups::put_backup_restore_all))
+            .route("/v1/backups/{backup_id}/download-url", get(backups::get_backup_download_url))
             .route(
                 "/cloud-api-proxy/v1/analytics/event",
                 MethodRouter::new()

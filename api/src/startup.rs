@@ -65,7 +65,7 @@ where
         };
         let prose_pod_api = Arc::new(ProsePodApi {
             http_client: Arc::clone(&http_client),
-            url: app_config.prose_pod_api.local_hostname.clone(),
+            url: app_config.prose_pod_api.http_url(),
         });
 
         create_required_dirs()?;

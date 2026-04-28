@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use std::usize;
 
+use anyhow::Context as _;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::sse::{self, Sse};
 use axum_extra::either::Either;
 use json::json;
@@ -21,13 +22,14 @@ use prose_backup::{
     BackupId, BackupService, CreateBackupCommand, CreateBackupError, CreateBackupEventHandler,
     CreateBackupSuccess, RestoreBackupEventHandler, RestoreBackupPartialSuccess, tar,
 };
+use prosody_child_process::ProsodyChildProcess;
 use reqwest::header::ACCEPT;
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, RwLockWriteGuard, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::bytes::Buf;
 
 use crate::errors;
-use crate::models::{AuthToken, CallerInfo};
+use crate::models::CallerInfo;
 use crate::prose_pod_api::ProsePodApi;
 use crate::state::prelude::*;
 use crate::util::{NoContext as _, debug_panic_or_log_error};
@@ -146,7 +148,7 @@ pub struct CreateBackupRequest {
     pub description: String,
 }
 
-/// `POST /backups`.
+/// `POST /v1/backups`.
 async fn post_backups(
     State(app_state): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
@@ -234,7 +236,7 @@ impl CreateBackupEvent {
     }
 }
 
-/// `POST /backups Accept:text/event-stream`.
+/// `POST /v1/backups Accept:text/event-stream`.
 async fn post_backups_stream(
     State(app_state): State<AppState<f::Running, b::Running>>,
     caller_info: CallerInfo,
@@ -418,7 +420,7 @@ async fn post_backups_stream(
     Ok(Sse::new(ReceiverStream::new(receiver)))
 }
 
-/// `GET /backups`.
+/// `GET /v1/backups`.
 pub(super) async fn get_backups(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
@@ -438,7 +440,7 @@ pub(super) async fn get_backups(
     Ok(Json(backups))
 }
 
-/// `GET /backups/{backup_id}`.
+/// `GET /v1/backups/{backup_id}`.
 pub(super) async fn get_backup(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
@@ -459,7 +461,7 @@ pub(super) async fn get_backup(
     Ok(Json(backup))
 }
 
-/// `DELETE /backups/{backup_id}`.
+/// `DELETE /v1/backups/{backup_id}`.
 pub(super) async fn delete_backup(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
@@ -487,23 +489,33 @@ pub(super) async fn put_backup_restore_all(
     headers: HeaderMap,
     state: State<AppState>,
     caller_info: CallerInfo,
-    auth_token: AuthToken,
     path: Path<BackupId>,
 ) -> Either<
     Result<(), crate::responders::Error>,
     Result<Sse<ReceiverStream<Result<sse::Event, anyhow::Error>>>, crate::responders::Error>,
 > {
+    let Some(prose_token) = headers.get("x-prose-token") else {
+        return Either::E1(Err(errors::validation_error(
+            "BAD_REQUEST",
+            "Bad request",
+            "Missing Prose token.",
+        )));
+    };
+
+    let fixme = "Change app state so health status isn’t success (Pod API needs an error)";
+
     match headers.get(ACCEPT) {
         Some(val) if val.as_bytes() == b"text/event-stream" => {
-            Either::E2(put_backup_restore_stream(state, caller_info, auth_token, path).await)
+            Either::E2(put_backup_restore_stream(state, caller_info, prose_token, path).await)
         }
-        _ => Either::E1(put_backup_restore(state, caller_info, auth_token, path).await),
+        _ => Either::E1(put_backup_restore(state, caller_info, prose_token, path).await),
     }
 }
 
 async fn put_backup_restore_<EventHandler>(
+    prosody: &RwLock<ProsodyChildProcess>,
     backup_service: &BackupService,
-    token: &AuthToken,
+    prose_token: &HeaderValue,
     backup_id: BackupId,
     blueprint: &ArchiveBlueprint,
     event_handler: &mut EventHandler,
@@ -570,6 +582,37 @@ where
         }
     }
 
+    let mut prosody = prosody.write().await;
+    prosody.stop().await.map_err(|error| {
+        crate::errors::internal_server_error(
+            &anyhow::Error::from(error),
+            "BACKUP_RESTORE_FAILED",
+            "Something went wrong while restoring the backup.",
+        )
+    })?;
+
+    struct RestoreGuard<'a> {
+        prosody: Option<RwLockWriteGuard<'a, ProsodyChildProcess>>,
+    }
+
+    impl<'a> Drop for RestoreGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(mut prosody) = self.prosody.take() {
+                tokio::task::block_in_place(move || {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        if let Err(err) = prosody.start().await {
+                            tracing::error!("[Drop] Failed restarting Prosody: {err:#}");
+                        };
+                    })
+                })
+            }
+        }
+    }
+
+    let mut restore_guard = RestoreGuard {
+        prosody: Some(prosody),
+    };
+
     let mut event_handler = EventHandler {
         inner: event_handler,
         additional_data_size: 0,
@@ -620,18 +663,17 @@ where
             tar.into_inner().no_context()?
         };
 
-        let fixme = "Re-enable";
-        // () = prose_pod_api
-        //     .put_restore(token, std::io::Cursor::new(prose_pod_api_data))
-        //     .await
-        //     .context("Prose Pod API restoration failed.")
-        //     .map_err(|error| {
-        //         crate::errors::internal_server_error(
-        //             &error,
-        //             "BACKUP_RESTORE_FAILED",
-        //             "Something went wrong while restoring the backup.",
-        //         )
-        //     })?;
+        () = prose_pod_api
+            .put_restore(prose_token, std::io::Cursor::new(prose_pod_api_data))
+            .await
+            .context("Prose Pod API restoration failed.")
+            .map_err(|error| {
+                crate::errors::internal_server_error(
+                    &error,
+                    "BACKUP_RESTORE_FAILED",
+                    "Something went wrong while restoring the backup.",
+                )
+            })?;
 
         std::fs::remove_dir_all(prose_pod_api_data_path).no_context()?;
 
@@ -657,14 +699,25 @@ where
         Err(err) => debug_panic_or_log_error!("Error reading temporary directory: {err:?}"),
     }
 
+    let mut prosody = restore_guard.prosody.take().unwrap();
+
+    prosody.start().await.map_err(|error| {
+        crate::errors::internal_server_error(
+            &anyhow::Error::from(error),
+            "RESTART_FAILED",
+            "Something went wrong while restarting your Prose Server. \
+            Contact an administrator to fix this.",
+        )
+    })?;
+
     Ok(())
 }
 
-/// `PUT /backups/{backup_id}/restore`.
+/// `PUT /v1/backups/{backup_id}/restore`.
 async fn put_backup_restore(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
-    auth_token: AuthToken,
+    prose_token: &HeaderValue,
     Path(backup_id): Path<BackupId>,
 ) -> Result<(), crate::responders::Error> {
     // Ensure the caller is an admin.
@@ -680,8 +733,9 @@ async fn put_backup_restore(
     let blueprint = BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION).unwrap();
 
     put_backup_restore_(
+        &backend.prosody,
         backup_service,
-        &auth_token,
+        prose_token,
         backup_id,
         blueprint,
         &mut NoopEventHandler,
@@ -728,11 +782,11 @@ impl RestoreBackupEvent {
     }
 }
 
-/// `PUT /backups/{backup_id}/restore Accept:text/event-stream`.
+/// `PUT /v1/backups/{backup_id}/restore Accept:text/event-stream`.
 async fn put_backup_restore_stream(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
-    auth_token: AuthToken,
+    prose_token: &HeaderValue,
     Path(backup_id): Path<BackupId>,
 ) -> Result<Sse<ReceiverStream<Result<sse::Event, anyhow::Error>>>, crate::responders::Error> {
     // Ensure the caller is an admin.
@@ -861,14 +915,17 @@ async fn put_backup_restore_stream(
 
         let blueprint = BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION).unwrap().to_owned();
 
-        let prose_pod_api = backend.prose_pod_api.to_owned();
+        let prosody = Arc::clone(&backend.prosody);
+        let prose_pod_api = Arc::clone(&backend.prose_pod_api);
+        let prose_token = prose_token.to_owned();
 
         let backup_id_str = backup_id.to_string();
 
         async move {
             let result = put_backup_restore_(
+                &prosody,
                 &backup_service,
-                &auth_token,
+                &prose_token,
                 backup_id,
                 &blueprint,
                 &mut event_handler,
@@ -893,7 +950,7 @@ pub struct GetBackupDownloadUrlRequest {
     pub ttl: Option<std::time::Duration>,
 }
 
-/// `GET /backups/{backup_id}/download-url`.
+/// `GET /v1/backups/{backup_id}/download-url`.
 pub(super) async fn get_backup_download_url(
     State(AppState { ref backend, .. }): State<AppState>,
     caller_info: CallerInfo,
