@@ -49,7 +49,7 @@ pub enum ProsePodApiError {
     ///
     /// The request has failed at the networking layer, there was a breaking
     /// change in Prosody or we didn’t write enough tests.
-    #[error("{0:#}")]
+    #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
