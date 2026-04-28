@@ -173,13 +173,7 @@ pub async fn patch_workspace(
     caller_info: CallerInfo,
     Json(req): Json<PatchWorkspaceRequest>,
 ) -> Result<(), Error> {
-    // Ensure the caller is an admin.
-    // FIXME: Make this more flexible by checking rights instead of roles
-    //   (which can be extended).
-    match caller_info.primary_role.as_str() {
-        "prosody:admin" | "prosody:operator" => {}
-        _ => return Err(errors::forbidden("Only admins can do that.")),
-    }
+    caller_info.check_is_admin()?;
 
     let ref jid = frontend.config.workspace_jid();
     let ref creds = service_account_credentials(backend, jid)
@@ -244,13 +238,7 @@ pub async fn set_workspace_name(
     caller_info: CallerInfo,
     Json(name): Json<String>,
 ) -> Result<(), Error> {
-    // Ensure the caller is an admin.
-    // FIXME: Make this more flexible by checking rights instead of roles
-    //   (which can be extended).
-    match caller_info.primary_role.as_str() {
-        "prosody:admin" | "prosody:operator" => {}
-        _ => return Err(errors::forbidden("Only admins can do that.")),
-    }
+    caller_info.check_is_admin()?;
 
     let ref jid = frontend.config.workspace_jid();
     let ref creds = service_account_credentials(backend, jid)
@@ -295,13 +283,7 @@ pub async fn set_workspace_accent_color(
     caller_info: CallerInfo,
     Json(color_opt): Json<Option<Color>>,
 ) -> Result<(), Error> {
-    // Ensure the caller is an admin.
-    // FIXME: Make this more flexible by checking rights instead of roles
-    //   (which can be extended).
-    match caller_info.primary_role.as_str() {
-        "prosody:admin" | "prosody:operator" => {}
-        _ => return Err(errors::forbidden("Only admins can do that.")),
-    }
+    caller_info.check_is_admin()?;
 
     let ref jid = frontend.config.workspace_jid();
     let ref creds = service_account_credentials(backend, jid)
@@ -353,13 +335,7 @@ pub async fn set_workspace_icon(
     caller_info: CallerInfo,
     icon: Avatar,
 ) -> Result<(), Error> {
-    // Ensure the caller is an admin.
-    // FIXME: Make this more flexible by checking rights instead of roles
-    //   (which can be extended).
-    match caller_info.primary_role.as_str() {
-        "prosody:admin" | "prosody:operator" => {}
-        _ => return Err(errors::forbidden("Only admins can do that.")),
-    }
+    caller_info.check_is_admin()?;
 
     let ref jid = frontend.config.workspace_jid();
     let ref ctx = service_account_credentials(backend, jid)
