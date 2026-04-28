@@ -535,14 +535,15 @@ fn backup_destinations<'a>(
 
                 (revert_guard.paths).push((PathBuf::clone(dst), Some(dst_bak)));
             } else {
-                let fixme = "Remove unwraps";
                 // NOTE: Read all children instead of iterating because we’ll
                 //   be creating more children while iterating (potentially
                 //   creating infinite loops).
-                let children = std::fs::read_dir(dst).unwrap().collect::<Vec<_>>();
+                let children = std::fs::read_dir(dst)
+                    .context(format!("Failed reading {dst:?}"))?
+                    .collect::<Vec<_>>();
 
                 for child in children {
-                    let child = child.unwrap();
+                    let child = child.context(format!("Failed reading {dst:?}: Entry is error"))?;
 
                     let child_path = &child.path();
 
