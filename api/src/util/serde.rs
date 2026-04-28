@@ -53,8 +53,16 @@ pub mod backup_config_opt {
     {
         match prose_backup::BackupConfig::deserialize(deserializer) {
             Ok(config) => Ok(Some(config)),
-            Err(err) if err.to_string().contains("missing field `storage`") => Ok(None),
-            Err(err) => Err(err),
+            Err(error) => {
+                let err = error.to_string();
+                if err.contains("missing field `storage`")
+                    || err.contains("missing field `provider`")
+                {
+                    Ok(None)
+                } else {
+                    Err(error)
+                }
+            }
         }
     }
 }
