@@ -20,8 +20,7 @@ use prose_backup::{
     BackupId, BackupService, CreateBackupCommand, CreateBackupError, CreateBackupEventHandler,
     CreateBackupSuccess, RestoreBackupEventHandler, RestoreBackupPartialSuccess, tar,
 };
-use prosody_child_process::ProsodyChildProcess;
-use tokio::sync::{RwLock, RwLockWriteGuard, mpsc};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::errors;
@@ -256,7 +255,7 @@ pub(super) async fn delete_backup(
 
 pub(super) async fn put_backup_restore_all(
     headers: HeaderMap,
-    State(AppState { ref backend, .. }): State<AppState>,
+    State(app_state): State<AppState>,
     caller_info: CallerInfo,
     Path(backup_id): Path<BackupId>,
 ) -> Either<
@@ -275,42 +274,42 @@ pub(super) async fn put_backup_restore_all(
         )));
     };
 
-    let fixme = "Change app state so health status isn’t success (Pod API needs an error)";
-
     match headers.get(reqwest::header::ACCEPT) {
         Some(val) if val.as_bytes() == b"text/event-stream" => {
-            Either::E2(put_backup_restore_stream(backend, prose_token, backup_id).await)
+            Either::E2(put_backup_restore_stream(app_state, prose_token, backup_id).await)
         }
-        _ => Either::E1(put_backup_restore(backend, prose_token, backup_id).await),
+        _ => Either::E1(put_backup_restore(app_state, prose_token, backup_id).await),
     }
 }
 
 /// `PUT /v1/backups/{backup_id}/restore`.
 async fn put_backup_restore(
-    backend: &b::Operational,
+    app_state: AppState<f::Running, b::Running>,
     prose_token: &HeaderValue,
     backup_id: BackupId,
 ) -> Result<(), crate::responders::Error> {
-    let backup_service = backend.backup_service()?;
+    let backup_service = Arc::clone(app_state.backend.backup_service()?);
+    let prose_pod_api = Arc::clone(&app_state.backend.prose_pod_api);
 
     put_backup_restore_(
-        &backend.prosody,
-        backup_service,
+        app_state,
+        &backup_service,
         prose_token,
         backup_id,
         &mut NoopEventHandler,
-        &backend.prose_pod_api,
+        &prose_pod_api,
     )
     .await
 }
 
 /// `PUT /v1/backups/{backup_id}/restore Accept:text/event-stream`.
 async fn put_backup_restore_stream(
-    backend: &b::Operational,
+    app_state: AppState<f::Running, b::Running>,
     prose_token: &HeaderValue,
     backup_id: BackupId,
 ) -> Result<Sse<ReceiverStream<Result<sse::Event, axum::Error>>>, crate::responders::Error> {
-    let backup_service = backend.backup_service()?;
+    let backup_service = Arc::clone(app_state.backend.backup_service()?);
+    let prose_pod_api = Arc::clone(&app_state.backend.prose_pod_api);
 
     // Stream restore progress.
     let (mut event_handler, sender, receiver) = {
@@ -334,17 +333,13 @@ async fn put_backup_restore_stream(
 
     // NOTE: No need to get the `JoinHandle`, we can fire-and-forget this.
     tokio::task::spawn({
-        let backup_service = Arc::clone(backup_service);
-
-        let prosody = Arc::clone(&backend.prosody);
-        let prose_pod_api = Arc::clone(&backend.prose_pod_api);
         let prose_token = prose_token.to_owned();
 
         let backup_id_str = backup_id.to_string();
 
         async move {
             let result = put_backup_restore_(
-                &prosody,
+                app_state,
                 &backup_service,
                 &prose_token,
                 backup_id,
@@ -364,7 +359,39 @@ async fn put_backup_restore_stream(
 }
 
 async fn put_backup_restore_<EventHandler>(
-    prosody: &RwLock<ProsodyChildProcess>,
+    app_state: AppState<f::Running, b::Running>,
+    backup_service: &BackupService,
+    prose_token: &HeaderValue,
+    backup_id: BackupId,
+    event_handler: &mut EventHandler,
+    prose_pod_api: &ProsePodApi,
+) -> Result<(), crate::responders::Error>
+where
+    EventHandler: RestoreBackupEventHandler + RestoreBackupEventHandler,
+{
+    // Stop Prosody.
+    {
+        let mut prosody = app_state.backend.prosody.write().await;
+        prosody.stop().await.unwrap();
+    }
+
+    let app_state = app_state.with_backend(b::UndergoingRestore {});
+
+    let res = put_backup_restore_inner(
+        backup_service,
+        prose_token,
+        backup_id,
+        event_handler,
+        prose_pod_api,
+    )
+    .await;
+
+    let _app_state = app_state.do_restart_backend().await;
+
+    res
+}
+
+async fn put_backup_restore_inner<EventHandler>(
     backup_service: &BackupService,
     prose_token: &HeaderValue,
     backup_id: BackupId,
@@ -376,37 +403,6 @@ where
 {
     let blueprint = (BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION))
         .expect("A blueprint should always exist for BACKUPS_VERSION");
-
-    let mut prosody = prosody.write().await;
-    prosody.stop().await.map_err(|error| {
-        crate::errors::internal_server_error(
-            &anyhow::Error::from(error),
-            "BACKUP_RESTORE_FAILED",
-            "Something went wrong while restoring the backup.",
-        )
-    })?;
-
-    struct RestoreGuard<'a> {
-        prosody: Option<RwLockWriteGuard<'a, ProsodyChildProcess>>,
-    }
-
-    impl<'a> Drop for RestoreGuard<'a> {
-        fn drop(&mut self) {
-            if let Some(mut prosody) = self.prosody.take() {
-                tokio::task::block_in_place(move || {
-                    tokio::runtime::Handle::current().block_on(async move {
-                        if let Err(err) = prosody.start().await {
-                            tracing::error!("[Drop] Failed restarting Prosody: {err:#}");
-                        };
-                    })
-                })
-            }
-        }
-    }
-
-    let mut restore_guard = RestoreGuard {
-        prosody: Some(prosody),
-    };
 
     let mut event_handler = WithAdditionalData {
         inner: event_handler,
@@ -493,17 +489,6 @@ where
         }
         Err(err) => debug_panic_or_log_error!("Error reading temporary directory: {err:?}"),
     }
-
-    let mut prosody = restore_guard.prosody.take().unwrap();
-
-    prosody.start().await.map_err(|error| {
-        crate::errors::internal_server_error(
-            &anyhow::Error::from(error),
-            "RESTART_FAILED",
-            "Something went wrong while restarting your Prose Server. \
-            Contact an administrator to fix this.",
-        )
-    })?;
 
     Ok(())
 }

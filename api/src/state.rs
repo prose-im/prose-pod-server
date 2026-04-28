@@ -526,7 +526,7 @@ pub mod backend {
     impl_trivial_transition!(BackendUndergoingBackup => default BackendRestarting);
 
     impl_trivial_transition!(BackendUndergoingRestore => default BackendStopped);
-    impl_trivial_transition!(BackendUndergoingRestore => default BackendStarting);
+    impl_trivial_transition!(BackendUndergoingRestore => default BackendRestarting);
     impl_fail_state_from_pair!((BackendUndergoingRestore => BackendStopped, &'a crate::responders::Error) use left);
 }
 
