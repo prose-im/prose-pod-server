@@ -27,19 +27,19 @@ use crate::prose::{init_prose_config, init_tsks};
 /// backups.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
+    let mut context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
 
     let tmpdir = context.tmpdir();
     init_tsks(tmpdir.path()).context("Failed creating tsks")?;
     init_prose_config(tmpdir.path()).context("Failed creating prose.toml")?;
     drop(tmpdir);
 
-    try_main(&context)
+    try_main(&mut context)
         .await
         .inspect_err(|_| keep_tmpdir(&context.tmpdir))
 }
 
-async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
+async fn try_main(context: &mut ExampleContext) -> Result<(), anyhow::Error> {
     let api = Arc::default();
     let dashboard = Dashboard::new(Arc::clone(&api));
 
@@ -51,7 +51,24 @@ async fn try_main(context: &ExampleContext) -> Result<(), anyhow::Error> {
     let backup_v2 = dashboard.create_backup("Example 1").await?;
     println!("Created backup: {}\n", backup_v2.display());
 
-    // TODO: Register cleanup function.
+    // Register a cleanup function to delete backup and checks if an error happens.
+    context.cleanup_functions.push(Box::pin({
+        let backup_id = backup_v2.backup_id.clone();
+        let api = Arc::clone(&api);
+
+        async move {
+            if let Some(api) = api.read().await.as_ref() {
+                let backups = (api.get_backups().await)
+                    .inspect_err(|err| tracing::error!("Failed listing backups: {err:#}"))
+                    .unwrap_or_default();
+                if backups.into_iter().any(|b| b.id.to_string() == backup_id) {
+                    api.delete_backup(backup_id)
+                        .await
+                        .unwrap_or_else(|err| tracing::error!("Failed deleting backup: {err:#}"));
+                }
+            }
+        }
+    }));
 
     // Start v3 API.
     let api_v3 = prose::api::start_v3()?;

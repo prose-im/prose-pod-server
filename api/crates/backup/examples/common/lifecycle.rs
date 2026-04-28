@@ -62,6 +62,27 @@ impl ExampleContext {
     }
 }
 
+impl Drop for ExampleContext {
+    fn drop(&mut self) {
+        println!();
+
+        // Run cleanup functions in reverse order.
+        let cleanup_functions = std::mem::take(&mut self.cleanup_functions);
+        tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                if cleanup_functions.is_empty() {
+                    return;
+                }
+
+                tracing::info!("Running cleanup functions…");
+                for func in cleanup_functions.into_iter().rev() {
+                    func.await
+                }
+            })
+        });
+    }
+}
+
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt::time::Uptime;
