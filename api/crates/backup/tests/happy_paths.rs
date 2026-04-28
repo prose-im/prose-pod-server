@@ -214,7 +214,7 @@ async fn happy_path_atomic_restore() {
         assert_eq!(
             err.as_str(),
             "Failed restoring backup: Could not backup `/dev/null` before restoration \
-            (to prevent data loss): Operation not permitted (os error 1)"
+            (to prevent data loss): Failed backing up dir: Operation not permitted (os error 1)"
         );
 
         // Test that `foo/a` wasn’t changed.
