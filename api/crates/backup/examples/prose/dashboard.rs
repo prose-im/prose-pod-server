@@ -50,6 +50,11 @@ pub struct BackupDetailsModel {
     pub is_encrypted: bool,
     pub created_at: UtcDateTime,
     pub size_bytes: u64,
+    pub is_intact: bool,
+    pub known_signing_keys: Vec<String>,
+    pub encryption_key: Option<String>,
+    pub is_encryption_valid: Option<bool>,
+    pub can_be_restored: bool,
 }
 
 // NOTE: Features return `Result`s. GUIs should save app state and display
@@ -301,21 +306,36 @@ impl BackupDetailsModel {
             is_encrypted,
             created_at,
             size_bytes,
+            is_intact,
+            known_signing_keys,
+            encryption_key,
+            is_encryption_valid,
+            can_be_restored,
         } = self;
 
         let is_signed = is_signed.to_string();
+        let signing_keys = format!("{known_signing_keys:?}");
         let is_encrypted = is_encrypted.to_string();
         let created_at = created_at.to_string();
         let size_bytes = size_bytes.to_string();
+        let is_intact = is_intact.to_string();
+        let encryption_key = (encryption_key.as_ref()).map_or("-".to_owned(), |s| s.to_owned());
+        let is_encryption_valid = is_encryption_valid.map_or("-".to_owned(), |b| b.to_string());
+        let can_be_restored = can_be_restored.to_string();
 
         #[rustfmt::skip]
         let parts = [
             backup_id.as_str(),
             "\n  Description: ", description.as_str(),
             "\n  Signed? ", is_signed.as_str(),
+            "\n  Signing keys: ", signing_keys.as_str(),
             "\n  Encrypted? ", is_encrypted.as_str(),
+            "\n  Encryption key: ", encryption_key.as_str(),
+            "\n  Encryption valid? ", is_encryption_valid.as_str(),
             "\n  Created at: ", created_at.as_str(),
             "\n  Size: ", size_bytes.as_str(), "B",
+            "\n  Intact? ", is_intact.as_str(),
+            "\n  Can be restored? ", can_be_restored.as_str(),
         ];
 
         let mut str = String::new();
@@ -343,7 +363,6 @@ impl From<BackupDto<BackupMetadataPartialDto>> for BackupEntryModel {
 
 impl From<BackupDto<BackupMetadataFullDto>> for BackupDetailsModel {
     fn from(dto: BackupDto<BackupMetadataFullDto>) -> Self {
-        let fixme = "Add more fields";
         Self {
             backup_id: dto.id.to_string(),
             description: dto.description,
@@ -351,6 +370,16 @@ impl From<BackupDto<BackupMetadataFullDto>> for BackupDetailsModel {
             is_encrypted: dto.metadata.is_encrypted,
             created_at: dto.metadata.created_at.into(),
             size_bytes: dto.metadata.size_bytes,
+            is_intact: dto.metadata.is_intact,
+            known_signing_keys: dto
+                .metadata
+                .known_signing_keys
+                .into_iter()
+                .map(|k| k.fingerprint)
+                .collect(),
+            encryption_key: dto.metadata.encryption_key,
+            is_encryption_valid: dto.metadata.is_encryption_valid,
+            can_be_restored: dto.metadata.can_be_restored,
         }
     }
 }
