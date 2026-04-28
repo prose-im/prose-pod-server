@@ -359,7 +359,7 @@ async fn post_backups_stream(
                     tokio::task::block_in_place(move || {
                         tokio::runtime::Handle::current().block_on(async move {
                             self.progress_sender
-                                .send(RestoreBackupEvent::progress(
+                                .send(CreateBackupEvent::progress(
                                     &backup_id.to_string(),
                                     self.expected_archive_size,
                                     self.expected_archive_size,
