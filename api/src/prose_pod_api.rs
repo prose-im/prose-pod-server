@@ -45,34 +45,6 @@ pub use self::ProsePodApiError as Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProsePodApiError {
-    /// Bad request.
-    #[error("Bad request: {0:#}")]
-    BadRequest(anyhow::Error),
-
-    /// Your authentication token is incorrect (possibly expired).
-    #[error("Unauthorized: {0:#}")]
-    Unauthorized(anyhow::Error),
-
-    /// You’re not allowed to do what you asked for.
-    #[error("Forbidden: {0:#}")]
-    Forbidden(anyhow::Error),
-
-    /// What you asked for doesn’t exist.
-    ///
-    /// Note that while most “not found” errors are mapped to `None` for better
-    /// ergonomics, some non-`GET` routes might still return “not found” for
-    /// internal reasons.
-    #[error("Not found: {0:#}")]
-    NotFound(anyhow::Error),
-
-    /// What you wanted to create already exists.
-    #[error("Conflict: {0:#}")]
-    Conflict(anyhow::Error),
-
-    /// One of us made a mistake somewhere.
-    #[error("{0:#}")]
-    Internal(anyhow::Error),
-
     /// An unknown error happened.
     ///
     /// The request has failed at the networking layer, there was a breaking
@@ -89,6 +61,7 @@ impl From<reqwest::Error> for ProsePodApiError {
 
 // MARK: - Helpers
 
+#[allow(dead_code)]
 impl ProsePodApi {
     fn url(&self, path: &str) -> String {
         assert!(path.starts_with('/'));
@@ -139,11 +112,4 @@ async fn receive<Response: DeserializeOwned>(
         .context("Could not decode Prose Pod API response")?;
 
     Ok(response)
-}
-
-fn accept_not_found<T: Default>(error: self::Error) -> Result<T, self::Error> {
-    match error {
-        self::Error::NotFound(_) => Ok(Default::default()),
-        err => Err(err),
-    }
 }
