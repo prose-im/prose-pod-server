@@ -15,6 +15,8 @@ Low priority (unordered):
 - If compression, encryption and signing are all disabled, the progress when
   restoring doesn’t reach 100% (`tar` skips the last block). Fix this, but also
   make sure integrity is checked (no issue when signing is enabled).
+- When restoration paths are mounted, children are moved individually and the
+  directory’s permissions are not updated.
 
 ## Backlog (planned)
 
