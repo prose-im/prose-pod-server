@@ -22,22 +22,28 @@ Low priority (unordered):
 
 High priority (ordered):
 
-None.
+- Test passing passhprases via configuration (not tested IIRC).
+  - Fingerptint `.to_string()` might contain spaces and break lookup.
 
 Medium priority (unordered):
 
-- Overridable archiving blueprints (with non-overridable packaged ones).
-- Cache S3 requests.
-  - Also cache metadata when listing objects (it should already be present).
-    - Or always return metadata directly; actually that would be better.
+- Rework the progress calculation (avoid archive size estimation).
+  - Total file size cannot be estimated if additional data is an archive with
+    PAX headers (when restoring).
+- Support batch deletion.
+- Overridable archiving blueprints (keeping packaged ones non-overridable).
 - Type errors more granularly.
 - Test backup progress with long paths (GNU LongLink).
   - Archive size estimation might be wrong.
+- Cache S3 requests.
+  - Also cache metadata when listing objects (it should already be present).
+    - Or always return metadata directly; actually that would be better.
 
 Low priority (unordered):
 
 - Add tests for all features and supported edge cases.
 - Read magic bytes instead of checking object extensions.
+- Support cleanup of expired markers when using S3 Object Lock.
 
 ## Feature ideas (unordered)
 
