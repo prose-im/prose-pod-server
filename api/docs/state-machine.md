@@ -68,7 +68,7 @@ Functions take a value as input, and produce a new value as output.
 Some states have a different meaning, but in reality they need to store the same
 data. For example, when the backend is operational TODO
 
-TODO: Genenics
+TODO: Generics
 
 ## Naming conventions
 
