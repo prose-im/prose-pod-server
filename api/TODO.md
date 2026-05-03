@@ -28,3 +28,7 @@
 
 - `ToFailState` instead of `From<(T, error)>` then remove need for explicit generics in `do_reload_frontend::<_>()`
   - Might not be possible because some transitions are Y-shaped.
+
+## Known issues
+
+- SSL certificates might be expired when restoring Prosody data
