@@ -29,6 +29,10 @@
 - `ToFailState` instead of `From<(T, error)>` then remove need for explicit generics in `do_reload_frontend::<_>()`
   - Might not be possible because some transitions are Y-shaped.
 
+- Make backup encryption config mandatory (explicit off)?
+  - For now the minimal code snippet in the Backups guide has a comment saying
+    one should enable encryption, to at least not miss it.
+
 ## Known issues
 
 - SSL certificates might be expired when restoring Prosody data
