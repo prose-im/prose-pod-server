@@ -38,7 +38,7 @@ pub mod s3 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(deserializer)?;
-            match value.as_str() {
+            match value.to_ascii_lowercase().as_str() {
                 "compliance" => Ok(ObjectLockRetentionMode::Compliance),
                 "governance" => Ok(ObjectLockRetentionMode::Governance),
                 _ => Err(serde::de::Error::custom(
@@ -59,7 +59,7 @@ pub mod s3 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(deserializer)?;
-            match value.as_str() {
+            match value.to_ascii_lowercase().as_str() {
                 "on" => Ok(ObjectLockLegalHoldStatus::On),
                 "off" => Ok(ObjectLockLegalHoldStatus::Off),
                 _ => Err(serde::de::Error::custom(
