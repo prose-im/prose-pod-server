@@ -199,11 +199,11 @@ where
         additional_archive_data: Some(ProsePodApiData(prose_pod_api_data)),
     };
 
-    let response = backup_service.create_backup(command, event_handler).await?;
+    let response = backup_service.create_backup(command, event_handler).await;
 
     let _app_state = app_state.do_restart_backend().await;
 
-    Ok(response)
+    response.map_err(crate::responders::Error::from)
 }
 
 /// `GET /v1/backups`.
