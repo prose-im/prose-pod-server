@@ -403,11 +403,6 @@ pub struct EncryptionPgpConfig {
 
     #[serde(default)]
     pub additional_recipients: Vec<std::path::PathBuf>,
-
-    /// Don’t mind this, it’s just there to make `deny_unknown_fields` happy
-    /// (we can’t remove keys in `figment`).
-    #[doc(hidden)]
-    pub enabled: AlwaysNone,
 }
 
 // MARK: Storage
