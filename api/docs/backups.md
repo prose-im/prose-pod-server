@@ -1,5 +1,10 @@
 # Backups and backup restoration
 
+⚠️ This document is not up-to-date.
+Check [`crates/backup/README.md`](../crates/backup/README.md) first.
+
+<!-- FIXME: Update document. -->
+
 ## General guidelines
 
 Provide a GPG encryption key so backups are encrypted. Without it, someone with
