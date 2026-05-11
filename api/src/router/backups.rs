@@ -13,6 +13,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::sse::{self, Sse};
 use axum_extra::either::Either;
+use json::json;
 use prose_backup::archiving::{AdditionalData, ArchiveBlueprint, TarSizeCalculator};
 use prose_backup::dtos::{BackupDto, BackupMetadataFullDto, BackupMetadataPartialDto};
 use prose_backup::event_handlers::NoopEventHandler;
@@ -497,6 +498,7 @@ where
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GetBackupDownloadUrlRequest {
+    #[serde(with = "crate::util::serde::iso8601_duration_or_secs::option")]
     pub ttl: Option<std::time::Duration>,
 }
 
@@ -506,19 +508,19 @@ pub(super) async fn get_backup_download_url(
     caller_info: CallerInfo,
     Path(backup_id): Path<BackupId>,
     Query(req): Query<GetBackupDownloadUrlRequest>,
-) -> Result<String, crate::responders::Error> {
+) -> Result<Json<String>, crate::responders::Error> {
     caller_info.check_is_admin()?;
 
     let backup_service = backend.backup_service()?;
 
     let ttl = req.ttl.unwrap_or(std::time::Duration::from_mins(5));
 
-    let backup = backup_service
+    let download_url = backup_service
         .get_download_url(&backup_id, ttl)
         .await
         .no_context()?;
 
-    Ok(backup)
+    Ok(Json(download_url))
 }
 
 // MARK: - Boilerplate
