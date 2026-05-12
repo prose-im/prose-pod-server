@@ -559,7 +559,7 @@ impl CreateBackupEvent {
         sse::Event::default()
             .event("backup-create-progress")
             .id(backup_id)
-            .json_data(json::json!({
+            .json_data(json!({
                 "progress": progress,
                 "total": total,
             }))
@@ -748,7 +748,7 @@ impl RestoreBackupEvent {
         sse::Event::default()
             .event("backup-restore-progress")
             .id(backup_id)
-            .json_data(json::json!({
+            .json_data(json!({
                 "progress": progress,
                 "total": total,
             }))
