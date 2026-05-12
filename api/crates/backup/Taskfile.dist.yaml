@@ -93,6 +93,8 @@ tasks:
       - task: cargo-test
         vars:
           TESTS: { ref: .CARGO_EXPENSIVE_TESTS }
+          PROFILE: { ref: .PROFILE }
+          CLI_ARGS: { ref: .CLI_ARGS }
 
   test:*:
     desc: Run a single integration test.
@@ -100,6 +102,8 @@ tasks:
       task: cargo-test
       vars:
         TESTS: { ref: .MATCH }
+        PROFILE: { ref: .PROFILE }
+        CLI_ARGS: { ref: .CLI_ARGS }
 
   cov:llvm-cov:
     desc: Check test coverage using `cargo-llvm-cov`.
@@ -131,7 +135,10 @@ tasks:
     desc: Run CI tests (only tests S3 if possible).
     cmds:
       - task: lint
-      - cargo test --locked --lib --tests -F test,compression-all,hashing-all,storage-all,openpgp-crypto-nettle -- --skip s3
+      - cargo test --locked --lib --tests -F test,compression-all,hashing-all,storage-all,openpgp-crypto-nettle -- --skip s3 --skip scalability
+      - task: test:scalability
+        vars:
+          PROFILE: release
       - task: test:s3
         if: "[ -f test.env ]"
       - cargo test --locked --doc -p backup
@@ -176,7 +183,7 @@ tasks:
   cargo-test:
     desc: Run specified tests.
     internal: true
-    cmd: cargo test{{ if .TEST_LIB }} --lib{{ end }}{{ range .TESTS }} --test {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    cmd: cargo test --locked{{ if .TEST_LIB }} --lib{{ end }}{{ if .PROFILE }} --profile {{ .PROFILE }}{{ end }}{{ range .TESTS }} --test {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
     requires:
       vars: [TESTS]
     preconditions:
