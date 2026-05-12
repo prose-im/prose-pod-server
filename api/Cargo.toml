@@ -13,14 +13,14 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 anyhow = { version = "=1.0.102", default-features = false }
 arc-swap = { version = "=1.9.1", default-features = false }
 async-trait = { version = "=0.1.89", default-features = false }
-aws-sdk-s3 = { version = "=1.129.0", default-features = false, features = [
+aws-sdk-s3 = { version = "=1.132.0", default-features = false, features = [
     "default-https-client",
     "rt-tokio",
     "rustls",
     "sigv4a",
 ] }
-axum = { version = "=0.8.8", default-features = false, features = ["tokio", "http1", "json", "matched-path", "query"] }
-axum-extra = { version = "=0.12.5", default-features = false }
+axum = { version = "=0.8.9", default-features = false, features = ["tokio", "http1", "json", "matched-path", "query"] }
+axum-extra = { version = "=0.12.6", default-features = false }
 axum-hot-swappable-router = { git = "https://github.com/RemiBardon/axum-hot-swappable-router.git", rev = "26b1a3324dafaa7df05355275c9b878045aebd2d", default-features = false }
 base64 = { version = "=0.22.1", default-features = false }
 figment = { version = "=0.10.19", default-features = false, features = ["env", "toml"] }
@@ -37,17 +37,17 @@ prosody-http = { path = "crates/prosody-http", features = ["secrecy", "mod_http_
 prosody-rest = { path = "crates/prosody-rest" }
 prosodyctl = { path = "crates/prosodyctl", features = ["secrecy", "mod_groups", "mod_invites"] }
 rand = { version = "=0.10.1", default-features = false, features = ["thread_rng"] }
-reqwest = { version = "=0.13.2", default-features = false, features = ["rustls", "stream", "http2", "json"] }
+reqwest = { version = "=0.13.3", default-features = false, features = ["rustls", "stream", "http2", "json"] }
 secrecy = { version = "=0.10.3", default-features = false }
-sequoia-openpgp = { version = "=2.2.0", default-features = false, features = ["crypto-nettle"] }
+sequoia-openpgp = { version = "=2.3.0", default-features = false, features = ["crypto-nettle"] }
 serde = { version = "=1.0.228", default-features = false, features = ["derive"] }
 serde_json = { version = "=1.0.149", default-features = false }
-serde_with = { version = "=3.18.0", default-features = false, features = ["base64"] }
+serde_with = { version = "=3.20.0", default-features = false, features = ["base64"] }
 sha2 = { version = "=0.11.0", default-features = false }
 strum = { version = "=0.28.0", default-features = false, features = ["derive", "std"] }
 thiserror = { version = "=2.0.18", default-features = false }
 time = { version = "=0.3.47", default-features = false, features = ["formatting", "serde"] }
-tokio = { version = "=1.51.1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "io-util", "process", "sync", "time"] }
+tokio = { version = "=1.52.3", default-features = false, features = ["macros", "rt-multi-thread", "signal", "io-util", "process", "sync", "time"] }
 tokio-stream = { version = "=0.1.18", default-features = false }
 tokio-util = { version = "=0.7.18", default-features = false, features = ["time"] }
 toml = { version = "=1.1.2", default-features = false, features = ["display", "serde"] }
