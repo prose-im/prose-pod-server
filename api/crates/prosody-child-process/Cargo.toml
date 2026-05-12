@@ -9,4 +9,4 @@ authors = ["Rémi Bardon <remi@remibardon.name>"]
 anyhow = { version = "1", default-features = false }
 tokio = { version = "1", default-features = false, features = ["time", "io-util", "process"] }
 tracing = { version = "0.1", default-features = false }
-nix = { version = "0.30", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
