@@ -46,13 +46,14 @@ tar = { git = "https://github.com/RemiBardon/tar-rs.git", rev = "06ea113b018af84
 
 # Optional dependencies.
 blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
+digest-io = { optional = true, version = "0.1", default-features = false }
 s3 = { optional = true, package = "aws-sdk-s3", version = "1", default-features = false, features = [
     "default-https-client",
     "rt-tokio",
     "rustls",
     "sigv4a",
 ] }
-sha2 = { optional = true, version = "0.10", default-features = false, features = ["std"] }
+sha2 = { optional = true, version = "0.11", default-features = false }
 zstd = { optional = true, version = "0.13", default-features = false }
 
 [dev-dependencies]
@@ -70,7 +71,7 @@ compression-all = ["compression-zstd"]
 compression-zstd = ["dep:zstd"]
 hashing-all = ["hashing-blake3", "hashing-sha2"]
 hashing-blake3 = ["dep:blake3"]
-hashing-sha2 = ["dep:sha2"]
+hashing-sha2 = ["dep:digest-io", "dep:sha2"]
 openpgp-crypto-botan = ["openpgp/crypto-botan"]
 openpgp-crypto-botan2 = ["openpgp/crypto-botan2"]
 openpgp-crypto-cng = ["openpgp/crypto-cng"]

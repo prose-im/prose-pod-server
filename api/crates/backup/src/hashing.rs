@@ -18,7 +18,7 @@ pub(crate) enum DigestWriter {
     Blake3(blake3::Hasher),
 
     #[cfg(feature = "hashing-sha2")]
-    Sha256(sha2::Sha256),
+    Sha256(digest_io::IoWrapper<sha2::Sha256>),
 }
 
 pub(crate) fn digest(hashing_config: &HashingConfig) -> DigestWriter {
@@ -29,7 +29,9 @@ pub(crate) fn digest(hashing_config: &HashingConfig) -> DigestWriter {
         #[cfg(feature = "hashing-blake3")]
         config::HashingAlgorithm::Blake3 => DigestWriter::Blake3(blake3::Hasher::new()),
         #[cfg(feature = "hashing-sha2")]
-        config::HashingAlgorithm::Sha256 => DigestWriter::Sha256(sha2::Sha256::default()),
+        config::HashingAlgorithm::Sha256 => {
+            DigestWriter::Sha256(digest_io::IoWrapper(sha2::Sha256::default()))
+        }
     }
 }
 
@@ -59,7 +61,7 @@ impl DigestWriter {
             #[cfg(feature = "hashing-blake3")]
             Self::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
             #[cfg(feature = "hashing-sha2")]
-            Self::Sha256(hasher) => sha2::Digest::finalize(hasher).to_vec(),
+            Self::Sha256(hasher) => sha2::Digest::finalize(hasher.0).to_vec(),
         }
     }
 }

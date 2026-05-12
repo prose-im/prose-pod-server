@@ -350,8 +350,8 @@ impl BackupService {
             };
 
             // Compute the hash again.
-            let computed_hash: sha2::digest::crypto_common::Output<Sha256> = {
-                let mut verifier = Sha256::new();
+            let computed_hash: sha2::digest::Output<Sha256> = {
+                let mut verifier = digest_io::IoWrapper(Sha256::new());
 
                 // Read the backup to a temporary file, but also feed it to the
                 // SHA-256 hasher in parallel.
@@ -362,7 +362,7 @@ impl BackupService {
                     debug_assert_ne!(copied, 0);
                 }
 
-                let computed_hash = verifier.finalize();
+                let computed_hash = verifier.0.finalize();
 
                 #[cfg(debug_assertions)]
                 assert_ne!(computed_hash, Sha256::new().finalize());
