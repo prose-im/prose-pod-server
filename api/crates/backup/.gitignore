@@ -1,0 +1,43 @@
+# Ignore all by default. This prevents unexpected leaks, and improves DX when
+# switching feature branches (e.g. tests in one branch created a directory
+# it git-ignores, but other branch doesn’t know about it and files are
+# committed unexpectedly).
+*
+
+!/docs
+!/docs/**
+
+!/examples
+!/examples/**
+
+!/playgrounds
+!/playgrounds/**
+/playgrounds/*/target
+/playgrounds/*/Cargo.lock
+
+!/src/
+!/src/**
+
+!/crates/
+!/crates/**
+/crates/*/target
+/crates/*/Cargo.lock
+
+!/tests/
+!/tests/**
+
+!/benches/
+!/benches/**
+
+!/.editorconfig
+
+!/.gitignore
+
+!/Cargo.toml
+!/Cargo.lock
+
+!/README.md
+!/CONTRIBUTING.md
+!/TODO.md
+
+!/Taskfile.dist.yaml

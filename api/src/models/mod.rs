@@ -81,6 +81,18 @@ pub mod auth {
         pub primary_role: String,
     }
 
+    impl CallerInfo {
+        pub fn check_is_admin(&self) -> Result<(), crate::responders::Error> {
+            // Ensure the caller is an admin.
+            // FIXME: Make this more flexible by checking rights instead of roles
+            //   (which can be extended).
+            match self.primary_role.as_str() {
+                "prosody:admin" | "prosody:operator" => Ok(()),
+                _ => Err(crate::errors::forbidden("Only admins can do that.")),
+            }
+        }
+    }
+
     // MARK: Boilerplate
 
     impl std::ops::Deref for AuthToken {

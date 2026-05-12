@@ -10,6 +10,7 @@ mod app_config;
 mod errors;
 mod extractors;
 mod models;
+mod prose_pod_api;
 mod responders;
 mod router;
 mod secrets_service;

@@ -43,7 +43,7 @@ Thankfully, there is a trick. [`axum::Router::fallback_service`] takes a
 [`tower::Service`] generic over [`axum::extract::Request`], and redirects all
 requests which didn’t match existing routes to it. By creating our own dynamic
 [`tower::Service`] which redirects requests to an internally mutable `Router`,
-we can update at runtime the 
+we can update at runtime the
 
 [`tower::Service::call`] needs `&mut self`, which means we need to share a
 mutable `Router` across all threads. `Router`s have to implement `Clone` anyway,
@@ -68,7 +68,7 @@ Functions take a value as input, and produce a new value as output.
 Some states have a different meaning, but in reality they need to store the same
 data. For example, when the backend is operational TODO
 
-TODO: Genenics
+TODO: Generics
 
 ## Naming conventions
 
@@ -104,12 +104,12 @@ impl<F, B> AppState<F, B> {
             AppState<f::Running, b::Running>,
         >,
         Either<
-            FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
+            FailState<f::Restarting, b::UndergoingFactoryReset>,
             FailState<f::Running, b::StartFailed>,
         >,
     >
     where
-        F: Into<f::UndergoingFactoryReset>,
+        F: Into<f::Restarting>,
         B: Into<b::UndergoingFactoryReset> + AsRef<b::Operational> + Clone,
     {
         // ...
@@ -124,7 +124,7 @@ elmost everything the implementation will do:
    impl<F, B> AppState<F, B> {
    // ...
    where
-       F: Into<f::UndergoingFactoryReset>,
+       F: Into<f::Restarting>,
        B: Into<b::UndergoingFactoryReset> + AsRef<b::Operational> + Clone,
    ```
 
@@ -141,7 +141,7 @@ elmost everything the implementation will do:
            AppState<f::Running, b::Running>,
        >,
        Either<
-           FailState<f::UndergoingFactoryReset, b::UndergoingFactoryReset>,
+           FailState<f::Restarting, b::UndergoingFactoryReset>,
            FailState<f::Running, b::StartFailed>,
        >,
    >

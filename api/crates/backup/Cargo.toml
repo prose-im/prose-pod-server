@@ -1,0 +1,123 @@
+# [workspace]
+# members = ["crates/*", "playgrounds/*"]
+
+[package]
+name = "backup"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+autotests = false
+autobenches = false
+
+[dependencies]
+anyhow = { version = "1", default-features = false }
+async-trait = { version = "0.1", default-features = false }
+bytes = { version = "1", default-features = false, features = ["std"] }
+figment = { version = "0.10", default-features = false }
+iso8601-duration = { version = "0.2", default-features = false, features = ["serde"] }
+json = { package = "serde_json", version = "1", default-features = false, features = ["std"] }
+openpgp = { package = "sequoia-openpgp", version = "2", default-features = false }
+ouroboros = { version = "0.18", default-features = false }
+secrecy = { version = "0.10", default-features = false, features = ["serde"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_with = { version = "3", default-features = false, features = ["macros"] }
+# tar = { version = "0.4", default-features = false }
+tempfile = { version = "3", default-features = false }
+thiserror = { version = "2", default-features = false }
+time = { version = "0.3", default-features = false, features = ["formatting", "std", "serde"] }
+tracing = { version = "0.1", default-features = false }
+tokio = { version = "1", default-features = false, features = [
+    "io-util",
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+toml = { version = "1", default-features = false, features = ["serde"] }
+urlencoding = { version = "2", default-features = false }
+composable-stream = { path = "./crates/composable-stream" }
+
+# Temporary overrides.
+# TODO: Use official crate once https://github.com/alexcrichton/tar-rs/pull/448
+#   is released.
+tar = { git = "https://github.com/RemiBardon/tar-rs.git", rev = "06ea113b018af846b39a397f349b8b3e6677f7ff", default-features = false }
+
+# Optional dependencies.
+blake3 = { optional = true, version = "1", default-features = false, features = ["std"] }
+digest-io = { optional = true, version = "0.1", default-features = false }
+s3 = { optional = true, package = "aws-sdk-s3", version = "1", default-features = false, features = [
+    "default-https-client",
+    "rt-tokio",
+    "rustls",
+    "sigv4a",
+] }
+sha2 = { optional = true, version = "0.11", default-features = false }
+zstd = { optional = true, version = "0.13", default-features = false }
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["async_tokio", "html_reports"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "env-filter"] }
+
+[lib]
+name = "prose_backup"
+
+[features]
+default = ["compression-zstd", "openpgp-crypto-nettle", "hashing-blake3", "storage-s3"]
+test = ["figment/toml", "toml/display"]
+example = ["figment/env", "figment/toml", "toml/display"]
+compression-all = ["compression-zstd"]
+compression-zstd = ["dep:zstd"]
+hashing-all = ["hashing-blake3", "hashing-sha2"]
+hashing-blake3 = ["dep:blake3"]
+hashing-sha2 = ["dep:digest-io", "dep:sha2"]
+openpgp-crypto-botan = ["openpgp/crypto-botan"]
+openpgp-crypto-botan2 = ["openpgp/crypto-botan2"]
+openpgp-crypto-cng = ["openpgp/crypto-cng"]
+openpgp-crypto-nettle = ["openpgp/crypto-nettle"]
+openpgp-crypto-openssl = ["openpgp/crypto-openssl"]
+openpgp-crypto-rust = ["openpgp/crypto-rust"]
+storage-all = ["storage-fs", "storage-s3"]
+storage-fs = []
+storage-s3 = ["dep:s3"]
+
+[[test]]
+name = "alternate_paths"
+required-features = ["test", "storage-fs", "hashing-blake3", "hashing-sha2", "openpgp-crypto-nettle"]
+
+[[test]]
+name = "correctness"
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
+
+[[test]]
+name = "error_paths"
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
+
+[[test]]
+name = "happy_paths"
+required-features = ["test", "compression-zstd", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
+
+[[test]]
+name = "s3"
+required-features = ["test", "storage-s3", "hashing-blake3", "openpgp-crypto-nettle"]
+
+[[test]]
+name = "scalability"
+required-features = ["test", "storage-fs", "hashing-blake3", "openpgp-crypto-nettle"]
+
+[[bench]]
+name = "backup"
+harness = false
+required-features = ["compression-zstd", "storage-fs", "hashing-blake3", "hashing-sha2", "openpgp-crypto-nettle"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[lints.clippy]
+collapsible_if = "allow" # Style preference.
+inline_always = "warn" # We don’t have benchmarks yet.
+manual_map = "allow" # Style preference. Also compiles faster.
+needless_borrow = "allow" # Style preference.
+needless_borrows_for_generic_args = "allow" # Style preference.
+type_complexity = "allow" # Composable streams need complex types.

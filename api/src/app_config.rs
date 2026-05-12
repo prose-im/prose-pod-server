@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::anyhow;
 use figment::Figment;
+use prose_backup::BackupConfig;
 use serde::Deserialize;
 
 pub const API_CONFIG_DIR: &'static str = "/etc/prose";
@@ -32,7 +33,7 @@ pub mod defaults {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Invalid '{CONFIG_FILE_NAME}' configuration file: {0}")]
+#[error("Invalid Prose configuration: {0:#}")]
 #[repr(transparent)]
 pub struct InvalidConfiguration(anyhow::Error);
 
@@ -55,11 +56,15 @@ fn default_config_static() -> Figment {
 
     let true_in_debug = cfg!(debug_assertions);
 
+    let backups_default = prose_backup::config::default_config_static();
+
     let random_oauth2_registration_key: SecretString =
         crate::util::random_oauth2_registration_key();
     let random_oauth2_registration_key: &str = random_oauth2_registration_key.expose_secret();
 
     let static_defaults = toml! {
+        backups = backups_default
+
         [teams]
         main_team_name = DEFAULT_MAIN_TEAM_NAME
 
@@ -131,6 +136,10 @@ fn default_config_static() -> Figment {
         [proxy]
         cloud_api_url = "https://prose.org/_api/cloud"
         prose_files_url = "https://files.prose.org"
+
+        [api]
+        local_hostname = "prose-pod-api"
+        port = 8080
     }
     .to_string();
 
@@ -164,6 +173,74 @@ fn with_dynamic_defaults(mut figment: Figment) -> Result<Figment, InvalidConfigu
             "dashboard.url",
             format!("https://admin.{pod_domain}"),
         ));
+    }
+
+    // Apply backups defaults.
+    let backups = prose_backup::config::with_dynamic_defaults(figment.focus("backups"))
+        .map_err(|err| InvalidConfiguration(anyhow::Error::from(err)))?;
+    let backups_value = backups.extract::<figment::value::Value>()?;
+    figment = figment
+        // NOTE: `Figment::merge` merges objects which does not remove
+        //   existing keys. Merging `()` first does the trick.
+        .merge(Serialized::default("backups", figment::value::Empty::Unit))
+        .merge(Serialized::default("backups", backups_value));
+
+    // Validate backups configuration.
+    {
+        use crate::router::backups::{BACKUP_BLUEPRINTS, BACKUPS_VERSION};
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let blueprint = (BACKUP_BLUEPRINTS.get(&BACKUPS_VERSION))
+            .expect("A blueprint should always exist for BACKUPS_VERSION");
+
+        // TODO: Canonicalize paths?
+        fn ensure_not_in_backed_up_path(
+            dir: OsString,
+            blueprint: &prose_backup::archiving::ArchiveBlueprint,
+        ) -> Result<(), InvalidConfiguration> {
+            let dir_bytes = dir.as_bytes();
+
+            for (_, backed_up_path) in blueprint.paths.iter() {
+                let mut prefix = backed_up_path.as_os_str().as_bytes();
+
+                // If `prefix` ends with a `/`, ignore it.
+                // It simplifies further logic.
+                // PERF: This avoids allocating a new `Vec` with `/` as suffix.
+                if prefix.ends_with(b"/") {
+                    prefix = &prefix[..prefix.len() - 1];
+                }
+
+                if let Some(suffix) = dir_bytes.strip_prefix(prefix) {
+                    if suffix.is_empty() || suffix == b"/" {
+                        // Exact match.
+                        return Err(InvalidConfiguration(anyhow!(
+                            "Cannot use {dir:?} as backup storage as it is itself backed up. \
+                            You would loose your backups when restoring."
+                        )));
+                    } else if suffix.starts_with(b"/") {
+                        // Proper prefix.
+                        return Err(InvalidConfiguration(anyhow!(
+                            "Cannot use {dir:?} as backup storage as its parent {backed_up_path:?} is backed up. \
+                            You would loose your backups when restoring."
+                        )));
+                    } else {
+                        // Not a real prefix (e.g. `abc` matches `abcd/ef`),
+                        // but it really is a different directory.
+                        continue;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        if let Ok(dir) = figment.extract_inner::<String>("backups.storage.backups.fs.directory") {
+            ensure_not_in_backed_up_path(OsString::from(dir), blueprint)?;
+        }
+        if let Ok(dir) = figment.extract_inner::<String>("backups.storage.checks.fs.directory") {
+            ensure_not_in_backed_up_path(OsString::from(dir), blueprint)?;
+        }
     }
 
     // Apply analytics presets.
@@ -325,7 +402,11 @@ pub(crate) struct AppConfig {
     pub policies: PoliciesConfig,
     pub proxy: ProxyConfig,
     pub server: ServerConfig,
+    #[serde(with = "crate::util::serde::backup_config_opt")]
+    pub backups: Option<BackupConfig>,
     pub server_api: ServerApiConfig,
+    #[serde(rename = "api")]
+    pub prose_pod_api: ProsePodApiConfig,
     pub service_accounts: ServiceAccountsConfig,
     pub teams: TeamsConfig,
     pub vendor_analytics: VendorAnalyticsConfig,
@@ -451,6 +532,29 @@ pub mod server_api {
     impl ServerApiConfig {
         pub fn address(&self) -> SocketAddr {
             SocketAddr::new(self.address, self.port)
+        }
+    }
+}
+
+pub use prose_pod_api::*;
+pub mod prose_pod_api {
+    #[derive(Debug)]
+    #[derive(serde::Deserialize)]
+    pub struct ProsePodApiConfig {
+        /// Hostname of the Prose Pod API in the local network.
+        ///
+        /// You shouldn’t have to change that, it’s just there to avoid using
+        /// constants.
+        ///
+        /// NOTE: It’ll disappear when we implement [“Prose Pod API as part of Prose Pod Server”](https://github.com/prose-im/prose-pod-api/discussions/368).
+        pub local_hostname: String,
+
+        pub port: u16,
+    }
+
+    impl ProsePodApiConfig {
+        pub fn http_url(&self) -> String {
+            format!("http://{}:{}", self.local_hostname, self.port)
         }
     }
 }

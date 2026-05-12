@@ -3,6 +3,10 @@
 **/.git*
 **/.hg*
 api/target
+api/crates/*/target
+
+# Exceptions
+**/*.env
 
 # Prosody Community modules conflicting with internal plugins or merged
 plugins/community/mod_cloud_notify

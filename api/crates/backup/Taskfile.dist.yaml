@@ -1,0 +1,275 @@
+# See <https://taskfile.dev/usage> and <https://taskfile.dev/reference/schema>
+# to find all keys and their usage.
+version: "3"
+
+tasks:
+  doc:open:
+    desc: Build and open Cargo docs.
+    aliases: [doc]
+    cmd: cargo doc --no-deps -F storage-all --lib --open
+
+  example:list:
+    desc: List available examples.
+    silent: true
+    cmd: |-
+      {
+        cargo metadata --format-version 1 --no-deps | jq -r '
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select(.kind | index("example"))
+          | .name
+          ';
+        find examples -maxdepth 1 -type f -name '*.rs' -exec basename {} .rs \;
+        find examples -mindepth 2 -maxdepth 2 -type f -name 'main.rs' -exec basename $(dirname {}) \;
+      } | sort -u
+
+  example:*:
+    desc: Run an example.
+    cmd: cargo run -F example --example {{ index .MATCH 0 }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    dotenv: [test.env]
+
+  lint:
+    desc: Run lints.
+    cmds:
+      - cargo fmt --check
+      - cargo clippy --locked
+
+  check:
+    desc: Run all syntax checks.
+    cmds:
+      - task: check:lib:dev
+      - task: check:examples
+      - task: check:lib:release
+
+  check:lib:*:
+    desc: Run syntax checks on the library (accepts a profile name).
+    aliases: [check:lib]
+    cmds:
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+          CARGO_FEATURES: compression-zstd,openpgp-crypto-nettle,hashing-blake3,storage-fs
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+          CARGO_FEATURES: compression-zstd,openpgp-crypto-nettle,hashing-sha2,storage-fs
+    vars:
+      PROFILE: { ref: .MATCH | first | default "dev" }
+
+  check:examples:
+    desc: Run syntax checks on examples.
+    cmd: cargo check --examples -F example --locked
+
+  test:all:
+    desc: Run all tests.
+    aliases: [test]
+    cmds:
+      - task: test:cheap
+      - task: test:expensive
+
+  test:cheap:
+    desc: Run all tests, excluding expensive ones.
+    cmds:
+      - task: util:cleanup-test-artifacts
+      - task: cargo-test
+        vars:
+          TESTS: { ref: .CARGO_CHEAP_TESTS }
+          TEST_LIB: true
+      - cargo test --doc -p backup
+      - cargo test --doc -p composable-stream -F doc
+    dotenv: [test.env]
+
+  test:expensive:
+    desc: Run all expensive tests.
+    cmds:
+      - task: util:cleanup-test-artifacts
+      - task: cargo-test
+        vars:
+          TESTS: { ref: .CARGO_EXPENSIVE_TESTS }
+          PROFILE: { ref: .PROFILE }
+          CLI_ARGS: { ref: .CLI_ARGS }
+
+  test:*:
+    desc: Run a single integration test.
+    cmd:
+      task: cargo-test
+      vars:
+        TESTS: { ref: .MATCH }
+        PROFILE: { ref: .PROFILE }
+        CLI_ARGS: { ref: .CLI_ARGS }
+
+  cov:llvm-cov:
+    desc: Check test coverage using `cargo-llvm-cov`.
+    aliases: [cov]
+    cmds:
+      - cargo llvm-cov --html -F test,storage-fs,compression-all,hashing-all,openpgp-crypto-nettle{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - task: cov:llvm-cov:open
+    dotenv: [test.env]
+
+  cov:llvm-cov:open:
+    desc: Opens `cargo-llvm-cov`’s coverage report.
+    aliases: [cov:open]
+    cmd: open target/llvm-cov/html/index.html
+
+  # Note recommended, as it runs `cargo clean`, takes longer to run and
+  # produces erroneous output. Use `cov:llvm-cov` instead.
+  cov:tarpaulin:
+    desc: Check test coverage using `cargo-tarpaulin`.
+    cmds:
+      - cargo tarpaulin -o html --include-files 'src/**' --output-dir target/tarpaulin --features test,storage-fs,compression-all,hashing-all,openpgp-crypto-nettle{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ else }} --no-default-features -- --skip s3{{ end }}
+      - task: cov:tarpaulin:open
+    dotenv: [test.env]
+
+  cov:tarpaulin:open:
+    desc: Opens `cargo-tarpaulin`’s coverage report.
+    cmd: open target/tarpaulin/tarpaulin-report.html
+
+  ci:
+    desc: Run CI tests (only tests S3 if possible).
+    cmds:
+      - task: lint
+      - cargo test --locked --lib --tests -F test,compression-all,hashing-all,storage-all,openpgp-crypto-nettle -- --skip s3 --skip scalability
+      - task: test:scalability
+        vars:
+          PROFILE: release
+      - task: test:s3
+        if: "[ -f test.env ]"
+      - cargo test --locked --doc -p backup
+      - cargo test --locked --doc -p composable-stream -F doc
+      - task: check:lib:release
+
+  bench:all:
+    desc: Run all benchmarks.
+    aliases: [bench]
+    cmd:
+      task: cargo-bench
+      vars:
+        BENCHES: { ref: .CARGO_ALL_BENCHES }
+
+  bench:*:
+    desc: Run one benchmark.
+    cmd:
+      task: cargo-bench
+      vars:
+        BENCHES: { ref: .MATCH }
+
+  dev:doc:
+    desc: Rebuild Cargo docs on source file changes.
+    aliases: [doc:watch]
+    preconditions:
+      - sh: command -v cargo-watch >/dev/null 2>&1
+        msg: "Install `cargo-watch` using `cargo install cargo-watch`."
+    cmds:
+      - task: doc:open
+      - cmd: cargo watch -x 'doc --no-deps -F compression-all,hashing-all,storage-all --lib'
+
+  util:cleanup-test-artifacts:
+    internal: true
+    cmd: rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
+
+  cargo-check:
+    internal: true
+    cmd: cargo check {{ .CHECKED }} --locked{{ if .PROFILE }} --profile {{ .PROFILE }}{{ end }}{{ if .CARGO_FEATURES }} --no-default-features -F {{ .CARGO_FEATURES }}{{ end }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [CHECKED]
+
+  cargo-test:
+    desc: Run specified tests.
+    internal: true
+    cmd: cargo test --locked{{ if .TEST_LIB }} --lib{{ end }}{{ if .PROFILE }} --profile {{ .PROFILE }}{{ end }}{{ range .TESTS }} --test {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [TESTS]
+    preconditions:
+      # It might not be _necessary_ in this case, but most tasks using this
+      # helper require it so let’s centralize and make tasks leaner.
+      - sh: grep -q '^autotests = false$' Cargo.toml
+        msg: "`Cargo.toml` must contain `autotests = false`."
+      - sh: |-
+          if [[ " {{ .TESTS | join " " }} " == *" compatibility "* ]]; then
+            command -v sq >/dev/null 2>&1
+          fi
+        msg: "Install `sq`, the Sequoia-PGP command line tool, using `cargo install sequoia-sq`."
+    vars:
+      CARGO_FEATURES:
+        sh: |-
+          cargo metadata --format-version 1 --no-deps | jq -r '
+            [
+              .packages[]
+              | select(.name == "backup")
+              | .targets[]
+              | select((.kind | index("test")) and (.name as $n | $ARGS.positional | index($n)))
+              | .["required-features"]
+              | .[]
+            ]
+            | unique
+            | join(",")
+            ' --args{{ range .TESTS }} {{ . }}{{ end }}
+    dotenv: [test.env]
+
+  cargo-bench:
+    desc: Run specified benchmarks.
+    internal: true
+    cmd: cargo bench{{ range .BENCHES }} --bench {{ . }}{{ end }} --no-default-features -F {{ .CARGO_FEATURES }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [BENCHES]
+    preconditions:
+      # It might not be _necessary_ in this case, but most tasks using this
+      # helper require it so let’s centralize and make tasks leaner.
+      - sh: grep -q '^autobenches = false$' Cargo.toml
+        msg: "`Cargo.toml` must contain `autobenches = false`."
+    vars:
+      CARGO_FEATURES:
+        sh: |-
+          cargo metadata --format-version 1 --no-deps | jq -r '
+            [
+              .packages[]
+              | select(.name == "backup")
+              | .targets[]
+              | select((.kind | index("bench")) and (.name as $n | $ARGS.positional | index($n)))
+              | .["required-features"]
+              | .[]
+            ]
+            | unique
+            | join(",")
+            ' --args{{ range .BENCHES }} {{ . }}{{ end }}
+
+vars:
+  # NOTE: Tests are not sorted alphabetically, but rather by “expensiveness”.
+  CARGO_EXPENSIVE_TESTS: [scalability, s3]
+  CARGO_ALL_TESTS_JSON:
+    sh: |-
+      cargo metadata --format-version 1 --no-deps | jq '
+        [
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select((.kind | index("test")))
+          | .name
+        ]
+        '
+  CARGO_ALL_TESTS:
+    ref: fromJson .CARGO_ALL_TESTS_JSON
+  CARGO_CHEAP_TESTS_JSON:
+    sh: jq --argjson expensive '{{ toJson .CARGO_EXPENSIVE_TESTS }}' '. - $expensive' <<< '{{ .CARGO_ALL_TESTS_JSON }}'
+  CARGO_CHEAP_TESTS:
+    ref: fromJson .CARGO_CHEAP_TESTS_JSON
+  CARGO_ALL_BENCHES_JSON:
+    sh: |-
+      cargo metadata --format-version 1 --no-deps | jq '
+        [
+          .packages[]
+          | select(.name == "backup")
+          | .targets[]
+          | select((.kind | index("bench")))
+          | .name
+        ]
+        '
+  CARGO_ALL_BENCHES:
+    ref: fromJson .CARGO_ALL_BENCHES_JSON

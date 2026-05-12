@@ -1,5 +1,5 @@
-ARG BASE_IMAGE=alpine:3.22.1
-ARG CARGO_CHEF_IMAGE=lukemathwalker/cargo-chef:0.1.72-rust-1.89.0-alpine
+ARG BASE_IMAGE=alpine:3.22
+ARG CARGO_CHEF_IMAGE=lukemathwalker/cargo-chef:0.1.73-rust-1.91.1-alpine3.22
 
 
 
@@ -22,6 +22,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 
 FROM chef AS api-build
+
+RUN apk add --no-cache \
+	clang-libclang \
+	nettle-dev
+ENV RUSTFLAGS="-C target-feature=-crt-static"
+
 COPY --from=api-plan /usr/src/prose-pod-server/recipe.json recipe.json
 
 ARG CARGO_PROFILE='release'
@@ -85,6 +91,7 @@ RUN make install
 
 FROM ${BASE_IMAGE} AS prosody-run
 
+# prosody dependencies.
 RUN apk add --no-cache \
 	libidn \
 	lua5.4 \
@@ -94,6 +101,12 @@ RUN apk add --no-cache \
 	lua5.4-sec \
 	lua5.4-unbound \
 	sqlite-libs
+
+# prose-pod-server dependencies.
+RUN apk add --no-cache \
+	gmp \
+	libgcc \
+	nettle
 
 COPY --from=prosody-build /bin/prosody bin/
 COPY --from=prosody-build /bin/prosodyctl bin/

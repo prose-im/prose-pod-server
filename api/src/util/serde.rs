@@ -26,6 +26,57 @@ pub mod iso8601_duration {
     }
 }
 
+pub mod iso8601_duration_or_secs {
+    use tokio::time::Duration;
+
+    use super::*;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Iso8601DurationOrSecs {
+        #[serde(with = "super::iso8601_duration")]
+        Iso8601(Duration),
+        Secs(u64),
+        SecsAsString(String),
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Iso8601DurationOrSecs::deserialize(deserializer) {
+            Ok(Iso8601DurationOrSecs::Iso8601(duration)) => Ok(duration),
+            Ok(Iso8601DurationOrSecs::Secs(secs)) => Ok(Duration::from_secs(secs)),
+            Ok(Iso8601DurationOrSecs::SecsAsString(str)) => match str.parse::<u64>() {
+                Ok(secs) => Ok(Duration::from_secs(secs)),
+                Err(err) => {
+                    tracing::debug!("Parsing error: {err:#}");
+                    Err(de::Error::custom(
+                        "Expected a duration (ISO 8601 duration or integer number of seconds).",
+                    ))
+                }
+            },
+            Err(err) => {
+                tracing::debug!("Parsing error: {err:#}");
+                Err(de::Error::custom(
+                    "Expected a duration (ISO 8601 duration or integer number of seconds).",
+                ))
+            }
+        }
+    }
+
+    pub mod option {
+        use super::*;
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            super::deserialize(deserializer).map(Some)
+        }
+    }
+}
+
 pub mod null_as_some_none {
     use super::*;
 
@@ -38,5 +89,31 @@ pub mod null_as_some_none {
         D: Deserializer<'de>,
     {
         Deserialize::deserialize(deserializer).map(Some)
+    }
+}
+
+pub mod backup_config_opt {
+    use super::*;
+
+    /// Returns `None` instead of an error is backup storage not defined.
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<prose_backup::BackupConfig>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match prose_backup::BackupConfig::deserialize(deserializer) {
+            Ok(config) => Ok(Some(config)),
+            Err(error) => {
+                let err = error.to_string();
+                if err.contains("missing field `storage`")
+                    || err.contains("missing field `provider`")
+                {
+                    Ok(None)
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 }

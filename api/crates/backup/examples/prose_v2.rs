@@ -1,0 +1,155 @@
+// prose-pod-server
+//
+// Copyright: 2026, Rémi Bardon <remi@remibardon.name>
+// License: Mozilla Public License v2.0 (MPL v2.0)
+
+//! This example, in addition to show how this library can be used, ensures
+//! that it supports the use case of [Prose] Pods, in their
+//! [early 2026 architecture].
+//!
+//! [Prose]: https://prose.org/ "Prose IM homepage"
+//! [early 2026 architecture]: https://github.com/prose-im/prose-pod-server/blob/b881891e442d35ad6bfdf65ec164cc6911855ba3/api/docs/ARCHITECTURE.md
+
+mod common;
+mod prose;
+
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use tokio::sync::RwLock;
+
+use crate::common::lifecycle::{ExampleContext, keep_tmpdir};
+use crate::common::util::*;
+use crate::prose::api::ProsePodApi;
+use crate::prose::dashboard::{BackupEntryModel, Dashboard};
+use crate::prose::{init_prose_config, init_tsks};
+
+/// Happy path of running the Prose Pod Dashboard to create, read and delete
+/// backups.
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
+    let mut context = common::lifecycle::init(&EXAMPLE_FS_TREE)?;
+
+    let tmpdir = context.tmpdir();
+    init_tsks(tmpdir.path()).context("Failed creating tsks")?;
+    init_prose_config(tmpdir.path()).context("Failed creating prose.toml")?;
+    drop(tmpdir);
+
+    try_main(&mut context)
+        .await
+        .inspect_err(|_| keep_tmpdir(&context.tmpdir))
+}
+
+async fn try_main(context: &mut ExampleContext) -> Result<(), anyhow::Error> {
+    let api = prose::api::start_v2()?;
+    let api: Arc<RwLock<Option<Box<dyn ProsePodApi>>>> = Arc::new(RwLock::new(Some(Box::new(api))));
+
+    let dashboard = Dashboard::new(Arc::clone(&api));
+
+    let mut backups = dashboard.show_backups().await?;
+    println!();
+
+    let backup = dashboard
+        .create_backup_stream(
+            "Example 1",
+            |progress, total| {
+                println!(
+                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                    bar = progress_bar::<10>(progress, total),
+                    percent = (progress as f32 / total as f32) * 100.,
+                )
+            },
+            || println!("Done."),
+        )
+        .await?;
+    println!("Created backup: {}\n", backup.display());
+    debug_assert_eq!(backup.description.as_str(), "Example 1");
+
+    // Register a cleanup function to delete backup and checks if an error happens.
+    context.cleanup_functions.push(Box::pin({
+        let backup_id = backup.backup_id.clone();
+        let api = Arc::clone(&api);
+
+        async move {
+            if let Some(api) = api.read().await.as_ref() {
+                let backups = (api.get_backups().await)
+                    .inspect_err(|err| tracing::error!("Failed listing backups: {err:#}"))
+                    .unwrap_or_default();
+                if backups.into_iter().any(|b| b.id.to_string() == backup_id) {
+                    api.delete_backup(backup_id)
+                        .await
+                        .unwrap_or_else(|err| tracing::error!("Failed deleting backup: {err:#}"));
+                }
+            }
+        }
+    }));
+
+    backups.insert(0, backup);
+    println!("Backups list:\n{}", BackupEntryModel::table_header());
+    for backup in backups.iter() {
+        println!("{}", backup.table_row());
+    }
+    println!("{}\n", BackupEntryModel::table_footer());
+
+    let backup_id = &backups[0].backup_id;
+
+    let details = dashboard.inspect_backup(String::clone(&backup_id)).await?;
+    println!("Backup details: {}\n", details.display());
+
+    let _download_url = dashboard.download_backup(String::clone(&backup_id)).await?;
+    // Manually test that the URL works (it does).
+    // tracing::info!("Download URL: {download_url}");
+    // crate::common::util::press_enter_to_continue();
+    println!();
+
+    // Modify some files to test that restoration works.
+    override_files!([
+        "etc/prose/prose.env",
+        "var/lib/prose-pod-api/database.sqlite",
+    ], in: context.tmpdir(), to: "bar");
+
+    () = dashboard
+        .restore_backup_stream(
+            String::clone(&backup_id),
+            |progress, total| {
+                println!(
+                    "Progress: {bar} {percent:>6.02}% ({progress}/{total})",
+                    bar = progress_bar::<10>(progress, total),
+                    percent = (progress as f32 / total as f32) * 100.,
+                )
+            },
+            || println!("Done."),
+        )
+        .await?;
+    println!();
+
+    assert_file_contents!([
+        "etc/prose/prose.env",
+        "var/lib/prose-pod-api/database.sqlite",
+    ], in: context.tmpdir(), eq: "foo");
+
+    () = dashboard.delete_backup(String::clone(&backup_id)).await?;
+    println!();
+
+    Ok(())
+}
+
+/// The fake files to create at the start of this example.
+///
+/// Format: `("volume", "path", "contents")`.
+#[rustfmt::skip]
+const EXAMPLE_FS_TREE: [(&str, &str); 13] = [
+    ("etc/prose/compose.yaml", ""),
+    ("etc/prose/prose.env", "foo"),
+    ("etc/prose/prose.lic", ""),
+    ("etc/prose/prose.toml", ""),
+    ("etc/prosody/prosody.cfg.lua", ""),
+    ("var/lib/prose-pod-api/database.sqlite", "foo"),
+    ("var/lib/prose-pod-server/salt.bin", ""),
+    ("var/lib/prosody/example%2eorg/account_roles/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/accounts/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/auth_tokens/john%2doe.dat", ""),
+    ("var/lib/prosody/example%2eorg/cron.dat", ""),
+    ("var/lib/prosody/example%2eorg/group_info/team.dat", ""),
+    ("var/lib/prosody/example%2eorg/groups/team.dat", ""),
+];

@@ -245,10 +245,10 @@ mod tests {
         use std::io::Write as _;
 
         let hash_write = {
-            let mut hasher = Sha256::new();
+            let mut hasher = digest_io::IoWrapper(Sha256::new());
             hasher.write("ab".as_bytes())?;
             hasher.write("cd".as_bytes())?;
-            hasher.finalize()
+            hasher.0.finalize()
         };
         let hash_update_intermediary = {
             let mut hasher = Sha256::new();

@@ -1,0 +1,15 @@
+# [workspace]
+
+[package]
+name = "mapped-tar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { version = "=1.0.102", default-features = false }
+tar = { git = "https://github.com/RemiBardon/tar-rs.git", rev = "06ea113b018af846b39a397f349b8b3e6677f7ff", default-features = false }
+tempfile = { version = "=3.27.0", default-features = false }
+
+[[bin]]
+name = "mapped-tar"
+path = "main.rs"

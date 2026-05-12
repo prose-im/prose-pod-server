@@ -186,6 +186,38 @@ pub fn validation_error(
     )
 }
 
+#[must_use]
+#[inline]
+pub fn unsupported_media_type(
+    code: &'static str,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
+) -> Error {
+    Error::new(
+        "VALIDATION_ERROR",
+        code,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        message,
+        description,
+    )
+}
+
+#[must_use]
+#[inline]
+pub fn configuration_error(
+    code: &'static str,
+    message: impl AsRef<str>,
+    description: impl AsRef<str>,
+) -> Error {
+    Error::new(
+        "CONFIGURATION_ERROR",
+        code,
+        StatusCode::SERVICE_UNAVAILABLE,
+        message,
+        description,
+    )
+}
+
 // MARK: - Helpers
 
 #[must_use]
@@ -196,7 +228,7 @@ fn auto_log(error: &anyhow::Error, public_description: impl AsRef<str>) -> Strin
     // Log error debug information with a unique ID,
     // and reference this ID in the user-facing description.
     let error_id = crate::util::random_id(8);
-    tracing::error!(%error_id, "{error:?}");
+    tracing::error!(%error_id, "{error:#}");
 
     format!("{public_description} (logged as error_id={error_id})")
 }

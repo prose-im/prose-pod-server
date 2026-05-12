@@ -1,0 +1,21 @@
+[package]
+name = "composable-stream"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Rémi Bardon <remi@remibardon.name>"]
+
+[dependencies]
+# Doc dependencies.
+anyhow = { version = "1", optional = true, default-features = false }
+tar = { version = "0.4", optional = true, default-features = false }
+zstd = { version = "0.13", optional = true, default-features = false }
+
+[lints.clippy]
+inline_always = "warn" # We don’t have benchmarks yet.
+missing_inline_in_public_items = "warn" # Most functions are thin, and given the amount of genericity it’s better if it’s inlined.
+type_complexity = "allow" # Composable streams need complex types.
+
+[features]
+default = []
+doc = ["anyhow", "tar", "zstd"]
