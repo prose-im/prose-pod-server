@@ -51,6 +51,7 @@ async fn scalability_large_files() {
         .arg("bs=1M")
         .arg("count=1024")
         .current_dir(test_data_path)
+        .stderr(std::process::Stdio::null())
         .status()
         .unwrap();
     assert!(dd_status.success());
