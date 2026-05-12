@@ -36,19 +36,36 @@ tasks:
       - cargo clippy --locked
 
   check:
-    desc: Run syntax checks.
+    desc: Run all syntax checks.
     cmds:
-      - cargo check --lib --locked
-      - cargo check --lib --locked --no-default-features -F compression-zstd,openpgp-crypto-nettle,hashing-blake3,storage-fs
-      - cargo check --lib --locked --no-default-features -F compression-zstd,openpgp-crypto-nettle,hashing-sha2,storage-fs
+      - task: check:lib:dev
+      - task: check:examples
+      - task: check:lib:release
+
+  check:lib:*:
+    desc: Run syntax checks on the library (accepts a profile name).
+    aliases: [check:lib]
+    cmds:
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+          CARGO_FEATURES: compression-zstd,openpgp-crypto-nettle,hashing-blake3,storage-fs
+      - task: cargo-check
+        vars:
+          CHECKED: --lib
+          PROFILE: { ref: .PROFILE }
+          CARGO_FEATURES: compression-zstd,openpgp-crypto-nettle,hashing-sha2,storage-fs
+    vars:
+      PROFILE: { ref: .MATCH | first | default "dev" }
 
   check:examples:
-    desc: Run syntax checks for examples.
+    desc: Run syntax checks on examples.
     cmd: cargo check --examples -F example --locked
-
-  check:release:
-    desc: Run syntax checks in release mode.
-    cmd: cargo check --release --lib --locked
 
   test:all:
     desc: Run all tests.
@@ -119,7 +136,7 @@ tasks:
         if: "[ -f test.env ]"
       - cargo test --locked --doc -p backup
       - cargo test --locked --doc -p composable-stream -F doc
-      - task: check:release
+      - task: check:lib:release
 
   bench:all:
     desc: Run all benchmarks.
@@ -149,6 +166,12 @@ tasks:
   util:cleanup-test-artifacts:
     internal: true
     cmd: rm -rf "$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"/tmp/test-*
+
+  cargo-check:
+    internal: true
+    cmd: cargo check {{ .CHECKED }} --locked{{ if .PROFILE }} --profile {{ .PROFILE }}{{ end }}{{ if .CARGO_FEATURES }} --no-default-features -F {{ .CARGO_FEATURES }}{{ end }}{{ if .CLI_ARGS }} {{ .CLI_ARGS }}{{ end }}
+    requires:
+      vars: [CHECKED]
 
   cargo-test:
     desc: Run specified tests.
