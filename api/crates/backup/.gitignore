@@ -4,6 +4,9 @@
 # committed unexpectedly).
 *
 
+!/docs
+!/docs/**
+
 !/examples
 !/examples/**
 
