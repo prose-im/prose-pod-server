@@ -161,7 +161,7 @@ pub(crate) fn restore(
     //   then an “override” for `foo/a` (in this order).
     let path_mappings = {
         let mut paths = blueprint.paths.clone();
-        paths.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+        paths.sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
         tracing::debug!(?backup_id, "Path mappings: {:#?}", util::fmt::AsMap(&paths));
         paths
     };
@@ -331,7 +331,7 @@ fn flatten<'a, 'b, S: AsRef<OsStr> + 'a>(
     }
 
     // Sort mappings so the longer paths are first.
-    flat_migrations.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+    flat_migrations.sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
 
     tracing::debug!("Migrations: {:#?}", util::fmt::AsMap(&flat_migrations));
 
